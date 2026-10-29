@@ -395,6 +395,44 @@ public struct UIStateTests {
             return false
         }
         
+        // Map-dropped pin proposal with coordinate formatting
+        let droppedCoord = CLLocationCoordinate2D(latitude: 33.6841, longitude: -116.2369)
+        let defaultFormattedName = String(format: "Meeting Point (%.4f, %.4f)", droppedCoord.latitude, droppedCoord.longitude)
+        mpVM.proposeMeetingPoint(
+            name: defaultFormattedName,
+            coordinate: droppedCoord,
+            proposerId: "ALX"
+        )
+        guard let mapActive = mpVM.activeMeetingPoint, mapActive.name == defaultFormattedName else {
+            print("FAILED: map-dropped meeting point name mismatch")
+            return false
+        }
+        guard abs(mapActive.coordinate.latitude - 33.6841) < 0.0001,
+              abs(mapActive.coordinate.longitude - (-116.2369)) < 0.0001 else {
+            print("FAILED: map-dropped meeting point coordinate mismatch")
+            return false
+        }
+        
+        // Replace active meeting point directly (seamless overwrite)
+        let replacedCoord = CLLocationCoordinate2D(latitude: 33.6822, longitude: -116.2355)
+        mpVM.proposeMeetingPoint(
+            name: "Main Stage Sound Booth",
+            coordinate: replacedCoord,
+            proposerId: "ALX",
+            landmarkId: 1
+        )
+        guard let replacedActive = mpVM.activeMeetingPoint, replacedActive.name == "Main Stage Sound Booth" else {
+            print("FAILED: active meeting point was not replaced cleanly")
+            return false
+        }
+        guard replacedActive.landmarkId == 1 else {
+            print("FAILED: landmarkId was not preserved on replaced point")
+            return false
+        }
+        
+        // Clean up
+        mpVM.cancelMeetingPoint()
+        
         print("PASSED: testMeetingPointProposalAndAttendance")
         return true
     }

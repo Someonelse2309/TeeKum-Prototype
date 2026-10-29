@@ -18,9 +18,6 @@ public struct MeetingPointsView: View {
     @Environment(\.dismiss) private var dismiss
     
     @State private var meetingNameInput: String = ""
-    @State private var selectedPreset: String? = nil
-    
-    private let venueLandmarks = VenueLandmark.presets.map(\.name)
     
     public init(
         meetingPointViewModel: MeetingPointViewModel,
@@ -163,7 +160,7 @@ public struct MeetingPointsView: View {
                 .font(.headline)
                 .foregroundStyle(.white)
             
-            Text("Propose a rendezvous spot below so your group knows where to meet if separated.")
+            Text("Propose a rendezvous spot below, or long-press anywhere on the festival map to drop a pin directly.")
                 .font(.caption)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.gray)
@@ -182,36 +179,19 @@ public struct MeetingPointsView: View {
                 .font(.headline)
                 .foregroundStyle(.white)
             
-            // Venue Presets
-            Text("Official Venue Landmarks")
-                .font(.caption.bold())
-                .foregroundStyle(.gray)
-            
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(venueLandmarks, id: \.self) { landmark in
-                        Button {
-                            selectedPreset = landmark
-                            meetingNameInput = landmark
-                        } label: {
-                            Text(landmark)
-                                .font(.caption.bold())
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(selectedPreset == landmark ? Color.yellow.opacity(0.3) : Color(white: 0.15))
-                                .foregroundStyle(selectedPreset == landmark ? .yellow : .white)
-                                .clipShape(Capsule())
-                        }
-                    }
-                }
+            // Landmark Name Input
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Landmark Name")
+                    .font(.caption.bold())
+                    .foregroundStyle(.gray)
+                    .textCase(.uppercase)
+                
+                TextField("Enter landmark name (e.g. Ferris Wheel)", text: $meetingNameInput)
+                    .padding()
+                    .background(Color(white: 0.15))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .foregroundStyle(.white)
             }
-            
-            // Custom Name Input
-            TextField("Custom spot name (e.g. Ferris Wheel)", text: $meetingNameInput)
-                .padding()
-                .background(Color(white: 0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .foregroundStyle(.white)
             
             // Propose Button
             Button {
@@ -237,16 +217,14 @@ public struct MeetingPointsView: View {
         let name = meetingNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         
-        let landmark = VenueLandmark.preset(for: name)
-        let landmarkId = landmark?.id
-        let coord = landmark?.coordinate ?? userLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 33.6803, longitude: -116.2366)
+        let coord = userLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 33.6803, longitude: -116.2366)
         
         meetingPointViewModel.proposeMeetingPoint(
             name: name,
             coordinate: coord,
             targetTime: Date().addingTimeInterval(1800), // 30 min default
             proposerId: session.localInitials,
-            landmarkId: landmarkId
+            landmarkId: nil
         )
         
         dismiss()

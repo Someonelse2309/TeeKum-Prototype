@@ -5,6 +5,139 @@
 
 ---
 
+### [2026-10-29 12:03] — UI Refinement: Hide Hardcoded Preset Coordinates & Streamline "Landmark Name"
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed
+- **Target Phase / Milestone:** Phase 1 — Meeting Point UX
+
+#### 1. Objective & Scope
+- Hide/remove the hardcoded preset meeting point coordinates ("Main Stage Sound Booth", "Gate 3 Exit", etc.) that forced synthetic festival coordinates.
+- Streamline both the map-pointing bottom sheet ([`SetMeetingPointSheet.swift`](../TeeKum%20Prototype/Views/Components/SetMeetingPointSheet.swift)) and the meeting point management sheet ([`MeetingPointsView.swift`](../TeeKum%20Prototype/Views/MeetingPointsView.swift)) to strictly focus on a clean "Landmark Name" text input.
+
+#### 2. Changes Made & Files Touched
+- [`TeeKum Prototype/Views/Components/SetMeetingPointSheet.swift`](../TeeKum%20Prototype/Views/Components/SetMeetingPointSheet.swift):
+  - Removed the horizontal scroll view of hardcoded preset landmark chips.
+  - Formatted the input section with a dedicated `"LANDMARK NAME"` section header and placeholder `"Enter landmark name (e.g. Sound Booth, Ferris Wheel)"`.
+  - The coordinate is purely governed by where the user pointed on the map.
+- [`TeeKum Prototype/Views/MeetingPointsView.swift`](../TeeKum%20Prototype/Views/MeetingPointsView.swift):
+  - Removed hardcoded landmark preset chips (`venueLandmarks`) and hardcoded coordinate overrides.
+  - Replaced with a clean `"LANDMARK NAME"` text input.
+  - Updated proposal coordinates to strictly use the user's live GPS location if proposed from this sheet.
+- [`TeeKum Prototype/Views/MainMapView.swift`](../TeeKum%20Prototype/Views/MainMapView.swift):
+  - Updated `handleMapLongPress` to leave `droppedPinName = ""` so the placeholder is shown, and reduced bottom sheet height to `.fraction(0.35)`.
+
+#### 3. Verification & Testing Performed
+- **Xcode Build:** Compiled cleanly with `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -destination "id=C80ECE14-94DC-40AF-B9F4-403F9CE40ACC" build` -> **BUILD SUCCEEDED**.
+- **Automated Tests:** Ran in-app test suite on booted simulator `C80ECE14-94DC-40AF-B9F4-403F9CE40ACC`; all test suites passed with zero failures.
+
+---
+
+### [2026-10-29 11:54] — Implementation: Interactive Long-Press Map Meeting Point Setup
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed
+- **Target Phase / Milestone:** Phase 1 — Meeting Point UX & MapKit Interaction
+
+#### 1. Objective & Scope
+- Execute the agreed plan: enable users to point directly at the festival map (0.5s long-press) to set or update the group rendezvous spot.
+- Translate touch points into `CLLocationCoordinate2D` using SwiftUI `MapReader`.
+- Provide immediate haptic feedback, render a temporary pulsing yellow pin, and slide up a compact bottom sheet (`SetMeetingPointSheet`) for naming and confirmation.
+- Retain dual access (top-bar button and pin tap continue opening the attendance/management sheet).
+
+#### 2. Changes Made & Files Touched
+- [`TeeKum Prototype/Views/Components/SetMeetingPointSheet.swift`](../TeeKum%20Prototype/Views/Components/SetMeetingPointSheet.swift):
+  - Created compact presentation sheet displaying GPS coordinates, replacement alert if an active meeting point exists (`"Replaces active spot: \(active.name)"`), custom spot name text field defaulting to `"Meeting Point (%.4f, %.4f)"`, quick landmark chips (`VenueLandmark.presets`), and primary "Broadcast Meeting Point" action.
+- [`TeeKum Prototype/Views/MainMapView.swift`](../TeeKum%20Prototype/Views/MainMapView.swift):
+  - Wrapped `Map` inside `MapReader { proxy in ... }`.
+  - Added `DragGesture` (updating `lastTouchPoint`) and `LongPressGesture(minimumDuration: 0.5, maximumDistance: 15)` to capture touch coordinate via `proxy.convert(_:from:)` without interfering with normal map panning/zooming.
+  - Implemented `handleMapLongPress(at:)` triggering medium haptic feedback and presenting `SetMeetingPointSheet`.
+  - Added `temporaryDroppedPinView` showing a pulsing yellow pin at `droppedPinCoordinate` while the bottom sheet is open.
+- [`TeeKum Prototype/Views/MeetingPointsView.swift`](../TeeKum%20Prototype/Views/MeetingPointsView.swift):
+  - Updated `noActiveMeetingCard` description to notify users of the map long-press shortcut.
+- [`TeeKum Prototype/Tests/UIStateTests.swift`](../TeeKum%20Prototype/Tests/UIStateTests.swift):
+  - Extended `testMeetingPointProposalAndAttendance` verifying coordinate formatting, map-dropped proposals, seamless replacement of active spots, and landmark preservation.
+
+#### 3. Key Decisions & Rationale
+- **Simultaneous Gesture Tracking:** Combining `DragGesture(minimumDistance: 0)` with `LongPressGesture(minimumDuration: 0.5, maximumDistance: 15)` guarantees that moving the finger pans the map normally, while holding still for 0.5s reliably drops a pin and provides tactile haptic feedback.
+
+#### 4. Verification & Testing Performed
+- **Xcode Build:** Compiled cleanly with `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -destination "id=C80ECE14-94DC-40AF-B9F4-403F9CE40ACC" build` -> **BUILD SUCCEEDED**.
+- **Automated Test Run:** Executed full in-app test suite on simulator `C80ECE14-94DC-40AF-B9F4-403F9CE40ACC`. All suites passed including `testMeetingPointProposalAndAttendance` with zero failures.
+
+---
+
+### [2026-10-29 11:49] — Alignment Complete (/grill-me): Long-Press Map Meeting Point Specification
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Complete (Ready for Implementation)
+- **Target Phase / Milestone:** Phase 1 — Meeting Point UX & MapKit Interaction
+
+#### 1. All Decisions Resolved
+1. **Interaction Model:** Long-press (0.5s) on main venue map via `MapReader` converts touch location to `CLLocationCoordinate2D`.
+2. **Visual & Tactile Feedback:** Triggers medium haptic impact and drops a temporary pulsing yellow pin while presenting a compact bottom sheet.
+3. **Naming & Presets:** Defaults to `"Meeting Point (%.4f, %.4f)"` with editable text field and optional landmark preset chips.
+4. **Replacement Behavior:** Inline notice `"Replaces: [Existing Spot Name]"` if a meeting point is already active.
+5. **Dual Access:** Top bar button and pin tap continue opening attendance/status management, preserving full group coordination workflows.
+
+---
+
+### [2026-10-29 11:48] — Alignment (/grill-me): Decision 4 Resolved — Dual Access Model
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** In Progress (Design Phase)
+- **Target Phase / Milestone:** Phase 1 — Meeting Point UX & MapKit Interaction
+
+#### 1. Decisions Resolved
+- **Decision 4 (Access Model):** Dual access retained. Top-bar button and map pin tap open the attendance/status management sheet; long-pressing on the map acts as the direct, tactile shortcut to place/replace meeting pins.
+- **Next Decision in Tree:** Proximity smart-naming for dropped pins near festival landmarks.
+
+---
+
+### [2026-10-29 11:47] — Alignment (/grill-me): Decision 3 Resolved — Inline Replacement Notice
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** In Progress (Design Phase)
+- **Target Phase / Milestone:** Phase 1 — Meeting Point UX & MapKit Interaction
+
+#### 1. Decisions Resolved
+- **Decision 3 (Replacement Behavior):** Inline notice showing "Replaces: [Current Spot Name]" when a meeting point already exists, allowing immediate replacement without blocking dialogs.
+- **Next Decision in Tree:** Coexistence and relationship between the map long-press workflow and the existing meeting points status/attendance sheet.
+
+---
+
+### [2026-10-29 11:46] — Alignment (/grill-me): Decision 2 Resolved — Compact Bottom Sheet & Feedback
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** In Progress (Design Phase)
+- **Target Phase / Milestone:** Phase 1 — Meeting Point UX & MapKit Interaction
+
+#### 1. Decisions Resolved
+- **Decision 2 (Presentation & Feedback):** Compact bottom sheet with haptic feedback, pulsing temporary pin, preset landmark chips, custom spot name text field, and "Broadcast Meeting Point" confirmation button.
+- **Next Decision in Tree:** Replacement behavior when a meeting point is already active in the group session.
+
+---
+
+### [2026-10-29 11:44] — Alignment (/grill-me): Decision 1 Resolved — Long-Press Map Interaction
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** In Progress (Design Phase)
+- **Target Phase / Milestone:** Phase 1 — Meeting Point UX & MapKit Interaction
+
+#### 1. Decisions Resolved
+- **Decision 1 (Interaction Model):** User selected long-pressing anywhere on the main map to drop a meeting point pin directly at touch coordinates.
+- **Next Decision in Tree:** Determining the confirmation and naming presentation model upon long-press trigger.
+
+---
+
+### [2026-10-29 11:43] — Exploration & Alignment: Map-Based Interactive Meeting Point Setup (/grill-me)
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** In Progress (Design Phase)
+- **Target Phase / Milestone:** Phase 1 — Meeting Point UX & MapKit Interaction
+
+#### 1. Objective & Scope
+- Initiate interactive alignment (/grill-me) on redesigning the meeting point setup workflow from purely text/preset-based selection to pointing/dropping a pin directly on the venue map.
+- Analyzed existing architecture: `MeetingPointsView.swift` currently relies on `VenueLandmark` presets or defaults to `userLocation`. `MainMapView.swift` renders `Map` with `Annotation` pins.
+
+#### 2. Technical Findings
+- MapKit for SwiftUI (iOS 17+) provides `MapReader` and `proxy.convert(_:from:)` enabling coordinate translation from touch gestures.
+- Key UX decision branch: How the user initiates and interacts with the map picker (e.g. entering a dedicated "Drop Pin" mode on the main map vs. an interactive mini-map picker in the proposal sheet vs. long-pressing the main map).
+
+---
+
 ### [2026-10-29 11:22] — Guidance: ShareLink Template Configuration in QRCodeView
 - **Contributor / Agent:** Antigravity (Pair Programming Agent)
 - **Status:** Completed

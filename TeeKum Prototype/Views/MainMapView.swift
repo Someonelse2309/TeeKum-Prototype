@@ -24,6 +24,12 @@ public struct MainMapView: View {
     @State private var isShowingLeaveAlert: Bool = false
     @State private var mapCameraPosition: MapCameraPosition = .automatic
     
+    // Interactive Map-Pointing for Meeting Points
+    @State private var droppedPinCoordinate: CLLocationCoordinate2D? = nil
+    @State private var isShowingDroppedPinSheet: Bool = false
+    @State private var droppedPinName: String = ""
+    @State private var lastTouchPoint: CGPoint? = nil
+    
     public init(
         mapViewModel: MapViewModel,
         sessionViewModel: GroupSessionViewModel,
@@ -72,6 +78,36 @@ public struct MainMapView: View {
                 userLocation: mapViewModel.userLocation
             )
         }
+        .sheet(isPresented: $isShowingDroppedPinSheet, onDismiss: {
+            droppedPinCoordinate = nil
+        }) {
+            if let coord = droppedPinCoordinate {
+                SetMeetingPointSheet(
+                    coordinate: coord,
+                    initialName: droppedPinName,
+                    activeMeetingPoint: meetingPointViewModel.activeMeetingPoint,
+                    onConfirm: { name, chosenCoord in
+                        if let session = sessionViewModel.activeSession {
+                            meetingPointViewModel.proposeMeetingPoint(
+                                name: name,
+                                coordinate: chosenCoord,
+                                targetTime: Date().addingTimeInterval(1800),
+                                proposerId: session.localInitials,
+                                landmarkId: nil
+                            )
+                        }
+                        isShowingDroppedPinSheet = false
+                        droppedPinCoordinate = nil
+                    },
+                    onCancel: {
+                        isShowingDroppedPinSheet = false
+                        droppedPinCoordinate = nil
+                    }
+                )
+                .presentationDetents([.fraction(0.35), .medium])
+                .presentationDragIndicator(.visible)
+            }
+        }
         .sheet(item: $mapViewModel.selectedMember) { member in
             FriendDetailView(
                 member: member,
@@ -110,35 +146,59 @@ public struct MainMapView: View {
     // MARK: - MapKit View
     
     private var venueMapView: some View {
-        Map(position: $mapCameraPosition) {
-            UserAnnotation()
-            
-            // Friend Annotations with Honest Freshness Indicators
-            ForEach(sessionViewModel.members) { member in
-                if let coord = member.coordinate {
-                    Annotation("", coordinate: coord) {
-                        friendPinView(for: member)
+        MapReader { proxy in
+            Map(position: $mapCameraPosition) {
+                UserAnnotation()
+                
+                // Friend Annotations with Honest Freshness Indicators
+                ForEach(sessionViewModel.members) { member in
+                    if let coord = member.coordinate {
+                        Annotation("", coordinate: coord) {
+                            friendPinView(for: member)
+                                .onTapGesture {
+                                    mapViewModel.selectMemberForNavigation(member)
+                                }
+                        }
+                        .annotationTitles(.hidden)
+                    }
+                }
+                
+                // Active Single Meeting Point Annotation
+                if let mp = meetingPointViewModel.activeMeetingPoint {
+                    Annotation("", coordinate: mp.coordinate) {
+                        meetingPointPinView(for: mp)
                             .onTapGesture {
-                                mapViewModel.selectMemberForNavigation(member)
+                                isShowingMeetingPoints = true
                             }
                     }
                     .annotationTitles(.hidden)
                 }
-            }
-            
-            // Active Single Meeting Point Annotation
-            if let mp = meetingPointViewModel.activeMeetingPoint {
-                Annotation("", coordinate: mp.coordinate) {
-                    meetingPointPinView(for: mp)
-                        .onTapGesture {
-                            isShowingMeetingPoints = true
-                        }
+                
+                // Temporary Dropped Pin Annotation
+                if let droppedCoord = droppedPinCoordinate {
+                    Annotation("", coordinate: droppedCoord) {
+                        temporaryDroppedPinView
+                    }
+                    .annotationTitles(.hidden)
                 }
-                .annotationTitles(.hidden)
             }
+            .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+            .ignoresSafeArea()
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                    .onChanged { value in
+                        lastTouchPoint = value.location
+                    }
+            )
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.5, maximumDistance: 15)
+                    .onEnded { _ in
+                        guard let touch = lastTouchPoint,
+                              let coord = proxy.convert(touch, from: .local) else { return }
+                        handleMapLongPress(at: coord)
+                    }
+            )
         }
-        .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
-        .ignoresSafeArea()
     }
     
     // MARK: - Friend Pin View
@@ -239,6 +299,38 @@ public struct MainMapView: View {
                 .foregroundStyle(.yellow)
                 .clipShape(Capsule())
         }
+    }
+    
+    // MARK: - Temporary Dropped Pin (Interactive Long-Press)
+    
+    private var temporaryDroppedPinView: some View {
+        VStack(spacing: 4) {
+            ZStack {
+                Circle()
+                    .stroke(Color.yellow.opacity(0.8), lineWidth: 2)
+                    .frame(width: 44, height: 44)
+                
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.yellow)
+                    .shadow(color: .yellow.opacity(0.9), radius: 8)
+            }
+            
+            Text(droppedPinName.isEmpty ? "New Spot" : droppedPinName)
+                .font(.caption2.bold())
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.black.opacity(0.85))
+                .foregroundStyle(.yellow)
+                .clipShape(Capsule())
+        }
+    }
+    
+    private func handleMapLongPress(at coordinate: CLLocationCoordinate2D) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        droppedPinCoordinate = coordinate
+        droppedPinName = ""
+        isShowingDroppedPinSheet = true
     }
     
     // MARK: - Top Session Bar
