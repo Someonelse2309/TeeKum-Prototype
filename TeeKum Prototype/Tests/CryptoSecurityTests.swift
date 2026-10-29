@@ -180,7 +180,7 @@ public struct CryptoSecurityTests {
         let cryptoService = CryptoService()
         let key = cryptoService.generateSymmetricKey()
         let envelope = CleartextEnvelope(
-            version: 0x02,
+            version: PacketConstants.protocolVersion,
             type: .locationPing,
             hopLimit: 8,
             hopCount: 0,

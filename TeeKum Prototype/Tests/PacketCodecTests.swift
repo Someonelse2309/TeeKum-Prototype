@@ -14,7 +14,7 @@ public enum PacketCodecTests {
     public static func runAllTests() -> Bool {
         var passed = true
         print("========================================")
-        print("RUNNING PROTOCOL V2 PACKET CODEC TEST SUITE (56-BYTE)")
+        print("RUNNING PROTOCOL V3 PACKET CODEC TEST SUITE (56-BYTE)")
         print("========================================")
         
         if !testEnvelopeSerializationRoundtrip() { passed = false }
@@ -88,7 +88,7 @@ public enum PacketCodecTests {
             return false
         }
         
-        // 2. Unsupported protocol version (e.g. 0x01 when 0x02 is required)
+        // 2. Unsupported protocol version (e.g. 0x01 when 0x03 is required)
         let invalidVersionData = Data([0x11, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
         do {
             _ = try CleartextEnvelope.deserialize(from: invalidVersionData)
@@ -102,7 +102,7 @@ public enum PacketCodecTests {
         }
         
         // 3. Unknown packet type (e.g. 0x0F)
-        let invalidTypeData = Data([0x2F, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
+        let invalidTypeData = Data([0x3F, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
         do {
             _ = try CleartextEnvelope.deserialize(from: invalidTypeData)
             print("  FAIL: Should have thrown unknownPacketType.")
@@ -115,7 +115,7 @@ public enum PacketCodecTests {
         }
         
         // 4. Invalid hop limit (0)
-        let zeroHopLimitData = Data([0x21, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
+        let zeroHopLimitData = Data([0x31, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
         do {
             _ = try CleartextEnvelope.deserialize(from: zeroHopLimitData)
             print("  FAIL: Should have thrown invalidHopLimit.")
@@ -128,7 +128,7 @@ public enum PacketCodecTests {
         }
         
         // 5. Hop count exceeding hop limit (count=5, limit=3)
-        let hopCountExceededData = Data([0x21, 0x03, 0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
+        let hopCountExceededData = Data([0x31, 0x03, 0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
         do {
             _ = try CleartextEnvelope.deserialize(from: hopCountExceededData)
             print("  FAIL: Should have thrown hopCountExceededLimit.")
@@ -504,12 +504,12 @@ public enum PacketCodecTests {
     public static func testDeterministicTestVector() -> Bool {
         print("[Test 12] Deterministic test vector serialization...")
         // Known fixed inputs:
-        // Envelope: version=2, type=1 (locationPing) -> byte0 = 0x21
-        // hopLimit=8, hopCount=0 -> byte1 = 0x80
-        // sessionId = 0x0102 -> bytes 2..3 = [0x01, 0x02]
-        // sequenceNumber = 0x0A0B0C0D -> bytes 4..7 = [0x0A, 0x0B, 0x0C, 0x0D]
+        // Envelope: version=3, type=1 (locationPing) -> byte0 = 0x31
+        // hopLimit=8, hopCount=0 -> byte1 = 0x08, byte2 = 0x00
+        // sessionId = 0x0102 -> bytes 3..5 = [0x00, 0x01, 0x02]
+        // sequenceNumber = 0x0A0B0C0D -> bytes 6..9 = [0x0A, 0x0B, 0x0C, 0x0D]
         let envelope = CleartextEnvelope(
-            version: 0x02,
+            version: PacketConstants.protocolVersion,
             type: .locationPing,
             hopLimit: 8,
             hopCount: 0,
@@ -517,7 +517,7 @@ public enum PacketCodecTests {
             sequenceNumber: 0x0A0B0C0D
         )
         let envBytes = envelope.serialize()
-        let expectedEnvHex = "2108000001020a0b0c0d"
+        let expectedEnvHex = "3108000001020a0b0c0d"
         let actualEnvHex = envBytes.map { String(format: "%02x", $0) }.joined()
         guard actualEnvHex == expectedEnvHex else {
             print("  FAIL: Envelope test vector mismatch: expected \(expectedEnvHex), got \(actualEnvHex)")
@@ -532,9 +532,9 @@ public enum PacketCodecTests {
             return false
         }
         
-        // Nonce test vector: sessionId (3B) + sequenceNumber (4B) + byte0 (1B) + "TKM2" (4B)
+        // Nonce test vector: sessionId (3B) + sequenceNumber (4B) + byte0 (1B) + "TKM3" (4B)
         let nonceBytes = envelope.constructNonce()
-        let expectedNonceHex = "0001020a0b0c0d21544b4d32"
+        let expectedNonceHex = "0001020a0b0c0d31544b4d33"
         let actualNonceHex = nonceBytes.map { String(format: "%02x", $0) }.joined()
         guard actualNonceHex == expectedNonceHex else {
             print("  FAIL: Nonce test vector mismatch: expected \(expectedNonceHex), got \(actualNonceHex)")

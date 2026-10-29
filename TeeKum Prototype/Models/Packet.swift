@@ -17,14 +17,14 @@ nonisolated public enum PacketConstants {
     public static let authTagSize: Int = 16
     public static let nonceSize: Int = 12
     
-    public static let protocolVersion: UInt8 = 0x02
+    public static let protocolVersion: UInt8 = 0x03
     public static let defaultHopLimit: UInt8 = 8
     public static let maxHopLimit: UInt8 = 15
     public static let meetingPointHopLimit: UInt8 = 15
     public static let sosHopLimit: UInt8 = 15
     
-    /// 4-byte protocol domain tag used in nonce construction: 'T', 'K', 'M', '2'
-    public static let protocolDomainTag: [UInt8] = [0x54, 0x4B, 0x4D, 0x32]
+    /// 4-byte protocol domain tag used in nonce construction: 'T', 'K', 'M', '3'
+    public static let protocolDomainTag: [UInt8] = [0x54, 0x4B, 0x4D, 0x33]
 }
 
 // MARK: - Packet Type
@@ -262,7 +262,7 @@ public struct CleartextEnvelope: Equatable, Sendable {
     /// - Bytes 0..2: sessionId (3 bytes)
     /// - Bytes 3..6: sequenceNumber (4 bytes)
     /// - Byte 7: versionAndType (1 byte)
-    /// - Bytes 8..11: Protocol Domain Tag "TKM2" ([0x54, 0x4B, 0x4D, 0x32])
+    /// - Bytes 8..11: Protocol Domain Tag "TKM3" ([0x54, 0x4B, 0x4D, 0x33])
     public func constructNonce() -> Data {
         var nonceData = Data(capacity: PacketConstants.nonceSize)
         
