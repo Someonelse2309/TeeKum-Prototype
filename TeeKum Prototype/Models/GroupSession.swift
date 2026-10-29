@@ -10,11 +10,11 @@ import CryptoKit
 
 /// Decoded details from a serverless share link or QR barcode invite.
 public struct GroupSessionInvite: Equatable, Sendable {
-    public let sessionId: UInt32
+    public let sessionId: UInt16
     public let sessionName: String
     public let keyData: Data
     
-    public init(sessionId: UInt32, sessionName: String, keyData: Data) {
+    public init(sessionId: UInt16, sessionName: String, keyData: Data) {
         self.sessionId = sessionId
         self.sessionName = sessionName
         self.keyData = keyData
@@ -22,44 +22,62 @@ public struct GroupSessionInvite: Equatable, Sendable {
 }
 
 /// Active ephemeral group session model representing local participation.
+/// Auto-mesh enabled: connects to nearby peers on a shared festival key.
 public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
-    public var id: UInt32 { sessionId }
+    public var id: UInt16 { sessionId }
     
-    /// 32-bit big-endian hash identifying the group session network.
-    public let sessionId: UInt32
+    /// 16-bit session hash identifying the active festival network.
+    public let sessionId: UInt16
     
-    /// Human-friendly name for the group (e.g., "Coachella Crew").
+    /// Human-friendly name for the session (e.g., "Festival Mesh").
     public let sessionName: String
     
     /// 256-bit symmetric key bytes used for authenticated payload encryption.
     public let symmetricKeyData: Data
     
-    /// Ephemeral 32-bit ID assigned to this local device within the session.
-    public let localMemberId: UInt32
+    /// Local user's 3-letter initials (e.g. "DNA").
+    public var localInitials: String
     
-    /// Local user's chosen display name.
-    public var localMemberName: String
+    /// Backward-compatibility alias for display name.
+    public var localMemberName: String { localInitials }
     
-    /// Whether this device initiated the group creation.
+    /// Backward-compatibility alias for member ID (3-letter initials).
+    public var localMemberId: String { localInitials }
+    
+    /// True if the user initiated the session (or host role).
     public let isHost: Bool
+    
+    /// Backward-compatibility slot calculation.
+    public var memberSlot: UInt8 {
+        let bytes = InitialsCodec.encode(localInitials) ?? [0, 0]
+        return bytes[0] ^ bytes[1]
+    }
     
     /// Timestamp when session was established.
     public let createdAt: Date
     
+    /// Default shared festival key for auto-mesh.
+    public static let defaultSymmetricKeyData: Data = {
+        let seed = "TeeKum-Festival-AutoMesh-v2-SecretSeed"
+        return Data(SHA256.hash(data: Data(seed.utf8)))
+    }()
+    
+    /// Default 16-bit session ID for the auto-mesh festival network.
+    public static let defaultSessionId: UInt16 = 0x7E3A
+    
     public init(
-        sessionId: UInt32 = UInt32.random(in: 1...UInt32.max),
-        sessionName: String,
-        symmetricKeyData: Data,
-        localMemberId: UInt32 = UInt32.random(in: 1...UInt32.max),
-        localMemberName: String,
-        isHost: Bool,
+        sessionId: UInt16 = GroupSession.defaultSessionId,
+        sessionName: String = "Festival Mesh",
+        symmetricKeyData: Data = GroupSession.defaultSymmetricKeyData,
+        localInitials: String,
+        memberSlot: UInt8? = nil,
+        isHost: Bool = true,
         createdAt: Date = Date()
     ) {
         self.sessionId = sessionId
         self.sessionName = sessionName
         self.symmetricKeyData = symmetricKeyData
-        self.localMemberId = localMemberId
-        self.localMemberName = localMemberName
+        self.localInitials = InitialsCodec.sanitize(localInitials)
         self.isHost = isHost
         self.createdAt = createdAt
     }
@@ -75,7 +93,7 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
         components.host = "join"
         
         let keyBase64 = symmetricKeyData.base64EncodedString()
-        let sidHex = String(format: "%08X", sessionId)
+        let sidHex = String(format: "%04X", sessionId)
         let safeName = sessionName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "Group"
         
         components.percentEncodedFragment = "key=\(keyBase64)&sid=\(sidHex)&name=\(safeName)"
@@ -92,7 +110,7 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
         guard !rawPayload.isEmpty else { return nil }
         
         var keyData: Data?
-        var sessionId: UInt32?
+        var sessionId: UInt16?
         var sessionName: String?
         
         let pairs = rawPayload.split(separator: "&")
@@ -108,7 +126,7 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
                 keyData = Data(base64Encoded: clean) ?? Data(base64Encoded: clean.replacingOccurrences(of: " ", with: "+"))
             case "sid":
                 let clean = value.removingPercentEncoding ?? value
-                sessionId = UInt32(clean, radix: 16)
+                sessionId = UInt16(clean, radix: 16) ?? UInt16(clean)
             case "name":
                 sessionName = value.removingPercentEncoding ?? value
             default:

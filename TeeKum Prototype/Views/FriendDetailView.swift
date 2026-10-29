@@ -98,9 +98,9 @@ public struct FriendDetailView: View {
                     .foregroundStyle(.white)
                 
                 HStack(spacing: 8) {
-                    Text("ID: 0x\(String(format: "%08X", member.id))")
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(.gray)
+                    Text("Initials: \(member.id)")
+                        .font(.caption2.monospaced().bold())
+                        .foregroundStyle(.green)
                     
                     if let battery = member.batteryLevel {
                         HStack(spacing: 3) {

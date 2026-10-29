@@ -95,8 +95,8 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     public var onPublishLocationPing: ((LocationPin, UserStatus) -> Void)?
     
     /// Async stream yielding location pings for reactive consumers.
-    public let publishedPings: AsyncStream<(location: LocationPin, status: UserStatus)>
-    private let publishedPingsContinuation: AsyncStream<(location: LocationPin, status: UserStatus)>.Continuation
+    public private(set) var publishedPings: AsyncStream<(location: LocationPin, status: UserStatus)>
+    private var publishedPingsContinuation: AsyncStream<(location: LocationPin, status: UserStatus)>.Continuation!
     
     // MARK: - Initialization
     
@@ -127,6 +127,14 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         self.locationManager.distanceFilter = kCLDistanceFilterNone
         self.locationManager.activityType = .fitness
         self.locationManager.pausesLocationUpdatesAutomatically = false
+        
+        #if os(iOS)
+        if let bgModes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String],
+           bgModes.contains("location") {
+            self.locationManager.allowsBackgroundLocationUpdates = true
+            self.locationManager.showsBackgroundLocationIndicator = true
+        }
+        #endif
         
         updateBatteryState()
     }
@@ -191,8 +199,17 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         }
     }
     
+    /// Recreates the publishedPings stream and continuation to recover from task cancellation across sessions.
+    public func resetPublishedPingsStream() {
+        var streamContinuation: AsyncStream<(location: LocationPin, status: UserStatus)>.Continuation!
+        self.publishedPings = AsyncStream { streamContinuation = $0 }
+        self.publishedPingsContinuation = streamContinuation
+    }
+    
     /// Starts adaptive GPS sampling, CoreMotion activity tracking, and publishing scheduler.
     public func startTracking() throws {
+        resetPublishedPingsStream()
+        
         guard CLLocationManager.locationServicesEnabled() else {
             isGPSAvailable = false
             throw LocationServiceError.locationServicesDisabled

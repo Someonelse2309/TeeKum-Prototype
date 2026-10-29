@@ -64,11 +64,11 @@ public protocol CryptoServiceProvider: Actor {
     func generateSymmetricKey() -> SymmetricKey
     
     /// Persists the symmetric session key into the iOS Keychain backed by the Secure Enclave.
-    func storeKeyInKeychain(_ key: SymmetricKey, forSessionId sessionId: UInt32) throws
+    func storeKeyInKeychain(_ key: SymmetricKey, forSessionId sessionId: UInt16) throws
     
     /// Reads the symmetric session key from the iOS Keychain.
-    func loadKeyFromKeychain(forSessionId sessionId: UInt32) throws -> SymmetricKey?
+    func loadKeyFromKeychain(forSessionId sessionId: UInt16) throws -> SymmetricKey?
     
     /// Permanently purges the session key from the iOS Keychain upon leaving or teardown.
-    func purgeKeyFromKeychain(forSessionId sessionId: UInt32) throws
+    func purgeKeyFromKeychain(forSessionId sessionId: UInt16) throws
 }

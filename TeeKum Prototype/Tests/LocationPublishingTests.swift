@@ -51,7 +51,7 @@ private actor TestPeerTransport: PeerTransport {
             localPeerId: "TEST_PEER",
             serviceType: "_teekum._udp",
             sessionName: "Test",
-            sessionId: 0x12345678,
+            sessionId: 0x1234,
             state: .connected(peerCount: 1),
             activeDirectPeers: [],
             packetsSent: broadcastedPackets.count,
@@ -101,6 +101,7 @@ public struct LocationPublishingTests {
         if !(await testNoManufacturedCoordinatesWhenGPSUnavailable()) { passed = false }
         if !(await testEndToEndLocationPublisherPacketSealing()) { passed = false }
         if !(await testMapViewModelIntegration()) { passed = false }
+        if !(await testMultiSessionStreamRenewal()) { passed = false }
         
         if passed {
             print("--- [LocationPublishingTests] ALL LOCATION TESTS PASSED SUCCESSFULLY! ---")
@@ -527,11 +528,11 @@ public struct LocationPublishingTests {
         let service = LocationService(isLiveSharingEnabled: true)
         let keyData = Data(repeating: 0x42, count: 32)
         let session = GroupSession(
-            sessionId: 0xDEADBEEF,
+            sessionId: 0xDEAD,
             sessionName: "Festival Crew",
             symmetricKeyData: keyData,
-            localMemberId: 0x01020304,
-            localMemberName: "Alex",
+            localInitials: "ALX",
+            memberSlot: 1,
             isHost: true
         )
         
@@ -576,7 +577,7 @@ public struct LocationPublishingTests {
             print("FAILED: Wrong packet type: \(wirePacket.envelope.type)")
             return false
         }
-        guard wirePacket.envelope.sessionId == 0xDEADBEEF else {
+        guard wirePacket.envelope.sessionId == 0xDEAD else {
             print("FAILED: Wrong session ID.")
             return false
         }
@@ -595,8 +596,8 @@ public struct LocationPublishingTests {
             print("FAILED: Status code mismatch: expected .omw, got \(deserializedPayload.statusCode)")
             return false
         }
-        guard deserializedPayload.senderId == 0x01020304 else {
-            print("FAILED: Sender ID mismatch.")
+        guard deserializedPayload.senderInitials == "ALX" else {
+            print("FAILED: Sender initials mismatch.")
             return false
         }
         guard abs(deserializedPayload.coordinate.latitude - coord.latitude) < 0.000002 else {
@@ -619,7 +620,7 @@ public struct LocationPublishingTests {
             return false
         }
         
-        print("  ✓ LocationPublisher sealed 56-byte wire packets and dispatched both location pings and SOS.")
+        print("  ✓ LocationPublisher sealed 54-byte wire packets and dispatched both location pings and SOS.")
         return true
     }
     
@@ -668,6 +669,107 @@ public struct LocationPublishingTests {
         }
         
         print("  ✓ MapViewModel cleanly integrates with LocationService.")
+        return true
+    }
+    
+    // MARK: - Test 12: Multi-Session Stream Renewal Across Cancellation
+    
+    @MainActor
+    public static func testMultiSessionStreamRenewal() async -> Bool {
+        print("[Test 12] Multi-session stream renewal across task cancellation (no app rebuild required)...")
+        
+        let service = LocationService(isLiveSharingEnabled: true)
+        let mockTransport = TestPeerTransport()
+        let cryptoService = CryptoService()
+        
+        // --- SESSION 1 ---
+        let keyData1 = Data(repeating: 0x11, count: 32)
+        let session1 = GroupSession(
+            sessionId: 0x1111,
+            sessionName: "Session 1",
+            symmetricKeyData: keyData1,
+            localInitials: "ALX",
+            memberSlot: 1,
+            isHost: true
+        )
+        
+        try? service.startTracking()
+        let publisher1 = LocationPublisher(
+            locationService: service,
+            sessionProvider: { session1 },
+            cryptoService: cryptoService,
+            transport: mockTransport
+        )
+        publisher1.start()
+        
+        // Feed location in Session 1
+        let coord1 = CLLocationCoordinate2D(latitude: 33.684, longitude: -116.239)
+        service.simulateLocation(coordinate: coord1, accuracy: 5.0)
+        
+        // Yield briefly to let publisher Task process
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
+        let countSession1 = await mockTransport.getBroadcastedCount()
+        guard countSession1 >= 1 else {
+            print("FAILED: Session 1 did not broadcast location ping. Count: \(countSession1)")
+            return false
+        }
+        
+        // --- LEAVE SESSION 1 (Simulate user leaving group / task cancellation) ---
+        publisher1.stop()
+        service.stopTracking()
+        
+        // --- SESSION 2 (Simulate user creating new group WITHOUT rebuilding app) ---
+        let keyData2 = Data(repeating: 0x22, count: 32)
+        let session2 = GroupSession(
+            sessionId: 0x2222,
+            sessionName: "Session 2",
+            symmetricKeyData: keyData2,
+            localInitials: "ALX",
+            memberSlot: 2,
+            isHost: true
+        )
+        
+        // startTracking resets publishedPings stream
+        try? service.startTracking()
+        
+        let publisher2 = LocationPublisher(
+            locationService: service,
+            sessionProvider: { session2 },
+            cryptoService: cryptoService,
+            transport: mockTransport
+        )
+        publisher2.start()
+        
+        // Feed location in Session 2
+        let coord2 = CLLocationCoordinate2D(latitude: 33.685, longitude: -116.240)
+        service.simulateLocation(coordinate: coord2, accuracy: 4.0)
+        
+        // Yield briefly to let publisher Task process
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
+        let countSession2 = await mockTransport.getBroadcastedCount()
+        guard countSession2 > countSession1 else {
+            print("FAILED: Session 2 did not broadcast any location pings (stream was terminated or dead)! Total count: \(countSession2), Session 1 count: \(countSession1)")
+            return false
+        }
+        
+        guard let lastPacket = await mockTransport.getLastBroadcastedPacket() else {
+            print("FAILED: Session 2 missing last packet.")
+            return false
+        }
+        
+        let wirePacket = try! RawWirePacket.fromWireData(lastPacket)
+        guard wirePacket.envelope.sessionId == 0x2222 else {
+            print("FAILED: Session 2 packet session ID mismatch: expected 0x2222, got \(String(format: "0x%04X", wirePacket.envelope.sessionId))")
+            return false
+        }
+        
+        // Cleanup
+        publisher2.stop()
+        service.stopTracking()
+        
+        print("  ✓ Multi-session stream renewal successfully preserved location sharing across session restarts!")
         return true
     }
 }

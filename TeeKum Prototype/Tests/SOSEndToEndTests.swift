@@ -247,11 +247,11 @@ public struct SOSEndToEndTests {
         let mockTransport = MockSOSPeerTransport(activePeers: 1)
         let cryptoService = CryptoService()
         let session = GroupSession(
-            sessionId: 0x12345678,
+            sessionId: 0x1234,
             sessionName: "Test Group",
             symmetricKeyData: Data(repeating: 0x42, count: 32),
-            localMemberId: 0x00010001,
-            localMemberName: "Tester",
+            localInitials: "TST",
+            memberSlot: 1,
             isHost: true
         )
         
@@ -278,7 +278,7 @@ public struct SOSEndToEndTests {
         // Verify wire packet structure
         let wireData = packets[0]
         guard wireData.count == PacketConstants.wirePacketSize else {
-            print("FAILED: packet must be exactly 56 bytes")
+            print("FAILED: packet must be exactly \(PacketConstants.wirePacketSize) bytes")
             return false
         }
         
@@ -326,9 +326,13 @@ public struct SOSEndToEndTests {
         print("[TEST 3] testUrgentQueuePriorityAndCoalescingProtection...")
         let queue = PriorityOutboxQueue(maxUrgentCapacity: 10)
         
+        let locPingHeader = (PacketConstants.protocolVersion << 4) | PacketType.locationPing.rawValue
+        let sosHeader = (PacketConstants.protocolVersion << 4) | PacketType.sos.rawValue
+        let ackHeader = (PacketConstants.protocolVersion << 4) | PacketType.ack.rawValue
+        
         // 1. Enqueue older normal location ping (Type 0x01)
-        var ping1 = Data(repeating: 0x11, count: 56)
-        ping1[0] = 0x11 // Type 0x01
+        var ping1 = Data(repeating: 0x11, count: PacketConstants.wirePacketSize)
+        ping1[0] = locPingHeader
         try! queue.enqueue(data: ping1, destinationPeerId: "peer-B")
         
         guard queue.totalQueuedCount == 1, queue.urgentCount == 0 else {
@@ -337,8 +341,8 @@ public struct SOSEndToEndTests {
         }
         
         // 2. Enqueue newer normal location ping for same destination -> Coalesce!
-        var ping2 = Data(repeating: 0x22, count: 56)
-        ping2[0] = 0x11
+        var ping2 = Data(repeating: 0x22, count: PacketConstants.wirePacketSize)
+        ping2[0] = locPingHeader
         try! queue.enqueue(data: ping2, destinationPeerId: "peer-B")
         
         guard queue.totalQueuedCount == 1, queue.obsoletePingsCoalesced == 1 else {
@@ -347,8 +351,8 @@ public struct SOSEndToEndTests {
         }
         
         // 3. Enqueue Emergency SOS Packet (Type 0x02)
-        var sosPacket = Data(repeating: 0xEE, count: 56)
-        sosPacket[0] = 0x12 // Type 0x02 (SOS)
+        var sosPacket = Data(repeating: 0xEE, count: PacketConstants.wirePacketSize)
+        sosPacket[0] = sosHeader
         try! queue.enqueue(data: sosPacket)
         
         guard queue.urgentCount == 1, queue.totalQueuedCount == 2 else {
@@ -357,8 +361,8 @@ public struct SOSEndToEndTests {
         }
         
         // 4. Enqueue Delivery ACK Packet (Type 0x06)
-        var ackPacket = Data(repeating: 0xAA, count: 56)
-        ackPacket[0] = 0x16 // Type 0x06 (ACK)
+        var ackPacket = Data(repeating: 0xAA, count: PacketConstants.wirePacketSize)
+        ackPacket[0] = ackHeader
         try! queue.enqueue(data: ackPacket)
         
         guard queue.urgentCount == 2, queue.totalQueuedCount == 3 else {
@@ -367,8 +371,8 @@ public struct SOSEndToEndTests {
         }
         
         // 5. Enqueue third location ping -> must coalesce without touching urgent lane!
-        var ping3 = Data(repeating: 0x33, count: 56)
-        ping3[0] = 0x11
+        var ping3 = Data(repeating: 0x33, count: PacketConstants.wirePacketSize)
+        ping3[0] = locPingHeader
         try! queue.enqueue(data: ping3, destinationPeerId: "peer-B")
         
         guard queue.urgentCount == 2, queue.obsoletePingsCoalesced == 2 else {
@@ -434,8 +438,8 @@ public struct SOSEndToEndTests {
         }
         
         // Relay ACK arrival
-        vm.handleAckReceived(status: .relayedByMeshHop, responderId: 0x00020002, hopCount: 3)
-        guard case let .relayedAck(hops, responder) = vm.deliveryState, hops == 3, responder == 0x00020002 else {
+        vm.handleAckReceived(status: .relayedByMeshHop, responderId: "REL", hopCount: 3)
+        guard case let .relayedAck(hops, responder) = vm.deliveryState, hops == 3, responder == "REL" else {
             print("FAILED: relay ack must set .relayedAck with hop count and responder evidence")
             return false
         }
@@ -447,13 +451,13 @@ public struct SOSEndToEndTests {
         }
         
         // Destination Friend ACK arrival
-        vm.handleAckReceived(status: .deliveredToFriend, responderId: 0x00030003, hopCount: 1)
-        guard case let .deliveredToFriend(friendId, _) = vm.deliveryState, friendId == 0x00030003 else {
+        vm.handleAckReceived(status: .deliveredToFriend, responderId: "FRN", hopCount: 1)
+        guard case let .deliveredToFriend(friendId, _) = vm.deliveryState, friendId == "FRN" else {
             print("FAILED: friend delivery ack must set .deliveredToFriend with friendId evidence")
             return false
         }
         
-        guard vm.deliveryState.isDelivered, vm.lastDeliveredFriendId == 0x00030003 else {
+        guard vm.deliveryState.isDelivered, vm.lastDeliveredFriendId == "FRN" else {
             print("FAILED: isDelivered and lastDeliveredFriendId mismatch")
             return false
         }
@@ -471,11 +475,11 @@ public struct SOSEndToEndTests {
         let mockTransport = MockSOSPeerTransport(activePeers: 1)
         let cryptoService = CryptoService()
         let session = GroupSession(
-            sessionId: 0x99999999,
+            sessionId: 0x9999,
             sessionName: "Test Group",
             symmetricKeyData: Data(repeating: 0x55, count: 32),
-            localMemberId: 0x00010001,
-            localMemberName: "Tester",
+            localInitials: "TST",
+            memberSlot: 1,
             isHost: true
         )
         
@@ -538,11 +542,11 @@ public struct SOSEndToEndTests {
         
         let cryptoService = CryptoService()
         let session = GroupSession(
-            sessionId: 0x11111111,
+            sessionId: 0x1111,
             sessionName: "Legit Group",
             symmetricKeyData: Data(repeating: 0xAA, count: 32),
-            localMemberId: 0x00010001,
-            localMemberName: "Victim",
+            localInitials: "VIC",
+            memberSlot: 1,
             isHost: false
         )
         
@@ -559,12 +563,12 @@ public struct SOSEndToEndTests {
             coordinate: CLLocationCoordinate2D(latitude: 33.68, longitude: -116.23),
             accuracy: 5,
             sosEventId: 0xBAD00001,
-            senderId: 0x00020002,
+            senderInitials: "STR",
             emergencyType: .security,
             batteryLevel: 90
         )
         let env = CleartextEnvelope(
-            version: 1,
+            version: PacketConstants.protocolVersion,
             type: .sos,
             sessionId: session.sessionId,
             sequenceNumber: 0x02000001
@@ -602,12 +606,12 @@ public struct SOSEndToEndTests {
             return false
         }
         
-        // 3. Self-reflection packet (senderId matches localMemberId)
+        // 3. Self-reflection packet (senderInitials matches localInitials)
         let selfPayload = SOSPayload(
             coordinate: CLLocationCoordinate2D(latitude: 33.68, longitude: -116.23),
             accuracy: 5,
             sosEventId: 0x00001234,
-            senderId: session.localMemberId, // Reflection
+            senderInitials: session.localInitials, // Reflection
             emergencyType: .general,
             batteryLevel: 80
         )
@@ -634,11 +638,11 @@ public struct SOSEndToEndTests {
         let cryptoService = CryptoService()
         let mockTransport = MockSOSPeerTransport(activePeers: 1)
         let session = GroupSession(
-            sessionId: 0x33333333,
+            sessionId: 0x3333,
             sessionName: "Test Group",
             symmetricKeyData: Data(repeating: 0x77, count: 32),
-            localMemberId: 0x00010001,
-            localMemberName: "Receiver",
+            localInitials: "RCV",
+            memberSlot: 1,
             isHost: false
         )
         
@@ -654,12 +658,12 @@ public struct SOSEndToEndTests {
             coordinate: CLLocationCoordinate2D(latitude: 33.68, longitude: -116.23),
             accuracy: 5,
             sosEventId: 0xDEADBEEF, // Constant event ID
-            senderId: 0x00020002,   // Friend in distress
+            senderInitials: "FRN",   // Friend in distress
             emergencyType: .separated,
             batteryLevel: 65
         )
         
-        let env1 = CleartextEnvelope(version: 1, type: .sos, sessionId: session.sessionId, sequenceNumber: 0x02000001)
+        let env1 = CleartextEnvelope(version: PacketConstants.protocolVersion, type: .sos, sessionId: session.sessionId, sequenceNumber: 0x02000001)
         let legitKey = SymmetricKey(data: session.symmetricKeyData)
         let sealed1 = try! await cryptoService.seal(payload: sosPayload.serialize(), envelope: env1, using: legitKey)
         let wire1 = RawWirePacket(envelope: env1, ciphertext: sealed1.ciphertext, authTag: sealed1.authTag)
@@ -688,7 +692,7 @@ public struct SOSEndToEndTests {
         }
         
         // --- Packet 2: Rapid Duplicate Retransmission (Same sosEventId) ---
-        let env2 = CleartextEnvelope(version: 1, type: .sos, sessionId: session.sessionId, sequenceNumber: 0x02000002)
+        let env2 = CleartextEnvelope(version: PacketConstants.protocolVersion, type: .sos, sessionId: session.sessionId, sequenceNumber: 0x02000002)
         let sealed2 = try! await cryptoService.seal(payload: sosPayload.serialize(), envelope: env2, using: legitKey)
         let wire2 = RawWirePacket(envelope: env2, ciphertext: sealed2.ciphertext, authTag: sealed2.authTag)
         
@@ -712,7 +716,7 @@ public struct SOSEndToEndTests {
         }
         
         // --- Packet 3: Third Duplicate Retransmission ---
-        let env3 = CleartextEnvelope(version: 1, type: .sos, sessionId: session.sessionId, sequenceNumber: 0x02000003)
+        let env3 = CleartextEnvelope(version: PacketConstants.protocolVersion, type: .sos, sessionId: session.sessionId, sequenceNumber: 0x02000003)
         let sealed3 = try! await cryptoService.seal(payload: sosPayload.serialize(), envelope: env3, using: legitKey)
         let wire3 = RawWirePacket(envelope: env3, ciphertext: sealed3.ciphertext, authTag: sealed3.authTag)
         
@@ -739,7 +743,7 @@ public struct SOSEndToEndTests {
         
         let cryptoService = CryptoService()
         let sharedKeyData = Data(repeating: 0x88, count: 32)
-        let sessionId: UInt32 = 0x55555555
+        let sessionId: UInt16 = 0x5555
         
         // Device A (Distressed Sender)
         let transportA = MockSOSPeerTransport(activePeers: 1)
@@ -747,8 +751,8 @@ public struct SOSEndToEndTests {
             sessionId: sessionId,
             sessionName: "Festival Group",
             symmetricKeyData: sharedKeyData,
-            localMemberId: 0x00010001,
-            localMemberName: "Alice (Distressed)",
+            localInitials: "ALX",
+            memberSlot: 1,
             isHost: true
         )
         let vmA = SOSViewModel(
@@ -764,8 +768,8 @@ public struct SOSEndToEndTests {
             sessionId: sessionId,
             sessionName: "Festival Group",
             symmetricKeyData: sharedKeyData,
-            localMemberId: 0x00020002,
-            localMemberName: "Bob (Friend)",
+            localInitials: "BOB",
+            memberSlot: 2,
             isHost: false
         )
         let mockAlerterB = MockSOSAudioAlerter()
@@ -816,7 +820,7 @@ public struct SOSEndToEndTests {
         await vmA.processInboundPacket(InboundPacket(rawPacket: rawBobAck, sourcePeerId: "Bob"))
         
         // 5. Verify Alice confirms DELIVERED_TO_FRIEND
-        guard case let .deliveredToFriend(friendId, _) = vmA.deliveryState, friendId == 0x00020002 else {
+        guard case let .deliveredToFriend(friendId, _) = vmA.deliveryState, friendId == "BOB" else {
             print("FAILED: Alice's state must transition to .deliveredToFriend with Bob's ID")
             return false
         }
@@ -843,8 +847,8 @@ public struct SOSEndToEndTests {
         }
         
         // 1. Relay Node responds first with relayedByMeshHop
-        vm.handleAckReceived(status: .relayedByMeshHop, responderId: 0x99999999, hopCount: 2)
-        guard case let .relayedAck(hops, responder) = vm.deliveryState, hops == 2, responder == 0x99999999 else {
+        vm.handleAckReceived(status: .relayedByMeshHop, responderId: "REL", hopCount: 2)
+        guard case let .relayedAck(hops, responder) = vm.deliveryState, hops == 2, responder == "REL" else {
             print("FAILED: state should be .relayedAck")
             return false
         }
@@ -854,8 +858,8 @@ public struct SOSEndToEndTests {
         }
         
         // 2. Later, destination friend device confirms delivery
-        vm.handleAckReceived(status: .deliveredToFriend, responderId: 0x11111111, hopCount: 1)
-        guard case let .deliveredToFriend(friendId, _) = vm.deliveryState, friendId == 0x11111111 else {
+        vm.handleAckReceived(status: .deliveredToFriend, responderId: "BOB", hopCount: 1)
+        guard case let .deliveredToFriend(friendId, _) = vm.deliveryState, friendId == "BOB" else {
             print("FAILED: state must progress to .deliveredToFriend upon friend confirmation")
             return false
         }
@@ -878,11 +882,11 @@ public struct SOSEndToEndTests {
         let mockTransport = MockSOSPeerTransport(activePeers: 0)
         let cryptoService = CryptoService()
         let session = GroupSession(
-            sessionId: 0x77777777,
+            sessionId: 0x7777,
             sessionName: "Lonely Group",
             symmetricKeyData: Data(repeating: 0x33, count: 32),
-            localMemberId: 0x00010001,
-            localMemberName: "Solo",
+            localInitials: "SOL",
+            memberSlot: 1,
             isHost: true
         )
         
@@ -917,7 +921,7 @@ public struct SOSEndToEndTests {
         
         let cryptoService = CryptoService()
         let sharedKeyData = Data(repeating: 0x99, count: 32)
-        let sessionId: UInt32 = 0x77778888
+        let sessionId: UInt16 = 0x7788
         
         // Node A: Alice (Sender in distress)
         let transportA = MockSOSPeerTransport(activePeers: 1)
@@ -925,8 +929,8 @@ public struct SOSEndToEndTests {
             sessionId: sessionId,
             sessionName: "Festival Mesh",
             symmetricKeyData: sharedKeyData,
-            localMemberId: 0x00010001,
-            localMemberName: "Alice",
+            localInitials: "ALX",
+            memberSlot: 1,
             isHost: true
         )
         let vmA = SOSViewModel(
@@ -941,8 +945,8 @@ public struct SOSEndToEndTests {
             sessionId: sessionId,
             sessionName: "Festival Mesh",
             symmetricKeyData: sharedKeyData,
-            localMemberId: 0x00020002,
-            localMemberName: "Bob (Relay)",
+            localInitials: "BOB",
+            memberSlot: 2,
             isHost: false
         )
         let mockAlerterB = MockSOSAudioAlerter()
@@ -952,7 +956,7 @@ public struct SOSEndToEndTests {
             transport: transportB,
             audioAlerter: mockAlerterB
         )
-        vmB.memberNameResolver = { id in id == 0x00010001 ? "Alice" : nil }
+        vmB.memberNameResolver = { id in id == "ALX" ? "Alice" : nil }
         
         // Node C: Charlie (Downstream Friend reachable only through Bob)
         let transportC = MockSOSPeerTransport(activePeers: 1)
@@ -960,8 +964,8 @@ public struct SOSEndToEndTests {
             sessionId: sessionId,
             sessionName: "Festival Mesh",
             symmetricKeyData: sharedKeyData,
-            localMemberId: 0x00030003,
-            localMemberName: "Charlie",
+            localInitials: "CHL",
+            memberSlot: 3,
             isHost: false
         )
         let mockAlerterC = MockSOSAudioAlerter()
@@ -971,7 +975,7 @@ public struct SOSEndToEndTests {
             transport: transportC,
             audioAlerter: mockAlerterC
         )
-        vmC.memberNameResolver = { id in id == 0x00010001 ? "Alice" : nil }
+        vmC.memberNameResolver = { id in id == "ALX" ? "Alice" : nil }
         
         // Step 1: Alice triggers SOS
         vmA.triggerSOS(emergencyType: .medical)
@@ -1060,7 +1064,7 @@ public struct SOSEndToEndTests {
         // Step 6: Relay ACK back to Alice through Bob
         await vmA.processInboundPacket(InboundPacket(rawPacket: charlieRawAck, sourcePeerId: "Bob"))
         
-        guard case let .deliveredToFriend(friendId, _) = vmA.deliveryState, friendId == 0x00030003 else {
+        guard case let .deliveredToFriend(friendId, _) = vmA.deliveryState, friendId == "CHL" else {
             print("FAILED: Alice must receive confirmed delivery from Charlie")
             return false
         }

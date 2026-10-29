@@ -59,7 +59,7 @@ public struct CryptoSecurityTests {
         
         let envelope = CleartextEnvelope(
             type: .locationPing,
-            sessionId: 0xA1B2C3D4,
+            sessionId: 0xA1B2,
             sequenceNumber: CleartextEnvelope.makeSequenceNumber(memberSlot: 1, counter: 42)
         )
         
@@ -67,7 +67,7 @@ public struct CryptoSecurityTests {
             coordinate: CLLocationCoordinate2D(latitude: 33.680312, longitude: -116.237409),
             accuracy: 5,
             statusCode: .available,
-            senderId: 0x11112222,
+            senderInitials: "DNA",
             batteryLevel: 90,
             heading: 120
         )
@@ -91,7 +91,7 @@ public struct CryptoSecurityTests {
             }
             
             let decodedPayload = try LocationPingPayload.deserialize(from: decrypted)
-            guard decodedPayload.senderId == 0x11112222,
+            guard decodedPayload.senderInitials == "DNA",
                   decodedPayload.batteryLevel == 90 else {
                 print("  FAIL: Decoded payload metadata mismatch.")
                 return false
@@ -180,11 +180,11 @@ public struct CryptoSecurityTests {
         let cryptoService = CryptoService()
         let key = cryptoService.generateSymmetricKey()
         let envelope = CleartextEnvelope(
-            version: 0x01,
+            version: 0x02,
             type: .locationPing,
             hopLimit: 8,
             hopCount: 0,
-            sessionId: 0x11223344,
+            sessionId: 0x1122,
             sequenceNumber: 100
         )
         let plainBytes = Data(repeating: 0x11, count: 30)
@@ -192,9 +192,9 @@ public struct CryptoSecurityTests {
         do {
             let (ciphertext, authTag) = try await cryptoService.seal(payload: plainBytes, envelope: envelope, using: key)
             
-            // Subtest A: Tamper sessionId (Bytes 2..5)
+            // Subtest A: Tamper sessionId
             var tamperedSidEnvelope = envelope
-            tamperedSidEnvelope.sessionId = 0x99999999
+            tamperedSidEnvelope.sessionId = 0x9999
             do {
                 _ = try await cryptoService.open(ciphertext: ciphertext, envelope: tamperedSidEnvelope, authTag: authTag, using: key)
                 print("  FAIL: Tampered sessionId should cause authentication failure.")
@@ -256,7 +256,7 @@ public struct CryptoSecurityTests {
             type: .locationPing,
             hopLimit: 8,
             hopCount: 0,
-            sessionId: 0xFEEDFACE,
+            sessionId: 0xCAFE,
             sequenceNumber: 50
         )
         let plainBytes = Data(repeating: 0x42, count: 30)
@@ -328,7 +328,7 @@ public struct CryptoSecurityTests {
         print("[Test 7] Nonce uniqueness and collision prevention across group members...")
         
         // Two members in same session with same counter (counter = 1)
-        let sessionId: UInt32 = 0x98765432
+        let sessionId: UInt16 = 0x9876
         let seqMember0 = CleartextEnvelope.makeSequenceNumber(memberSlot: 0, counter: 1)
         let seqMember1 = CleartextEnvelope.makeSequenceNumber(memberSlot: 1, counter: 1)
         
@@ -356,7 +356,7 @@ public struct CryptoSecurityTests {
     public static func testDuplicatePacketRejection() async -> Bool {
         print("[Test 8] ReplayProtectionFilter: exact duplicate packet rejection...")
         let filter = ReplayProtectionFilter(deduplicationWindow: 300.0)
-        let sessionId: UInt32 = 0xDEADBEEF
+        let sessionId: UInt16 = 0xDEAD
         let seq: UInt32 = 42
         
         // Initial arrival: not duplicate
@@ -390,31 +390,31 @@ public struct CryptoSecurityTests {
     public static func testAntiReplaySequenceEnforcement() async -> Bool {
         print("[Test 9] ReplayProtectionFilter: anti-replay sequence monotonicity...")
         let filter = ReplayProtectionFilter()
-        let senderId: UInt32 = 0x1001
+        let senderInitials = "ALX"
         
         // First valid sequence
-        let ok1 = await filter.checkAndRecordSenderSequence(senderId: senderId, sequenceNumber: 10)
+        let ok1 = await filter.checkAndRecordSenderSequence(senderInitials: senderInitials, sequenceNumber: 10)
         guard ok1 else {
             print("  FAIL: Sequence 10 should be accepted.")
             return false
         }
         
         // Replayed old sequence (sequence 5 <= 10)
-        let replayed = await filter.checkAndRecordSenderSequence(senderId: senderId, sequenceNumber: 5)
+        let replayed = await filter.checkAndRecordSenderSequence(senderInitials: senderInitials, sequenceNumber: 5)
         guard !replayed else {
             print("  FAIL: Older sequence 5 should be rejected as replayed.")
             return false
         }
         
         // Duplicate sequence (sequence 10 <= 10)
-        let dupSeq = await filter.checkAndRecordSenderSequence(senderId: senderId, sequenceNumber: 10)
+        let dupSeq = await filter.checkAndRecordSenderSequence(senderInitials: senderInitials, sequenceNumber: 10)
         guard !dupSeq else {
             print("  FAIL: Duplicate sequence 10 should be rejected.")
             return false
         }
         
         // Monotonic advance (sequence 11 > 10)
-        let advance = await filter.checkAndRecordSenderSequence(senderId: senderId, sequenceNumber: 11)
+        let advance = await filter.checkAndRecordSenderSequence(senderInitials: senderInitials, sequenceNumber: 11)
         guard advance else {
             print("  FAIL: Advance sequence 11 should be accepted.")
             return false
@@ -429,22 +429,22 @@ public struct CryptoSecurityTests {
     public static func testStaleLocationReplacementPrevention() async -> Bool {
         print("[Test 10] Stale location replacement prevention...")
         let filter = ReplayProtectionFilter()
-        let senderId: UInt32 = 0x2002
+        let senderInitials = "BOB"
         
         let t1 = Date(timeIntervalSince1970: 1729000100)
         let t2 = Date(timeIntervalSince1970: 1729000200)
         let staleT = Date(timeIntervalSince1970: 1729000150)
         
         // Apply fresh measurement t1
-        let ok1 = await filter.checkAndRecordLocationFreshness(senderId: senderId, timestamp: t1)
+        let ok1 = await filter.checkAndRecordLocationFreshness(senderInitials: senderInitials, timestamp: t1)
         guard ok1 else { return false }
         
         // Apply newer measurement t2
-        let ok2 = await filter.checkAndRecordLocationFreshness(senderId: senderId, timestamp: t2)
+        let ok2 = await filter.checkAndRecordLocationFreshness(senderInitials: senderInitials, timestamp: t2)
         guard ok2 else { return false }
         
         // Out-of-order / delayed arrival with timestamp between t1 and t2: must be rejected!
-        let staleArrival = await filter.checkAndRecordLocationFreshness(senderId: senderId, timestamp: staleT)
+        let staleArrival = await filter.checkAndRecordLocationFreshness(senderInitials: senderInitials, timestamp: staleT)
         guard !staleArrival else {
             print("  FAIL: Stale timestamp was allowed to overwrite newer location.")
             return false
@@ -490,7 +490,7 @@ public struct CryptoSecurityTests {
     public static func testKeychainStorageLifecycle() async -> Bool {
         print("[Test 12] Keychain Services key storage, retrieval, and teardown purge...")
         let cryptoService = CryptoService()
-        let sessionId: UInt32 = 0x12345678
+        let sessionId: UInt16 = 0x1234
         let key = cryptoService.generateSymmetricKey()
         
         do {
@@ -530,7 +530,7 @@ public struct CryptoSecurityTests {
     // MARK: - Test 13: End-to-End Wire Datagram Codec
     
     public static func testEndToEndWireDatagramCodec() async -> Bool {
-        print("[Test 13] End-to-end 56-byte wire datagram seal and open...")
+        print("[Test 13] End-to-end 54-byte wire datagram seal and open...")
         let cryptoService = CryptoService()
         let key = cryptoService.generateSymmetricKey()
         
@@ -538,28 +538,28 @@ public struct CryptoSecurityTests {
             type: .sos,
             hopLimit: 8,
             hopCount: 0,
-            sessionId: 0x99998888,
+            sessionId: 0x9988,
             sequenceNumber: CleartextEnvelope.makeSequenceNumber(memberSlot: 2, counter: 7)
         )
         let sosPayload = SOSPayload(
             coordinate: CLLocationCoordinate2D(latitude: -6.2088, longitude: 106.8456),
             accuracy: 4,
             sosEventId: 0x55555555,
-            senderId: 0x22223333,
+            senderInitials: "EMG",
             emergencyType: .medical,
             batteryLevel: 35
         )
         let plainBytes = sosPayload.serialize()
         
         do {
-            // Seal to exact 56 wire bytes
+            // Seal to exact 54 wire bytes
             let wireData = try await cryptoService.sealToWireBytes(payload: plainBytes, envelope: envelope, using: key)
-            guard wireData.count == 56 else {
-                print("  FAIL: Wire data must be exactly 56 bytes, got \(wireData.count)")
+            guard wireData.count == 54 else {
+                print("  FAIL: Wire data must be exactly 54 bytes, got \(wireData.count)")
                 return false
             }
             
-            // Open 56 wire bytes
+            // Open 54 wire bytes
             let (unpackedEnvelope, decryptedPayload) = try await cryptoService.openWireBytes(wireData, using: key)
             guard unpackedEnvelope == envelope else {
                 print("  FAIL: Unpacked envelope mismatch.")
@@ -573,12 +573,12 @@ public struct CryptoSecurityTests {
             let unpackedSOS = try SOSPayload.deserialize(from: decryptedPayload)
             guard unpackedSOS.emergencyType == .medical,
                   unpackedSOS.batteryLevel == 35,
-                  unpackedSOS.senderId == 0x22223333 else {
+                  unpackedSOS.senderInitials == "EMG" else {
                 print("  FAIL: Unpacked SOS fields mismatch.")
                 return false
             }
             
-            print("  PASS: End-to-end 56-byte datagram sealed, parsed, and verified.")
+            print("  PASS: End-to-end 54-byte datagram sealed, parsed, and verified.")
             return true
         } catch {
             print("  FAIL: End-to-end wire error: \(error)")

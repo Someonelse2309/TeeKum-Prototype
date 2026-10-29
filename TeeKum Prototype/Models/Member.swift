@@ -9,12 +9,16 @@ import Foundation
 import CoreLocation
 
 /// Represents a peer member participating in an active TeeKum group session.
+/// Uniquely identified by their 3-letter Base-26 initials (e.g., "DNA", "ALX").
 public struct Member: Identifiable, Equatable, Hashable, Sendable {
-    /// Ephemeral 32-bit member identifier unique within the active session.
-    public let id: UInt32
+    /// 3-letter uppercase initials identifying the member.
+    public let id: String
     
-    /// Display nickname chosen by the user.
+    /// Display name / initials.
     public var name: String
+    
+    /// Initials accessor.
+    public var initials: String { id }
     
     /// Latest local timestamp when a valid authenticated packet was received from this member.
     public var lastSeen: Date
@@ -41,8 +45,8 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
     public var rssi: Int8?
     
     public init(
-        id: UInt32,
-        name: String,
+        id: String,
+        name: String? = nil,
         lastSeen: Date = Date(),
         coordinate: CLLocationCoordinate2D? = nil,
         horizontalAccuracy: CLLocationAccuracy? = nil,
@@ -52,8 +56,9 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
         isDirectPeer: Bool = false,
         rssi: Int8? = nil
     ) {
-        self.id = id
-        self.name = name
+        let cleanId = InitialsCodec.sanitize(id)
+        self.id = cleanId
+        self.name = name ?? cleanId
         self.lastSeen = lastSeen
         self.coordinate = coordinate
         self.horizontalAccuracy = horizontalAccuracy

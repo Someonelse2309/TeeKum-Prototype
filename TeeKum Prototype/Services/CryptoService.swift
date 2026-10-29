@@ -18,7 +18,7 @@ import Security
 /// 4. Stale state replacement rejection for coordinates
 public actor ReplayProtectionFilter {
     private struct PacketKey: Hashable {
-        let sessionId: UInt32
+        let sessionId: UInt16
         let sequenceNumber: UInt32
     }
     
@@ -31,11 +31,11 @@ public actor ReplayProtectionFilter {
     /// Map of recently seen (sessionId, sequenceNumber) -> arrival time.
     private var seenPackets: [PacketKey: Date] = [:]
     
-    /// Highest seen sequence number per memberId.
-    private var highestSequencePerSender: [UInt32: UInt32] = [:]
+    /// Highest seen sequence number per member initials.
+    private var highestSequencePerSender: [String: UInt32] = [:]
     
-    /// Timestamp of freshest location measurement per memberId.
-    private var latestTimestampPerSender: [UInt32: Date] = [:]
+    /// Timestamp of freshest location measurement per member initials.
+    private var latestTimestampPerSender: [String: Date] = [:]
     
     public init(
         deduplicationWindow: TimeInterval = 300.0,
@@ -47,7 +47,7 @@ public actor ReplayProtectionFilter {
     
     /// Returns true if the packet (sessionId, sequenceNumber) has already been seen
     /// within the active deduplication window.
-    public func isDuplicate(sessionId: UInt32, sequenceNumber: UInt32, now: Date = Date()) -> Bool {
+    public func isDuplicate(sessionId: UInt16, sequenceNumber: UInt32, now: Date = Date()) -> Bool {
         evictExpiredEntries(now: now)
         let key = PacketKey(sessionId: sessionId, sequenceNumber: sequenceNumber)
         guard let arrival = seenPackets[key] else { return false }
@@ -55,7 +55,7 @@ public actor ReplayProtectionFilter {
     }
     
     /// Records a verified packet into the duplicate cache.
-    public func recordPacket(sessionId: UInt32, sequenceNumber: UInt32, now: Date = Date()) {
+    public func recordPacket(sessionId: UInt16, sequenceNumber: UInt32, now: Date = Date()) {
         let key = PacketKey(sessionId: sessionId, sequenceNumber: sequenceNumber)
         seenPackets[key] = now
     }
@@ -77,26 +77,28 @@ public actor ReplayProtectionFilter {
     
     /// Validates and records per-sender sequence monotonicity.
     /// Returns false if sequenceNumber <= highest seen sequence number for this sender.
-    public func checkAndRecordSenderSequence(senderId: UInt32, sequenceNumber: UInt32) -> Bool {
-        if let highest = highestSequencePerSender[senderId] {
+    public func checkAndRecordSenderSequence(senderInitials: String, sequenceNumber: UInt32) -> Bool {
+        let clean = InitialsCodec.sanitize(senderInitials)
+        if let highest = highestSequencePerSender[clean] {
             guard sequenceNumber > highest else {
                 return false
             }
         }
-        highestSequencePerSender[senderId] = sequenceNumber
+        highestSequencePerSender[clean] = sequenceNumber
         return true
     }
     
     /// Validates whether an incoming location measurement is strictly newer than
     /// the freshest recorded measurement for that sender.
     /// Prevents delayed, out-of-order packets from overwriting fresher friend pins.
-    public func checkAndRecordLocationFreshness(senderId: UInt32, timestamp: Date) -> Bool {
-        if let latest = latestTimestampPerSender[senderId] {
+    public func checkAndRecordLocationFreshness(senderInitials: String, timestamp: Date) -> Bool {
+        let clean = InitialsCodec.sanitize(senderInitials)
+        if let latest = latestTimestampPerSender[clean] {
             guard timestamp > latest else {
                 return false
             }
         }
-        latestTimestampPerSender[senderId] = timestamp
+        latestTimestampPerSender[clean] = timestamp
         return true
     }
     
@@ -130,7 +132,7 @@ public actor CryptoService: CryptoServiceProvider {
     private let keychainService: String = "com.teekum.session"
     
     /// Ephemeral in-memory key cache keyed by sessionId (ensures zero disk persistence upon teardown).
-    private var inMemoryKeys: [UInt32: SymmetricKey] = [:]
+    private var inMemoryKeys: [UInt16: SymmetricKey] = [:]
     
     /// Active replay and deduplication protection filter.
     public let replayFilter: ReplayProtectionFilter
@@ -267,8 +269,8 @@ public actor CryptoService: CryptoServiceProvider {
     
     // MARK: - Keychain Services Storage
     
-    private func keychainAccount(for sessionId: UInt32) -> String {
-        String(format: "session_0x%08X", sessionId)
+    private func keychainAccount(for sessionId: UInt16) -> String {
+        String(format: "session_0x%04X", sessionId)
     }
     
     private func isKeychainUnavailable(status: OSStatus) -> Bool {
@@ -279,7 +281,7 @@ public actor CryptoService: CryptoServiceProvider {
     }
     
     /// Persists the symmetric session key into the iOS Keychain backed by the Secure Enclave.
-    public func storeKeyInKeychain(_ key: SymmetricKey, forSessionId sessionId: UInt32) throws {
+    public func storeKeyInKeychain(_ key: SymmetricKey, forSessionId sessionId: UInt16) throws {
         let keyData = key.withUnsafeBytes { Data($0) }
         guard keyData.count == 32 else {
             throw CryptoServiceError.invalidKeySize(expected: 32, actual: keyData.count)
@@ -321,7 +323,7 @@ public actor CryptoService: CryptoServiceProvider {
     }
     
     /// Reads the symmetric session key from the iOS Keychain or in-memory cache.
-    public func loadKeyFromKeychain(forSessionId sessionId: UInt32) throws -> SymmetricKey? {
+    public func loadKeyFromKeychain(forSessionId sessionId: UInt16) throws -> SymmetricKey? {
         if let cached = inMemoryKeys[sessionId] {
             return cached
         }
@@ -356,7 +358,7 @@ public actor CryptoService: CryptoServiceProvider {
     }
     
     /// Permanently purges the session key from the iOS Keychain and in-memory actor state.
-    public func purgeKeyFromKeychain(forSessionId sessionId: UInt32) throws {
+    public func purgeKeyFromKeychain(forSessionId sessionId: UInt16) throws {
         inMemoryKeys.removeValue(forKey: sessionId)
         let account = keychainAccount(for: sessionId)
         let query: [String: Any] = [

@@ -116,23 +116,25 @@ public struct MainMapView: View {
             // Friend Annotations with Honest Freshness Indicators
             ForEach(sessionViewModel.members) { member in
                 if let coord = member.coordinate {
-                    Annotation(member.name, coordinate: coord) {
+                    Annotation("", coordinate: coord) {
                         friendPinView(for: member)
                             .onTapGesture {
                                 mapViewModel.selectMemberForNavigation(member)
                             }
                     }
+                    .annotationTitles(.hidden)
                 }
             }
             
             // Active Single Meeting Point Annotation
             if let mp = meetingPointViewModel.activeMeetingPoint {
-                Annotation(mp.name, coordinate: mp.coordinate) {
+                Annotation("", coordinate: mp.coordinate) {
                     meetingPointPinView(for: mp)
                         .onTapGesture {
                             isShowingMeetingPoints = true
                         }
                 }
+                .annotationTitles(.hidden)
             }
         }
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
@@ -269,20 +271,6 @@ public struct MainMapView: View {
             
             Spacer()
             
-            // Show Group QR Code for latecomers
-            Button {
-                isShowingGroupQR = true
-            } label: {
-                Image(systemName: "qrcode")
-                    .font(.subheadline.bold())
-                    .padding(8)
-                    .background(Color.black.opacity(0.6))
-                    .foregroundStyle(.white)
-                    .clipShape(Circle())
-            }
-            .accessibilityLabel("Display group QR code")
-            .accessibilityHint("Shows QR code on screen for friends to scan on-site.")
-            
             // Meeting Point Button
             Button {
                 isShowingMeetingPoints = true
@@ -295,6 +283,19 @@ public struct MainMapView: View {
                     .clipShape(Circle())
             }
             .accessibilityLabel("Meeting points")
+            
+            // Group QR Barcode Button
+            Button {
+                isShowingGroupQR = true
+            } label: {
+                Image(systemName: "qrcode")
+                    .font(.subheadline.bold())
+                    .padding(8)
+                    .background(Color.black.opacity(0.6))
+                    .foregroundStyle(.white)
+                    .clipShape(Circle())
+            }
+            .accessibilityLabel("Group QR Code")
             
             // Diagnostics HUD Button
             Button {
@@ -398,6 +399,11 @@ public struct MainMapView: View {
             // 1-Handed Quick-Tap Status Picker
             StatusPickerView(selectedCode: mapViewModel.currentStatus.code) { newStatus in
                 mapViewModel.updateUserStatus(UserStatus(code: newStatus))
+                if newStatus == .cancelMeeting {
+                    meetingPointViewModel.cancelMeetingPoint()
+                } else if newStatus == .atMeetingPoint, let initials = sessionViewModel.activeSession?.localInitials {
+                    meetingPointViewModel.respond(status: .atMeetingPoint, memberId: initials)
+                }
             }
             
             // 3-Second Hold Emergency SOS Trigger
@@ -458,7 +464,7 @@ public struct MainMapView: View {
                         QRCodeView(
                             url: session.inviteURL(),
                             title: session.sessionName,
-                            subtitle: "Display this barcode to late friends at the concert. Scanning exchanges cryptographic keys with zero cell reception.",
+                            subtitle: "Display this barcode to friends at the concert. Scanning exchanges cryptographic keys with zero cell reception.",
                             keyFingerprint: sessionViewModel.keyFingerprint
                         )
                         .padding()

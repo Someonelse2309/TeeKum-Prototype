@@ -136,7 +136,7 @@ nonisolated public struct TransportDiagnostics: Sendable {
     public let localPeerId: String
     public let serviceType: String
     public let sessionName: String
-    public let sessionId: UInt32
+    public let sessionId: UInt16
     public let state: TransportState
     public let activeDirectPeers: [PeerInfo]
     public let packetsSent: Int
@@ -150,7 +150,7 @@ nonisolated public struct TransportDiagnostics: Sendable {
         localPeerId: String,
         serviceType: String,
         sessionName: String,
-        sessionId: UInt32,
+        sessionId: UInt16,
         state: TransportState,
         activeDirectPeers: [PeerInfo],
         packetsSent: Int,

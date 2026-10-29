@@ -79,9 +79,10 @@ public final class LocationPublisher {
         }
         
         listeningTask?.cancel()
+        let pingsStream = locationService.publishedPings
         listeningTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            for await (location, status) in self.locationService.publishedPings {
+            for await (location, status) in pingsStream {
                 guard !Task.isCancelled, self.isRunning else { break }
                 await self.handleLocationPingReady(location: location, status: status)
             }
@@ -123,14 +124,14 @@ public final class LocationPublisher {
             accuracy: location.rawAccuracyByte,
             statusCode: status.code,
             targetRefId: status.targetRefId,
-            senderId: session.localMemberId,
+            senderInitials: session.localInitials,
             batteryLevel: batteryPct,
             heading: headingByte
         )
         
         let payloadData = payload.serialize()
         
-        let memberSlot = UInt8(session.localMemberId & 0xFF)
+        let memberSlot = session.memberSlot
         let seq = CleartextEnvelope.makeSequenceNumber(memberSlot: memberSlot, counter: monotonicCounter)
         monotonicCounter &+= 1
         
@@ -195,14 +196,14 @@ public final class LocationPublisher {
             timestamp: timestamp,
             accuracy: accuracy,
             sosEventId: UInt32.random(in: 1...UInt32.max),
-            senderId: session.localMemberId,
+            senderInitials: session.localInitials,
             emergencyType: emergencyType,
             batteryLevel: batteryPct
         )
         
         let payloadData = sosPayload.serialize()
         
-        let memberSlot = UInt8(session.localMemberId & 0xFF)
+        let memberSlot = session.memberSlot
         let seq = CleartextEnvelope.makeSequenceNumber(memberSlot: memberSlot, counter: monotonicCounter)
         monotonicCounter &+= 1
         

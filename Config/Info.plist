@@ -18,5 +18,13 @@
 		<string>_teekum._udp</string>
 		<string>_teekum._tcp</string>
 	</array>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>TeeKum keeps you connected to your festival group and active meeting point while your iPhone is locked in your pocket.</string>
 </dict>
 </plist>

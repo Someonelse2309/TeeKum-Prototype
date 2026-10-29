@@ -11,6 +11,7 @@ import CryptoKit
 
 @main
 struct TeeKumApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var sessionViewModel = GroupSessionViewModel()
     @State private var locationService: LocationService
     @State private var mapViewModel: MapViewModel
@@ -48,6 +49,33 @@ struct TeeKumApp: App {
                 }
             }
             .preferredColorScheme(.dark)
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active && sessionViewModel.hasActiveSession {
+                    locationService.publishCurrentState()
+                }
+            }
+            .onChange(of: locationService.isSurvivalModeActive) { _, isSurvival in
+                if isSurvival {
+                    Task {
+                        await LiveActivityManager.shared.endSessionActivity()
+                    }
+                }
+            }
+            .onChange(of: meetingPointViewModel.activeMeetingPoint) { _, _ in
+                Task {
+                    await updateLiveActivityTelemetry()
+                }
+            }
+            .onChange(of: sosViewModel.activeIncomingAlert) { _, _ in
+                Task {
+                    await updateLiveActivityTelemetry()
+                }
+            }
+            .onChange(of: sosViewModel.deliveryState) { _, _ in
+                Task {
+                    await updateLiveActivityTelemetry()
+                }
+            }
             .onOpenURL { url in
                 handleIncomingURL(url)
             }
@@ -66,6 +94,8 @@ struct TeeKumApp: App {
                     _ = await UIStateTests.runAllTests()
                     fflush(stdout)
                     _ = await SOSEndToEndTests.runAllTests()
+                    fflush(stdout)
+                    _ = await LiveActivityTests.runAllTests()
                     fflush(stdout)
                     print(">>> ALL AUTOMATED TEST RUNS FINISHED <<<")
                     fflush(stdout)
@@ -90,18 +120,28 @@ struct TeeKumApp: App {
         // 1. Start Location Tracking
         try? locationService.startTracking()
         
-        // 2. Configure SOS
+        // 2. Start Live Activity Companion
+        await LiveActivityManager.shared.startSessionActivity(session: session)
+        
+        // 3. Configure SOS
         sosViewModel.configure(
             locationService: locationService,
             sessionProvider: { session },
             cryptoService: cryptoService,
             transport: peerTransport,
-            memberNameResolver: { [weak sessionViewModel] senderId in
-                sessionViewModel?.members.first(where: { $0.id == senderId })?.name
+            memberNameResolver: { senderInitials in
+                senderInitials
             }
         )
         
-        // 3. Start Radio Transport
+        // 4. Configure Meeting Point
+        meetingPointViewModel.configure(
+            sessionProvider: { session },
+            cryptoService: cryptoService,
+            transport: peerTransport
+        )
+        
+        // 4. Start Radio Transport
         do {
             try await peerTransport.start(serviceType: "_teekum._tcp", session: session)
         } catch {
@@ -119,20 +159,23 @@ struct TeeKumApp: App {
         publisher.start()
         
         // 5. Inbound Packets and Peer Updates
+        let inboundStream = await peerTransport.inboundPackets
+        let peerUpdatesStream = await peerTransport.peerUpdates
         await withTaskGroup(of: Void.self) { group in
             group.addTask { @MainActor in
-                for await inbound in peerTransport.inboundPackets {
+                for await inbound in inboundStream {
                     guard !Task.isCancelled else { break }
                     await handleInboundPacket(inbound, for: session)
                 }
             }
             
             group.addTask { @MainActor in
-                for await peers in peerTransport.peerUpdates {
+                for await peers in peerUpdatesStream {
                     guard !Task.isCancelled else { break }
                     handlePeerUpdates(peers, for: session)
                     if peers.contains(where: { $0.isDirectLink }) {
                         locationService.publishCurrentState()
+                        await meetingPointViewModel.syncActiveMeetingPointToPeers()
                     }
                 }
             }
@@ -141,6 +184,7 @@ struct TeeKumApp: App {
     
     @MainActor
     private func stopActiveSession() async {
+        await LiveActivityManager.shared.endSessionActivity()
         locationPublisher?.stop()
         locationPublisher = nil
         await peerTransport.stop()
@@ -149,7 +193,7 @@ struct TeeKumApp: App {
         sosViewModel.stopListening()
         sosViewModel.reset()
         sosViewModel.dismissIncomingAlert()
-        meetingPointViewModel.cancelMeetingPoint()
+        meetingPointViewModel.reset()
         mapViewModel.selectedMember = nil
         relayedPacketCache.removeAll()
     }
@@ -193,20 +237,19 @@ struct TeeKumApp: App {
         switch envelope.type {
         case .sos:
             if let sos = try? SOSPayload.deserialize(from: decrypted) {
-                guard sos.senderId != session.localMemberId else { return }
+                guard sos.senderInitials != session.localInitials else { return }
                 
-                let existingName = sessionViewModel.members.first(where: { $0.id == sos.senderId })?.name
-                let resolvedName = existingName ?? "Friend \(String(format: "%04X", sos.senderId & 0xFFFF))"
+                let resolvedName = sos.senderInitials
                 
                 let member = Member(
-                    id: sos.senderId,
+                    id: sos.senderInitials,
                     name: resolvedName,
                     lastSeen: inbound.receivedAt,
                     coordinate: sos.coordinate,
                     horizontalAccuracy: CLLocationAccuracy(sos.accuracy),
                     status: UserStatus(code: .sos),
                     batteryLevel: Float(sos.batteryLevel) / 100.0,
-                    heading: sessionViewModel.members.first(where: { $0.id == sos.senderId })?.heading,
+                    heading: sessionViewModel.members.first(where: { $0.id == sos.senderInitials })?.heading,
                     isDirectPeer: envelope.hopCount == 0,
                     rssi: inbound.receivedRssi
                 )
@@ -224,13 +267,12 @@ struct TeeKumApp: App {
             
         case .locationPing:
             guard let ping = try? LocationPingPayload.deserialize(from: decrypted) else { return }
-            guard ping.senderId != session.localMemberId else { return }
+            guard ping.senderInitials != session.localInitials else { return }
             
-            let existingName = sessionViewModel.members.first(where: { $0.id == ping.senderId })?.name
-            let resolvedName = existingName ?? "Friend \(String(format: "%04X", ping.senderId & 0xFFFF))"
+            let resolvedName = ping.senderInitials
             
             let member = Member(
-                id: ping.senderId,
+                id: ping.senderInitials,
                 name: resolvedName,
                 lastSeen: inbound.receivedAt,
                 coordinate: ping.coordinate,
@@ -247,29 +289,7 @@ struct TeeKumApp: App {
             
         case .meetingUpdate:
             guard let update = try? MeetingUpdatePayload.deserialize(from: decrypted) else { return }
-            switch update.action {
-            case .propose:
-                let mp = MeetingPoint(
-                    id: update.meetingPointId,
-                    name: "Festival Rendezvous",
-                    coordinate: update.coordinate,
-                    targetTime: update.meetupTime,
-                    proposerId: update.senderId,
-                    landmarkId: update.landmarkId,
-                    attendance: [update.senderId: update.attendanceStatus]
-                )
-                meetingPointViewModel.activeMeetingPoint = mp
-            case .cancel:
-                if meetingPointViewModel.activeMeetingPoint?.id == update.meetingPointId {
-                    meetingPointViewModel.cancelMeetingPoint()
-                }
-            case .accept, .decline:
-                if var mp = meetingPointViewModel.activeMeetingPoint, mp.id == update.meetingPointId {
-                    mp.attendance[update.senderId] = update.attendanceStatus
-                    meetingPointViewModel.activeMeetingPoint = mp
-                }
-            }
-            
+            meetingPointViewModel.applyInboundUpdate(update)
             await relayMeshPacketIfNeeded(inbound, for: session)
             
         default:
@@ -285,7 +305,7 @@ struct TeeKumApp: App {
         guard envelope.hopCount < envelope.hopLimit else { return }
         
         // Prevent forwarding packets that originated locally on this device
-        let memberSlot = UInt8(session.localMemberId & 0xFF)
+        let memberSlot = session.memberSlot
         if envelope.memberSlot == memberSlot {
             return
         }
@@ -322,8 +342,8 @@ struct TeeKumApp: App {
     @MainActor
     private func handlePeerUpdates(_ peers: [PeerInfo], for session: GroupSession) {
         for peer in peers {
-            guard let peerIdNum = UInt32(peer.id, radix: 16), peerIdNum != session.localMemberId else { continue }
-            if let idx = sessionViewModel.members.firstIndex(where: { $0.id == peerIdNum }) {
+            guard peer.id != session.localInitials else { continue }
+            if let idx = sessionViewModel.members.firstIndex(where: { $0.id == peer.id }) {
                 var m = sessionViewModel.members[idx]
                 if !peer.displayName.isEmpty {
                     m.name = peer.displayName
@@ -333,8 +353,8 @@ struct TeeKumApp: App {
                 sessionViewModel.updateMember(m)
             } else {
                 let m = Member(
-                    id: peerIdNum,
-                    name: peer.displayName.isEmpty ? "Friend \(String(format: "%04X", peerIdNum & 0xFFFF))" : peer.displayName,
+                    id: peer.id,
+                    name: peer.displayName.isEmpty ? peer.id : peer.displayName,
                     lastSeen: peer.lastSeen,
                     isDirectPeer: peer.isDirectLink,
                     rssi: peer.rssi
@@ -342,12 +362,37 @@ struct TeeKumApp: App {
                 sessionViewModel.updateMember(m)
             }
         }
+        Task {
+            await updateLiveActivityTelemetry()
+        }
+    }
+    
+    @MainActor
+    private func updateLiveActivityTelemetry() async {
+        let directCount = sessionViewModel.members.filter { $0.isDirectPeer }.count
+        let isSOS = sosViewModel.activeIncomingAlert != nil || (sosViewModel.deliveryState != .idle && sosViewModel.deliveryState != .searchingPeers)
+        let sosSender = sosViewModel.activeIncomingAlert?.senderInitials
+        await LiveActivityManager.shared.updateSessionActivity(
+            peerCount: directCount,
+            meetingPoint: meetingPointViewModel.activeMeetingPoint,
+            currentLocation: locationService.currentLocation?.coordinate,
+            isSOSActive: isSOS,
+            sosSenderInitials: sosSender
+        )
     }
     
     private func handleIncomingURL(_ url: URL) {
-        if let invite = GroupSession.parseInvite(from: url) {
-            let name = sessionViewModel.localUserName.isEmpty ? "Friend" : sessionViewModel.localUserName
-            sessionViewModel.joinGroup(invite: invite, localName: name)
+        if url.scheme == "teekum" {
+            if url.host == "meeting" {
+                // Focused via deep link from Live Activity
+                return
+            } else if url.host == "sos" {
+                // Focused via deep link from Live Activity
+                return
+            }
         }
+        guard let invite = GroupSession.parseInvite(from: url) else { return }
+        let initials = !sessionViewModel.localUserName.isEmpty ? sessionViewModel.localUserName : "ME"
+        sessionViewModel.joinGroup(invite: invite, localName: initials)
     }
 }

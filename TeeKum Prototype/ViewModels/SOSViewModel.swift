@@ -37,7 +37,7 @@ public final class SOSViewModel {
     public var cryptoService: CryptoServiceProvider?
     public var transport: PeerTransport?
     public var audioAlerter: SOSAudioAlerting?
-    public var memberNameResolver: (@MainActor (UInt32) -> String?)?
+    public var memberNameResolver: (@MainActor (String) -> String?)?
     private let dateProvider: @Sendable () -> Date
     
     // MARK: - Delivery & Gesture State
@@ -74,8 +74,8 @@ public final class SOSViewModel {
     /// Interval in seconds between bounded retransmissions.
     public var retryInterval: TimeInterval = 1.5
     
-    /// Last confirmed friend responder ID.
-    public private(set) var lastDeliveredFriendId: UInt32?
+    /// Last confirmed friend responder ID (initials).
+    public private(set) var lastDeliveredFriendId: String?
     
     /// Timestamp when friend delivery confirmation arrived.
     public private(set) var lastDeliveredTimestamp: Date?
@@ -83,8 +83,8 @@ public final class SOSViewModel {
     /// Last observed hop count from relay acknowledgement.
     public private(set) var lastRelayHopCount: UInt8?
     
-    /// Last observed relay responder ID.
-    public private(set) var lastRelayResponderId: UInt32?
+    /// Last observed relay responder ID (initials).
+    public private(set) var lastRelayResponderId: String?
     
     // MARK: - Ingestion & Duplicate Suppression Cache
     
@@ -136,7 +136,7 @@ public final class SOSViewModel {
         cryptoService: CryptoServiceProvider? = nil,
         transport: PeerTransport? = nil,
         audioAlerter: SOSAudioAlerting? = nil,
-        memberNameResolver: (@MainActor (UInt32) -> String?)? = nil
+        memberNameResolver: (@MainActor (String) -> String?)? = nil
     ) {
         if let locationService { self.locationService = locationService }
         if let sessionProvider { self.sessionProvider = sessionProvider }
@@ -249,14 +249,14 @@ public final class SOSViewModel {
             timestamp: timestamp,
             accuracy: accuracy,
             sosEventId: eventId,
-            senderId: session.localMemberId,
+            senderInitials: session.localInitials,
             emergencyType: emergencyType,
             batteryLevel: batteryPct
         )
         
         let payloadData = sosPayload.serialize()
         
-        let memberSlot = UInt8(session.localMemberId & 0xFF)
+        let memberSlot = session.memberSlot
         let seq = CleartextEnvelope.makeSequenceNumber(memberSlot: memberSlot, counter: monotonicCounter)
         monotonicCounter &+= 1
         
@@ -344,7 +344,7 @@ public final class SOSViewModel {
     /// Semantics:
     /// - `.deliveredToFriend`: Cryptographic proof of receipt on destination friend device. Stops retries.
     /// - `.relayedByMeshHop`: Intermediary relay accepted packet. Does NOT prove friend received it.
-    public func handleAckReceived(status: ACKStatus, responderId: UInt32, hopCount: UInt8, eventId: UInt32? = nil) {
+    public func handleAckReceived(status: ACKStatus, responderId: String, hopCount: UInt8, eventId: UInt32? = nil) {
         if let eventId, let activeSOSEventId, eventId != activeSOSEventId {
             // ACK for a different event; disregard
             return
@@ -437,8 +437,8 @@ public final class SOSViewModel {
     ) async {
         guard let payload = try? SOSPayload.deserialize(from: decryptedData) else { return }
         
-        // Sender validation: cannot alert self; senderId must be non-zero
-        guard payload.senderId != session.localMemberId, payload.senderId != 0 else { return }
+        // Sender validation: cannot alert self
+        guard payload.senderInitials != session.localInitials else { return }
         
         let eventId = payload.sosEventId
         
@@ -462,10 +462,10 @@ public final class SOSViewModel {
         audioAlerter?.triggerEmergencyAlertFeedback()
         
         // Surface Incoming Alert in UI
-        let resolvedName = memberNameResolver?(payload.senderId) ?? "Member-\(String(format: "%04X", payload.senderId & 0xFFFF))"
+        let resolvedName = memberNameResolver?(payload.senderInitials)
         let alert = IncomingSOSAlert(
             id: eventId,
-            senderId: payload.senderId,
+            senderInitials: payload.senderInitials,
             senderName: resolvedName,
             emergencyType: payload.emergencyType,
             coordinate: payload.coordinate,
@@ -490,12 +490,12 @@ public final class SOSViewModel {
         guard let payload = try? ACKPayload.deserialize(from: decryptedData) else { return }
         
         // Verify this ACK is addressed to our local member and matches active SOS event
-        guard payload.ackedSenderId == session.localMemberId else { return }
+        guard payload.ackedSenderInitials == session.localInitials else { return }
         guard payload.originalEventId == activeSOSEventId else { return }
         
         handleAckReceived(
             status: payload.ackStatus,
-            responderId: payload.responderId,
+            responderId: payload.responderInitials,
             hopCount: envelope.hopCount,
             eventId: payload.originalEventId
         )
@@ -513,17 +513,17 @@ public final class SOSViewModel {
         
         let ackPayload = ACKPayload(
             ackedSeqNumber: envelope.sequenceNumber,
-            ackedSenderId: sosPayload.senderId,
+            ackedSenderInitials: sosPayload.senderInitials,
             ackTimestamp: dateProvider(),
             ackStatus: status,
             receivedRssi: 0,
             originalEventId: sosPayload.sosEventId,
-            responderId: session.localMemberId
+            responderInitials: session.localInitials
         )
         
         let payloadData = ackPayload.serialize()
         
-        let memberSlot = UInt8(session.localMemberId & 0xFF)
+        let memberSlot = session.memberSlot
         let seq = CleartextEnvelope.makeSequenceNumber(memberSlot: memberSlot, counter: monotonicCounter)
         monotonicCounter &+= 1
         

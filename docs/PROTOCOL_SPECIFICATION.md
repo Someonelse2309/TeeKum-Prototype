@@ -154,7 +154,7 @@ flowchart TD
 | **12** | 22 | `accuracy` | `UInt8` | Horizontal accuracy radius in meters ($0 \dots 255\text{m}$). |
 | **13** | 23 | `statusCode` | `UInt8` | 1-byte festival activity hash (`StatusCode` enum). |
 | **14..17**| 24..27 | `targetRefId` | `UInt32` | Target friend ID or landmark ID (`0x00000000` if none). |
-| **18..19**| 28..29 | `senderInitials` | `UInt16` | 2-byte Base-26 encoded 3-letter initials (formula: `(a*676) + (b*26) + c`). Eliminates connection handshake. |
+| **18..19**| 28..29 | `senderInitials` | `UInt16` | 2-byte Base-27 encoded 1 to 3-letter initials (formula: `(a*729) + (b*27) + c`). Eliminates radio handshake. |
 | **20** | 30 | `batteryLevel` | `UInt8` | Battery percentage ($0 \dots 100\%$). |
 | **21** | 31 | `heading` | `UInt8` | Compass heading: $\text{degrees} \times 255 / 360$ ($0 \dots 255$). |
 | **22..29**| 32..39 | `reserved` | `8 Bytes` | Padding (`0x0000000000000000`). |

@@ -8,7 +8,7 @@
 import Foundation
 import Observation
 
-/// Pure MVVM ViewModel managing group session lifecycle, serverless QR/Link pairing,
+/// Pure MVVM ViewModel managing group session lifecycle, 3-letter initials onboarding,
 /// and roster of active peers.
 @Observable
 @MainActor
@@ -19,10 +19,10 @@ public final class GroupSessionViewModel {
     /// List of members participating in the active session.
     public var members: [Member] = []
     
-    /// User's chosen display name for group pairing.
+    /// User's chosen 1 to 3-letter initials.
     public var localUserName: String = ""
     
-    /// Name for newly created group sessions.
+    /// User's draft group name when creating a new group.
     public var newGroupName: String = ""
     
     /// State banner / error message displayed in UI.
@@ -35,14 +35,14 @@ public final class GroupSessionViewModel {
         activeSession != nil
     }
     
-    /// Serverless universal invite URL packing session metadata and key into the URL fragment.
-    public var inviteURL: URL? {
-        activeSession?.inviteURL()
-    }
-    
-    /// Safe 4-byte key fingerprint in hexadecimal format for UI display without exposing full secret.
+    /// Safe 4-byte key fingerprint in hexadecimal format for UI diagnostics.
     public var keyFingerprint: String? {
         activeSession?.symmetricKeyData.prefix(4).map { String(format: "%02hhx", $0) }.joined()
+    }
+    
+    /// Serverless invite URL containing 256-bit symmetric key in URL fragment (#).
+    public var inviteURL: URL? {
+        activeSession?.inviteURL()
     }
     
     private static let activeSessionStorageKey = "com.teekum.activeSession"
@@ -59,52 +59,62 @@ public final class GroupSessionViewModel {
         }
     }
     
-    /// Creates a new serverless group session with a cryptographically secure 256-bit key.
-    public func createGroup(name: String, localName: String) {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedUser = localName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty, !trimmedUser.isEmpty else {
-            errorMessage = "Group and user names cannot be empty."
+    /// Enters the festival auto-mesh network using 1 to 3 uppercase initials.
+    public func enterAutoMesh(initials: String) {
+        let cleanInitials = initials.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard cleanInitials.count >= 1 && cleanInitials.count <= 3,
+              cleanInitials.allSatisfy({ $0 >= "A" && $0 <= "Z" }) else {
+            errorMessage = "Initials must be 1 to 3 uppercase letters (A–Z)."
             return
         }
+        
+        let session = GroupSession(localInitials: cleanInitials)
+        self.activeSession = session
+        self.localUserName = cleanInitials
+        self.errorMessage = nil
+        saveStoredSession(session)
+        UserDefaults.standard.set(cleanInitials, forKey: Self.localUserNameStorageKey)
+    }
+    
+    /// Creates a private group with a newly generated 256-bit key, custom name, and initials (1–3 letters).
+    public func createGroup(name: String, localName: String) {
+        let cleanInitials = InitialsCodec.sanitize(localName)
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sessionName = trimmedName.isEmpty ? "Festival Group" : trimmedName
         
         var keyBytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, keyBytes.count, &keyBytes)
         let keyData = Data(keyBytes)
         
         let session = GroupSession(
-            sessionName: trimmedName,
+            sessionId: UInt16.random(in: 1...UInt16.max),
+            sessionName: sessionName,
             symmetricKeyData: keyData,
-            localMemberName: trimmedUser,
+            localInitials: cleanInitials,
             isHost: true
         )
         self.activeSession = session
-        self.localUserName = trimmedUser
+        self.localUserName = cleanInitials
         self.errorMessage = nil
         saveStoredSession(session)
-        UserDefaults.standard.set(trimmedUser, forKey: Self.localUserNameStorageKey)
+        UserDefaults.standard.set(cleanInitials, forKey: Self.localUserNameStorageKey)
     }
     
-    /// Joins an existing group session using decoded invite details (from QR or URL link).
+    /// Joins an existing group using decoded invite parameters and custom initials (1–3 letters).
     public func joinGroup(invite: GroupSessionInvite, localName: String) {
-        let trimmedUser = localName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedUser.isEmpty else {
-            errorMessage = "Please enter your name to join."
-            return
-        }
-        
+        let cleanInitials = InitialsCodec.sanitize(localName)
         let session = GroupSession(
             sessionId: invite.sessionId,
             sessionName: invite.sessionName,
             symmetricKeyData: invite.keyData,
-            localMemberName: trimmedUser,
+            localInitials: cleanInitials,
             isHost: false
         )
         self.activeSession = session
-        self.localUserName = trimmedUser
+        self.localUserName = cleanInitials
         self.errorMessage = nil
         saveStoredSession(session)
-        UserDefaults.standard.set(trimmedUser, forKey: Self.localUserNameStorageKey)
+        UserDefaults.standard.set(cleanInitials, forKey: Self.localUserNameStorageKey)
     }
     
     /// Leaves the current group and triggers full ephemeral teardown.
@@ -116,19 +126,19 @@ public final class GroupSessionViewModel {
         self.isConnecting = false
     }
     
-    /// Directly sets and persists an already constructed active session (e.g. host QR creation).
+    /// Directly sets and persists an already constructed active session.
     public func setActiveSession(_ session: GroupSession) {
         self.activeSession = session
-        self.localUserName = session.localMemberName
+        self.localUserName = session.localInitials
         self.errorMessage = nil
         saveStoredSession(session)
-        UserDefaults.standard.set(session.localMemberName, forKey: Self.localUserNameStorageKey)
+        UserDefaults.standard.set(session.localInitials, forKey: Self.localUserNameStorageKey)
     }
     
-    /// Completely resets UI state and all drafted sessions for starting fresh.
+    /// Completely resets UI state.
     public func resetSessionState() {
         leaveGroup()
-        self.newGroupName = ""
+        newGroupName = ""
     }
     
     // MARK: - Local Persistence Helpers
@@ -158,7 +168,7 @@ public final class GroupSessionViewModel {
     }
     
     /// Removes a member from the session roster.
-    public func removeMember(id: UInt32) {
+    public func removeMember(id: String) {
         members.removeAll(where: { $0.id == id })
     }
     

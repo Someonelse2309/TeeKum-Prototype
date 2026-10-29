@@ -23,11 +23,6 @@ import Network
 /// - Real-time diagnostics for two-device physical verification.
 public actor PeerTransportService: PeerTransport {
     
-    // MARK: - Handshake Constants
-    
-    /// 4-byte magic signature for peer introduction handshakes: 'T', 'K', 'P', '1'
-    private static let handshakeMagic: [UInt8] = [0x54, 0x4B, 0x50, 0x31]
-    
     // MARK: - Internal Peer State
     
     private final class PeerConnection: @unchecked Sendable {
@@ -40,7 +35,6 @@ public actor PeerTransportService: PeerTransport {
         let framer = StreamMessageFramer()
         var retryCount: Int = 0
         var lastSeen: Date = Date()
-        var handshakeCompleted: Bool = false
         
         init(
             peerId: String,
@@ -171,9 +165,9 @@ public actor PeerTransportService: PeerTransport {
         self.activeSession = session
         self.serviceType = serviceType
         self.isUDP = serviceType.contains("udp")
-        self.localPeerId = String(format: "%08X", session.localMemberId)
+        self.localPeerId = session.localInitials
         
-        logEvent("Starting radio transport (ID: \(localPeerId), Service: \(serviceType), Mode: \(isUDP ? "UDP" : "TCP")).", level: .info)
+        logEvent("Starting radio transport (Initials: \(localPeerId), Service: \(serviceType), Mode: \(isUDP ? "UDP" : "TCP")).", level: .info)
         updateState(.starting)
         
         do {
@@ -342,15 +336,47 @@ public actor PeerTransportService: PeerTransport {
     
     // MARK: - State Handlers
     
+    private func restartListener() {
+        guard activeSession != nil, currentState != .stopped else { return }
+        listener?.cancel()
+        listener = nil
+        do {
+            try startListener()
+            logEvent("NWListener successfully restarted.", level: .info)
+        } catch {
+            logEvent("NWListener restart failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+    
+    private func restartBrowser() {
+        guard activeSession != nil, currentState != .stopped else { return }
+        browser?.cancel()
+        browser = nil
+        do {
+            try startBrowser()
+            logEvent("NWBrowser successfully restarted.", level: .info)
+        } catch {
+            logEvent("NWBrowser restart failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+    
     private func handleListenerState(_ state: NWListener.State) {
         switch state {
         case .ready:
             logEvent("NWListener ready on AWDL interface.", level: .info)
         case let .failed(error):
             let err = TransportError.listenerFailed(error.localizedDescription)
-            updateState(.failed(err))
-            transportErrorsContinuation?.yield(err)
             logEvent("NWListener failed: \(error)", level: .error)
+            if activeSession != nil, currentState != .stopped {
+                logEvent("NWListener failed during active session, scheduling recovery restart...", level: .warning)
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await self?.restartListener()
+                }
+            } else {
+                updateState(.failed(err))
+                transportErrorsContinuation?.yield(err)
+            }
         case .cancelled:
             logEvent("NWListener cancelled.", level: .info)
         default:
@@ -364,9 +390,17 @@ public actor PeerTransportService: PeerTransport {
             logEvent("NWBrowser scanning for Bonjour service '\(serviceType)'.", level: .info)
         case let .failed(error):
             let err = TransportError.browserFailed(error.localizedDescription)
-            updateState(.failed(err))
-            transportErrorsContinuation?.yield(err)
             logEvent("NWBrowser failed: \(error)", level: .error)
+            if activeSession != nil, currentState != .stopped {
+                logEvent("NWBrowser failed during active session, scheduling recovery restart...", level: .warning)
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await self?.restartBrowser()
+                }
+            } else {
+                updateState(.failed(err))
+                transportErrorsContinuation?.yield(err)
+            }
         case .cancelled:
             logEvent("NWBrowser cancelled.", level: .info)
         default:
@@ -385,8 +419,8 @@ public actor PeerTransportService: PeerTransport {
             guard case let .service(name, _, _, _) = result.endpoint else { continue }
             let remotePeerId = name
             
-            // 1. Prevent connecting to self
-            guard remotePeerId != localPeerId else { continue }
+            // 1. Prevent connecting to self or loopback ghosts from previous session
+            guard remotePeerId != localPeerId, !remotePeerId.starts(with: localPeerId) else { continue }
             
             // 2. Validate session ID from TXT record if present
             var remoteName: String?
@@ -510,10 +544,7 @@ public actor PeerTransportService: PeerTransport {
             peer.lastSeen = Date()
             logEvent("Connection to \(peer.peerId) reached READY state.", level: .info)
             
-            // Send initial Handshake frame
-            sendHandshake(on: peer)
-            
-            // Start reading frames
+            // Start reading frames directly without handshake
             receiveNextBytes(from: peer)
             
             refreshConnectionState()
@@ -601,105 +632,6 @@ public actor PeerTransportService: PeerTransport {
         nwConn.start(queue: dispatchQueue)
     }
     
-    // MARK: - Handshake Protocol
-    
-    private func sendHandshake(on peer: PeerConnection) {
-        guard let session = activeSession else { return }
-        
-        var handshakeData = Data(Self.handshakeMagic)
-        var sidBE = session.sessionId.bigEndian
-        handshakeData.append(Data(bytes: &sidBE, count: 4))
-        var memBE = session.localMemberId.bigEndian
-        handshakeData.append(Data(bytes: &memBE, count: 4))
-        
-        let nameBytes = Array(session.localMemberName.utf8.prefix(20))
-        let nameLen = UInt8(nameBytes.count)
-        handshakeData.append(nameLen)
-        handshakeData.append(contentsOf: nameBytes)
-        
-        peer.connection.send(content: handshakeData, completion: .contentProcessed { [weak self, weak peer] error in
-            if let error = error {
-                Task { [weak self] in
-                    await self?.logEvent("Failed to send handshake: \(error.localizedDescription)", level: .warning)
-                }
-            } else {
-                peer?.handshakeCompleted = true
-            }
-        })
-    }
-    
-    private func parseHandshake(_ data: Data, on peer: PeerConnection) -> Bool {
-        guard data.count >= 13 else { return false }
-        let magic = Array(data.prefix(4))
-        guard magic == Self.handshakeMagic else { return false }
-        
-        let remoteSid = data.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-        guard let session = activeSession, remoteSid == session.sessionId else {
-            logEvent("Handshake rejected: remote session ID 0x\(String(format: "%08X", remoteSid)) does not match active session.", level: .warning)
-            return false
-        }
-        let remoteMemberId = data.subdata(in: 8..<12).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-        let nameLen = Int(data[12])
-        
-        var name = "Member-\(String(format: "%04X", remoteMemberId & 0xFFFF))"
-        if data.count >= 13 + nameLen {
-            let nameData = data.subdata(in: 13..<(13 + nameLen))
-            if let str = String(data: nameData, encoding: .utf8) {
-                name = str
-            }
-        }
-        
-        let resolvedPeerId = String(format: "%08X", remoteMemberId)
-        
-        // If this connection was keyed under a temporary ID, re-key it
-        if peer.peerId != resolvedPeerId {
-            connections.removeValue(forKey: peer.peerId)
-            
-            // Check for duplicate connection race condition
-            if let existing = connections[resolvedPeerId], existing !== peer, existing.isReady {
-                // Duplicate connection detected! Tie-break:
-                // Keep the outbound connection if local < remote, else keep inbound.
-                if localPeerId < resolvedPeerId {
-                    if !peer.isOutbound {
-                        logEvent("Duplicate connection detected with \(resolvedPeerId). Closing redundant inbound link.", level: .info)
-                        peer.connection.cancel()
-                        return true
-                    } else {
-                        existing.connection.cancel()
-                    }
-                } else {
-                    if peer.isOutbound {
-                        logEvent("Duplicate connection detected with \(resolvedPeerId). Closing redundant outbound link.", level: .info)
-                        peer.connection.cancel()
-                        return true
-                    } else {
-                        existing.connection.cancel()
-                    }
-                }
-            }
-            
-            // Update the existing peer object in place so active closures remain valid
-            peer.peerId = resolvedPeerId
-            peer.displayName = name
-            peer.isReady = true
-            peer.handshakeCompleted = true
-            connections[resolvedPeerId] = peer
-            
-            logEvent("Handshake verified with \(name) (ID: \(resolvedPeerId)). Peer confirmed.", level: .info)
-            emitPeerUpdates()
-            refreshConnectionState()
-            triggerOutboxFlush()
-            return true
-        }
-        
-        peer.displayName = name
-        peer.handshakeCompleted = true
-        emitPeerUpdates()
-        refreshConnectionState()
-        triggerOutboxFlush()
-        return true
-    }
-    
     // MARK: - Message Framing & Reception
     
     private func receiveNextBytes(from peer: PeerConnection) {
@@ -721,52 +653,31 @@ public actor PeerTransportService: PeerTransport {
             return
         }
         
-        if var data = content, !data.isEmpty {
+        if let data = content, !data.isEmpty {
             peer.lastSeen = Date()
             
-            // Check if this chunk begins with a handshake packet
-            if data.count >= 4 && Array(data.prefix(4)) == Self.handshakeMagic {
-                if data.count >= 13 {
-                    let nameLen = Int(data[12])
-                    let handshakeLen = 13 + nameLen
-                    let handshakeSlice = data.prefix(min(data.count, handshakeLen))
-                    _ = parseHandshake(Data(handshakeSlice), on: peer)
-                    
-                    if data.count > handshakeLen {
-                        data = data.subdata(in: handshakeLen..<data.count)
-                    } else {
-                        data = Data()
+            do {
+                // Ingest chunk into the message framer to handle partial reads / coalescing
+                let frames = try peer.framer.processIncomingChunk(data)
+                
+                for frame in frames {
+                    do {
+                        let wirePacket = try RawWirePacket.fromWireData(frame)
+                        packetsReceivedCount += 1
+                        
+                        let inbound = InboundPacket(
+                            rawPacket: wirePacket,
+                            sourcePeerId: peer.peerId,
+                            receivedRssi: nil,
+                            receivedAt: Date()
+                        )
+                        inboundContinuation?.yield(inbound)
+                    } catch {
+                        logEvent("Packet codec error: \(error.localizedDescription)", level: .warning)
                     }
-                } else {
-                    _ = parseHandshake(data, on: peer)
-                    data = Data()
                 }
-            }
-            
-            if !data.isEmpty {
-                do {
-                    // Ingest chunk into the message framer to handle partial reads / coalescing
-                    let frames = try peer.framer.processIncomingChunk(data)
-                    
-                    for frame in frames {
-                        do {
-                            let wirePacket = try RawWirePacket.fromWireData(frame)
-                            packetsReceivedCount += 1
-                            
-                            let inbound = InboundPacket(
-                                rawPacket: wirePacket,
-                                sourcePeerId: peer.peerId,
-                                receivedRssi: nil,
-                                receivedAt: Date()
-                            )
-                            inboundContinuation?.yield(inbound)
-                        } catch {
-                            logEvent("Packet codec error: \(error.localizedDescription)", level: .warning)
-                        }
-                    }
-                } catch {
-                    logEvent("Framer processing failure: \(error.localizedDescription)", level: .error)
-                }
+            } catch {
+                logEvent("Framer processing failure: \(error.localizedDescription)", level: .error)
             }
         }
         

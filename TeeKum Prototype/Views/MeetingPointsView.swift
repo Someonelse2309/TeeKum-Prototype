@@ -20,14 +20,7 @@ public struct MeetingPointsView: View {
     @State private var meetingNameInput: String = ""
     @State private var selectedPreset: String? = nil
     
-    private let venueLandmarks = [
-        "Main Stage Sound Booth",
-        "Gate 3 Exit",
-        "First Aid / Medical Tent",
-        "Water Refill Station A",
-        "Food Truck Plaza",
-        "Merch Stand North"
-    ]
+    private let venueLandmarks = VenueLandmark.presets.map(\.name)
     
     public init(
         meetingPointViewModel: MeetingPointViewModel,
@@ -126,7 +119,7 @@ public struct MeetingPointsView: View {
             if let localSession = sessionViewModel.activeSession {
                 HStack(spacing: 12) {
                     Button {
-                        meetingPointViewModel.respond(status: .attending, memberId: localSession.localMemberId)
+                        meetingPointViewModel.respond(status: .attending, memberId: localSession.localInitials)
                     } label: {
                         Label("I'll be there", systemImage: "checkmark.circle.fill")
                             .font(.subheadline.bold())
@@ -138,7 +131,7 @@ public struct MeetingPointsView: View {
                     }
                     
                     Button {
-                        meetingPointViewModel.respond(status: .cantMakeIt, memberId: localSession.localMemberId)
+                        meetingPointViewModel.respond(status: .cantMakeIt, memberId: localSession.localInitials)
                     } label: {
                         Label("Can't make it", systemImage: "xmark.circle.fill")
                             .font(.subheadline.bold())
@@ -244,13 +237,16 @@ public struct MeetingPointsView: View {
         let name = meetingNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         
-        let coord = userLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 33.6803, longitude: -116.2366)
+        let landmark = VenueLandmark.preset(for: name)
+        let landmarkId = landmark?.id
+        let coord = landmark?.coordinate ?? userLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 33.6803, longitude: -116.2366)
         
         meetingPointViewModel.proposeMeetingPoint(
             name: name,
             coordinate: coord,
             targetTime: Date().addingTimeInterval(1800), // 30 min default
-            proposerId: session.localMemberId
+            proposerId: session.localInitials,
+            landmarkId: landmarkId
         )
         
         dismiss()

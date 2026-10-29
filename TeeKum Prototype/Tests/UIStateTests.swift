@@ -8,6 +8,7 @@
 import Foundation
 import CoreLocation
 import SwiftUI
+import CryptoKit
 
 /// Comprehensive test suite validating UI state contracts, ViewModel behavior,
 /// freshness indicators, 3-second SOS hold logic, and honest delivery feedback.
@@ -26,12 +27,13 @@ public struct UIStateTests {
         if !(await testHonestDeliveryStateTransitions()) { passed = false }
         if !(await testFriendDistanceAndBearingCalculations()) { passed = false }
         if !(await testMeetingPointProposalAndAttendance()) { passed = false }
-        if !(await testQRBarcodeScanningEdgeCases()) { passed = false }
+        if !(await testMeetingPointWireBroadcastWithHigherTTL()) { passed = false }
+        if !(await testInitialsCodecAndAutoMeshEdgeCases()) { passed = false }
         if !(await testSessionTeardownAndCleanUIReset()) { passed = false }
         if !(await testSOSMemberRosterAndEmergencyVisualState()) { passed = false }
         
         if passed {
-            print("--- [UIStateTests] ✓ ALL 11 UI STATE TEST SUITES PASSED ---")
+            print("--- [UIStateTests] ✓ ALL 12 UI STATE TEST SUITES PASSED ---")
         } else {
             print("--- [UIStateTests] ✗ SOME UI STATE TESTS FAILED ---")
         }
@@ -52,14 +54,14 @@ public struct UIStateTests {
             return false
         }
         
-        // Host creates group
-        vm.createGroup(name: "EDC Crew", localName: "Nicho")
+        // Host creates group with 1 to 3-letter initials (e.g. "D" or "DNA")
+        vm.createGroup(name: "EDC Crew", localName: "DNA")
         guard let session = vm.activeSession else {
             print("FAILED: activeSession should not be nil after createGroup")
             return false
         }
         
-        guard session.sessionName == "EDC Crew", session.localMemberName == "Nicho", session.isHost else {
+        guard session.sessionName == "EDC Crew", session.localInitials == "DNA", session.isHost else {
             print("FAILED: session properties mismatch")
             return false
         }
@@ -70,7 +72,7 @@ public struct UIStateTests {
             return false
         }
         
-        // Invite URL generation & parsing
+        // Invite URL generation & QR barcode parsing
         guard let inviteURL = vm.inviteURL else {
             print("FAILED: inviteURL should be generated")
             return false
@@ -88,14 +90,14 @@ public struct UIStateTests {
             return false
         }
         
-        // Participant joins
+        // Participant joins host group with 2-letter initials (e.g. "AB")
         let participantVM = GroupSessionViewModel()
-        participantVM.joinGroup(invite: parsedInvite, localName: "Alex")
+        participantVM.joinGroup(invite: parsedInvite, localName: "AB")
         guard let participantSession = participantVM.activeSession else {
             print("FAILED: participant should have activeSession")
             return false
         }
-        guard !participantSession.isHost, participantSession.localMemberName == "Alex" else {
+        guard !participantSession.isHost, participantSession.localInitials == "AB" else {
             print("FAILED: participant properties mismatch")
             return false
         }
@@ -119,8 +121,8 @@ public struct UIStateTests {
         
         // Fresh member (< 60s)
         let freshMember = Member(
-            id: 0x1234,
-            name: "Sarah",
+            id: "SRH",
+            name: "SRH",
             lastSeen: Date().addingTimeInterval(-15), // 15s ago
             coordinate: CLLocationCoordinate2D(latitude: 33.68, longitude: -116.23)
         )
@@ -131,8 +133,8 @@ public struct UIStateTests {
         
         // Stale member (> 60s)
         let staleMember = Member(
-            id: 0x5678,
-            name: "Dave",
+            id: "DVE",
+            name: "DVE",
             lastSeen: Date().addingTimeInterval(-180), // 3 minutes ago
             coordinate: CLLocationCoordinate2D(latitude: 33.68, longitude: -116.23)
         )
@@ -289,8 +291,8 @@ public struct UIStateTests {
         
         // Intermediate relay hop ACK received
         // CRITICAL PRINCIPLE: Must NOT claim delivered to friend!
-        sosVM.handleAckReceived(status: .relayedByMeshHop, responderId: 0x9999, hopCount: 2)
-        guard case let .relayedAck(hops, responder) = sosVM.deliveryState, hops == 2, responder == 0x9999 else {
+        sosVM.handleAckReceived(status: .relayedByMeshHop, responderId: "REL", hopCount: 2)
+        guard case let .relayedAck(hops, responder) = sosVM.deliveryState, hops == 2, responder == "REL" else {
             print("FAILED: relay ack must not claim delivered to friend")
             return false
         }
@@ -300,8 +302,8 @@ public struct UIStateTests {
         }
         
         // Final destination friend ACK received
-        sosVM.handleAckReceived(status: .deliveredToFriend, responderId: 0x1111, hopCount: 1)
-        guard case let .deliveredToFriend(friendId, _) = sosVM.deliveryState, friendId == 0x1111 else {
+        sosVM.handleAckReceived(status: .deliveredToFriend, responderId: "ALX", hopCount: 1)
+        guard case let .deliveredToFriend(friendId, _) = sosVM.deliveryState, friendId == "ALX" else {
             print("FAILED: friend delivery ack should be deliveredToFriend")
             return false
         }
@@ -328,8 +330,8 @@ public struct UIStateTests {
         
         // Point B (Friend due North): 33.6810, -116.2300 (~111 meters North)
         let friend = Member(
-            id: 0x2222,
-            name: "Chloe",
+            id: "CHL",
+            name: "CHL",
             coordinate: CLLocationCoordinate2D(latitude: 33.6810, longitude: -116.2300)
         )
         
@@ -367,7 +369,7 @@ public struct UIStateTests {
         mpVM.proposeMeetingPoint(
             name: "Stage 2 Sound Booth",
             coordinate: CLLocationCoordinate2D(latitude: 33.6820, longitude: -116.2350),
-            proposerId: 0xAAAA
+            proposerId: "ALX"
         )
         
         guard let active = mpVM.activeMeetingPoint, active.name == "Stage 2 Sound Booth" else {
@@ -380,8 +382,8 @@ public struct UIStateTests {
         }
         
         // Member responds
-        mpVM.respond(status: .cantMakeIt, memberId: 0xBBBB)
-        guard mpVM.activeMeetingPoint?.attendance[0xBBBB] == .cantMakeIt else {
+        mpVM.respond(status: .cantMakeIt, memberId: "BOB")
+        guard mpVM.activeMeetingPoint?.attendance["BOB"] == .cantMakeIt else {
             print("FAILED: member attendance not recorded")
             return false
         }
@@ -397,17 +399,55 @@ public struct UIStateTests {
         return true
     }
     
-    // MARK: - 9. QR Barcode Scanning & URL Edge Cases
+    // MARK: - 9. Initials Codec & QR Barcode Scanning Edge Cases
     
     @MainActor
-    private static func testQRBarcodeScanningEdgeCases() async -> Bool {
-        print("[TEST] testQRBarcodeScanningEdgeCases...")
+    private static func testInitialsCodecAndAutoMeshEdgeCases() async -> Bool {
+        print("[TEST] testInitialsCodecAndAutoMeshEdgeCases...")
+        
+        // 1. Valid 1, 2, and 3-letter initials
+        guard let b1 = InitialsCodec.encode("D"), InitialsCodec.decode(b1) == "D" else {
+            print("FAILED: encode 1-letter 'D' failed")
+            return false
+        }
+        guard let b2 = InitialsCodec.encode("AB"), InitialsCodec.decode(b2) == "AB" else {
+            print("FAILED: encode 2-letter 'AB' failed")
+            return false
+        }
+        guard let b3 = InitialsCodec.encode("DNA"), InitialsCodec.decode(b3) == "DNA" else {
+            print("FAILED: encode 3-letter 'DNA' failed")
+            return false
+        }
+        guard b1.count == 2 && b2.count == 2 && b3.count == 2 else {
+            print("FAILED: encoded bytes must strictly be 2 bytes")
+            return false
+        }
+        
+        // 2. Sanitization: lowercase, whitespace, special characters, max 3
+        guard InitialsCodec.sanitize("d") == "D" else { return false }
+        guard InitialsCodec.sanitize("ab") == "AB" else { return false }
+        guard InitialsCodec.sanitize(" d-n.a! ") == "DNA" else { return false }
+        guard InitialsCodec.sanitize("Alex") == "ALE" else { return false }
+        
+        // 3. Boundary values
+        guard let aBytes = InitialsCodec.encode("A"), InitialsCodec.decode(aBytes) == "A",
+              let zzzBytes = InitialsCodec.encode("ZZZ"), InitialsCodec.decode(zzzBytes) == "ZZZ" else {
+            print("FAILED: boundary codec failed")
+            return false
+        }
+        
+        // 4. Invalid input rejection
+        guard InitialsCodec.encode("") == nil else { return false }
+        guard InitialsCodec.encode("ABCD") == nil else { return false }
+        guard InitialsCodec.encode("A1B") == nil else { return false }
+        
+        // 5. QR Barcode URL parsing edge cases
         let keyData = Data(repeating: 0x77, count: 32)
         let keyBase64 = keyData.base64EncodedString()
-        let sid: UInt32 = 0x12345678
+        let sid: UInt16 = 0x1234
         
-        // 1. Whitespace & newline trailing
-        let rawURLWithWhitespace = "  teekum://join#key=\(keyBase64)&sid=12345678&name=Festival%20Crew \n"
+        // Trimmed whitespace & fragment format
+        let rawURLWithWhitespace = "  teekum://join#key=\(keyBase64)&sid=1234&name=Festival%20Crew \n"
         let trimmed = rawURLWithWhitespace.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url1 = URL(string: trimmed), let invite1 = GroupSession.parseInvite(from: url1) else {
             print("FAILED: parseInvite should handle trimmed URL with whitespace")
@@ -418,8 +458,8 @@ public struct UIStateTests {
             return false
         }
         
-        // 2. Uppercase scheme and host
-        let uppercaseURL = URL(string: "TEEKUM://JOIN#key=\(keyBase64)&sid=12345678&name=EDC")!
+        // Uppercase scheme and host
+        let uppercaseURL = URL(string: "TEEKUM://JOIN#key=\(keyBase64)&sid=1234&name=EDC")!
         guard let invite2 = GroupSession.parseInvite(from: uppercaseURL) else {
             print("FAILED: parseInvite should handle uppercase scheme and host")
             return false
@@ -429,8 +469,8 @@ public struct UIStateTests {
             return false
         }
         
-        // 3. Query string format instead of fragment
-        let queryURL = URL(string: "teekum://join?key=\(keyBase64)&sid=12345678&name=Ultra")!
+        // Query format instead of fragment
+        let queryURL = URL(string: "teekum://join?key=\(keyBase64)&sid=1234&name=Ultra")!
         guard let invite3 = GroupSession.parseInvite(from: queryURL) else {
             print("FAILED: parseInvite should handle query format")
             return false
@@ -440,22 +480,22 @@ public struct UIStateTests {
             return false
         }
         
-        // 4. Invalid scheme or host
-        let invalidSchemeURL = URL(string: "https://join#key=\(keyBase64)&sid=12345678&name=Fake")!
+        // Invalid scheme rejection
+        let invalidSchemeURL = URL(string: "https://join#key=\(keyBase64)&sid=1234&name=Fake")!
         guard GroupSession.parseInvite(from: invalidSchemeURL) == nil else {
             print("FAILED: parseInvite must reject non-teekum scheme")
             return false
         }
         
-        // 5. Short key (less than 32 bytes)
+        // Short key rejection (< 32 bytes)
         let shortKeyBase64 = Data([0x01, 0x02]).base64EncodedString()
-        let shortKeyURL = URL(string: "teekum://join#key=\(shortKeyBase64)&sid=12345678&name=Fake")!
+        let shortKeyURL = URL(string: "teekum://join#key=\(shortKeyBase64)&sid=1234&name=Fake")!
         guard GroupSession.parseInvite(from: shortKeyURL) == nil else {
             print("FAILED: parseInvite must reject keys that are not 32 bytes")
             return false
         }
         
-        print("PASSED: testQRBarcodeScanningEdgeCases")
+        print("PASSED: testInitialsCodecAndAutoMeshEdgeCases")
         return true
     }
     
@@ -467,8 +507,8 @@ public struct UIStateTests {
         let vm = GroupSessionViewModel()
         vm.leaveGroup()
         
-        // 1. Create a session and verify it persists across simulated relaunch
-        vm.createGroup(name: "Tomorrowland", localName: "Maya")
+        // 1. Enter auto-mesh and verify it persists across simulated relaunch
+        vm.enterAutoMesh(initials: "MAY")
         guard let originalSession = vm.activeSession else {
             print("FAILED: Active session should exist")
             return false
@@ -479,7 +519,7 @@ public struct UIStateTests {
             print("FAILED: Session should persist and restore on simulated relaunch")
             return false
         }
-        guard restored.sessionId == originalSession.sessionId, restored.sessionName == "Tomorrowland" else {
+        guard restored.sessionId == originalSession.sessionId, restored.localInitials == "MAY" else {
             print("FAILED: Restored session properties mismatch")
             return false
         }
@@ -519,8 +559,8 @@ public struct UIStateTests {
         sessionVM.leaveGroup()
         
         let initialMember = Member(
-            id: 0x00010001,
-            name: "Alice",
+            id: "ALX",
+            name: "ALX",
             coordinate: CLLocationCoordinate2D(latitude: 33.6800, longitude: -116.2300),
             status: UserStatus(code: .available),
             isDirectPeer: true
@@ -535,8 +575,8 @@ public struct UIStateTests {
         // Simulate inbound SOS update from local relay (hopCount = 1, so isDirectPeer = false)
         let emergencyCoord = CLLocationCoordinate2D(latitude: 33.6850, longitude: -116.2350)
         let updatedEmergencyMember = Member(
-            id: 0x00010001,
-            name: "Alice",
+            id: "ALX",
+            name: "ALX",
             lastSeen: Date(),
             coordinate: emergencyCoord,
             horizontalAccuracy: 5.0,
@@ -566,5 +606,262 @@ public struct UIStateTests {
         
         print("PASSED: testSOSMemberRosterAndEmergencyVisualState")
         return true
+    }
+    
+    // MARK: - 12. Meeting Point Wire Broadcast with Higher TTL
+    
+    @MainActor
+    private static func testMeetingPointWireBroadcastWithHigherTTL() async -> Bool {
+        print("[TEST] testMeetingPointWireBroadcastWithHigherTTL...")
+        
+        let keyData = Data(repeating: 0x33, count: 32)
+        let hostSession = GroupSession(
+            sessionId: 0x55AA,
+            sessionName: "Festival Mesh",
+            symmetricKeyData: keyData,
+            localInitials: "ALX",
+            isHost: true
+        )
+        
+        let hostTransport = MockMeetingTransport()
+        let cryptoService = CryptoService()
+        
+        let hostVM = MeetingPointViewModel(
+            sessionProvider: { hostSession },
+            cryptoService: cryptoService,
+            transport: hostTransport
+        )
+        
+        // 1. Propose meeting point at Main Stage Sound Booth (Landmark ID 1)
+        let coord = CLLocationCoordinate2D(latitude: 33.6822, longitude: -116.2355)
+        hostVM.proposeMeetingPoint(
+            name: "Main Stage Sound Booth",
+            coordinate: coord,
+            targetTime: Date(timeIntervalSince1970: 1729000000),
+            proposerId: "ALX",
+            landmarkId: 1
+        )
+        
+        // Allow async broadcast Task to execute
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
+        let broadcastCount = await hostTransport.getBroadcastCount()
+        guard broadcastCount == 1 else {
+            print("FAILED: Meeting proposal should have broadcast 1 packet, got \(broadcastCount)")
+            return false
+        }
+        
+        guard let wireData = await hostTransport.getLastBroadcast() else {
+            print("FAILED: Missing broadcast wire data")
+            return false
+        }
+        
+        // Strictly 56-byte wire layout
+        guard wireData.count == PacketConstants.wirePacketSize else {
+            print("FAILED: Wire packet size is \(wireData.count), expected \(PacketConstants.wirePacketSize)")
+            return false
+        }
+        
+        let wirePacket = try! RawWirePacket.fromWireData(wireData)
+        
+        // Verify type and Higher TTL
+        guard wirePacket.envelope.type == .meetingUpdate else {
+            print("FAILED: Envelope type must be .meetingUpdate, got \(wirePacket.envelope.type)")
+            return false
+        }
+        
+        guard wirePacket.envelope.hopLimit == PacketConstants.meetingPointHopLimit else {
+            print("FAILED: Meeting packet must use higher TTL (\(PacketConstants.meetingPointHopLimit)), got \(wirePacket.envelope.hopLimit)")
+            return false
+        }
+        
+        guard wirePacket.envelope.hopLimit > PacketConstants.defaultHopLimit else {
+            print("FAILED: Meeting point hopLimit (\(wirePacket.envelope.hopLimit)) must be strictly greater than default (\(PacketConstants.defaultHopLimit))")
+            return false
+        }
+        
+        guard wirePacket.envelope.sessionId == 0x55AA else {
+            print("FAILED: Session ID mismatch: expected 0x55AA, got \(wirePacket.envelope.sessionId)")
+            return false
+        }
+        
+        // 2. Decrypt wire packet as remote peer
+        let symmetricKey = SymmetricKey(data: keyData)
+        let decryptedData = try! await cryptoService.open(
+            ciphertext: wirePacket.ciphertext,
+            envelope: wirePacket.envelope,
+            authTag: wirePacket.authTag,
+            using: symmetricKey
+        )
+        
+        let update = try! MeetingUpdatePayload.deserialize(from: decryptedData)
+        guard update.action == MeetingAction.propose else {
+            print("FAILED: Decoded action must be .propose, got \(update.action)")
+            return false
+        }
+        guard update.senderInitials == "ALX" else {
+            print("FAILED: Sender initials mismatch, got \(update.senderInitials)")
+            return false
+        }
+        guard update.landmarkId == 1 else {
+            print("FAILED: Landmark ID mismatch, got \(String(describing: update.landmarkId))")
+            return false
+        }
+        
+        // 3. Remote peer receives proposal
+        let peerSession = GroupSession(
+            sessionId: 0x55AA,
+            sessionName: "Festival Mesh",
+            symmetricKeyData: keyData,
+            localInitials: "BOB",
+            isHost: false
+        )
+        let peerTransport = MockMeetingTransport()
+        let peerVM = MeetingPointViewModel(
+            sessionProvider: { peerSession },
+            cryptoService: cryptoService,
+            transport: peerTransport
+        )
+        
+        peerVM.applyInboundUpdate(update)
+        guard let peerActive = peerVM.activeMeetingPoint, peerActive.name == "Main Stage Sound Booth" else {
+            print("FAILED: Peer VM active meeting point name should be resolved from landmark ID")
+            return false
+        }
+        guard peerActive.proposerId == "ALX" else {
+            print("FAILED: Proposer ID mismatch on peer VM")
+            return false
+        }
+        guard peerVM.localAttendanceStatus == nil else {
+            print("FAILED: Peer should not be auto-marked attending if not proposer")
+            return false
+        }
+        
+        // 4. Remote peer responds "I'll be there" (.attending)
+        peerVM.respond(status: .attending, memberId: "BOB")
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
+        let peerBroadcastCount = await peerTransport.getBroadcastCount()
+        guard peerBroadcastCount == 1 else {
+            print("FAILED: Peer should have broadcast 1 acceptance packet, got \(peerBroadcastCount)")
+            return false
+        }
+        
+        guard let peerWireData = await peerTransport.getLastBroadcast() else {
+            print("FAILED: Missing peer broadcast wire data")
+            return false
+        }
+        let peerWirePacket = try! RawWirePacket.fromWireData(peerWireData)
+        guard peerWirePacket.envelope.hopLimit == PacketConstants.meetingPointHopLimit else {
+            print("FAILED: Peer response should also carry higher TTL, got \(peerWirePacket.envelope.hopLimit)")
+            return false
+        }
+        
+        let peerDecrypted = try! await cryptoService.open(
+            ciphertext: peerWirePacket.ciphertext,
+            envelope: peerWirePacket.envelope,
+            authTag: peerWirePacket.authTag,
+            using: symmetricKey
+        )
+        let peerUpdate = try! MeetingUpdatePayload.deserialize(from: peerDecrypted)
+        guard peerUpdate.action == MeetingAction.accept, peerUpdate.senderInitials == "BOB" else {
+            print("FAILED: Peer update should be .accept from BOB")
+            return false
+        }
+        
+        // Host receives BOB's attendance
+        hostVM.applyInboundUpdate(peerUpdate)
+        guard hostVM.activeMeetingPoint?.attendance["BOB"] == .attending else {
+            print("FAILED: Host active meeting point should have BOB marked attending")
+            return false
+        }
+        
+        // 5. Host cancels meeting point
+        hostVM.cancelMeetingPoint()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
+        guard hostVM.activeMeetingPoint == nil else {
+            print("FAILED: Host meeting point should be cleared after cancel")
+            return false
+        }
+        guard await hostTransport.getBroadcastCount() == 2 else {
+            print("FAILED: Host should have broadcast cancellation packet (2 total)")
+            return false
+        }
+        
+        let cancelWireData = await hostTransport.getLastBroadcast()!
+        let cancelWirePacket = try! RawWirePacket.fromWireData(cancelWireData)
+        let cancelDecrypted = try! await cryptoService.open(
+            ciphertext: cancelWirePacket.ciphertext,
+            envelope: cancelWirePacket.envelope,
+            authTag: cancelWirePacket.authTag,
+            using: symmetricKey
+        )
+        let cancelUpdate = try! MeetingUpdatePayload.deserialize(from: cancelDecrypted)
+        guard cancelUpdate.action == MeetingAction.cancel else {
+            print("FAILED: Action must be .cancel")
+            return false
+        }
+        
+        // Peer applies cancellation
+        peerVM.applyInboundUpdate(cancelUpdate)
+        guard peerVM.activeMeetingPoint == nil else {
+            print("FAILED: Peer meeting point should be cleared upon receiving cancellation")
+            return false
+        }
+        
+        print("PASSED: testMeetingPointWireBroadcastWithHigherTTL")
+        return true
+    }
+}
+
+// MARK: - Mock Meeting Transport for UI & Meeting Testing
+
+private actor MockMeetingTransport: PeerTransport {
+    var broadcastedPackets: [Data] = []
+    
+    var inboundPackets: AsyncStream<InboundPacket> {
+        AsyncStream { $0.finish() }
+    }
+    var peerUpdates: AsyncStream<[PeerInfo]> {
+        AsyncStream { $0.finish() }
+    }
+    var stateUpdates: AsyncStream<TransportState> {
+        AsyncStream { $0.finish() }
+    }
+    var transportErrors: AsyncStream<TransportError> {
+        AsyncStream { $0.finish() }
+    }
+    
+    func start(serviceType: String, session: GroupSession) async throws {}
+    func stop() async {}
+    func broadcastPacket(_ data: Data) async throws {
+        broadcastedPackets.append(data)
+    }
+    func sendPacket(_ data: Data, to peerId: String) async throws {}
+    func activeDirectPeerCount() async -> Int { 1 }
+    func getDiagnostics() async -> TransportDiagnostics {
+        TransportDiagnostics(
+            localPeerId: "TEST",
+            serviceType: "_teekum._tcp",
+            sessionName: "Test",
+            sessionId: 0x1234,
+            state: .connected(peerCount: 1),
+            activeDirectPeers: [],
+            packetsSent: broadcastedPackets.count,
+            packetsReceived: 0,
+            obsoletePingsCoalesced: 0,
+            sendErrors: 0,
+            lastError: nil,
+            recentEvents: []
+        )
+    }
+    
+    func getLastBroadcast() -> Data? {
+        broadcastedPackets.last
+    }
+    
+    func getBroadcastCount() -> Int {
+        broadcastedPackets.count
     }
 }

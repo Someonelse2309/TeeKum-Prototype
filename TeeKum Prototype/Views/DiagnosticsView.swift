@@ -35,9 +35,8 @@ public struct DiagnosticsView: View {
                     Section("Active Cryptographic Session") {
                         if let session = sessionViewModel.activeSession {
                             LabeledContent("Session Name", value: session.sessionName)
-                            LabeledContent("Session ID", value: String(format: "0x%08X", session.sessionId))
-                            LabeledContent("Local Member ID", value: String(format: "0x%08X", session.localMemberId))
-                            LabeledContent("Role", value: session.isHost ? "Host (Creator)" : "Participant (Joined)")
+                            LabeledContent("Session ID", value: String(format: "0x%04X", session.sessionId))
+                            LabeledContent("Local Initials", value: session.localInitials)
                             LabeledContent("Key Fingerprint") {
                                 Text("0x\(session.symmetricKeyData.prefix(4).map { String(format: "%02hhx", $0) }.joined().uppercased())")
                                     .font(.caption.monospaced())
@@ -169,9 +168,9 @@ public struct DiagnosticsView: View {
                         LabeledContent("Transport Mode", value: "Apple Network.framework P2P")
                         LabeledContent("Link Layer", value: "AWDL / Wi-Fi Direct & BLE")
                         LabeledContent("Bonjour Service", value: "_teekum._tcp")
-                        LabeledContent("Wire Packet Size", value: "56 Bytes Fixed")
-                        LabeledContent("Outer Envelope", value: "10 Bytes (Cleartext Routing)")
-                        LabeledContent("Payload Cipher", value: "30 Bytes (ChaCha20-Poly1305 / AES-GCM)")
+                        LabeledContent("Wire Packet Size", value: "54 Bytes Fixed (Protocol v2)")
+                        LabeledContent("Outer Envelope", value: "8 Bytes (Cleartext Routing)")
+                        LabeledContent("Payload Cipher", value: "30 Bytes (ChaCha20-Poly1305)")
                         LabeledContent("Auth Tag (MAC)", value: "16 Bytes (Tamper Detection)")
                     }
                     

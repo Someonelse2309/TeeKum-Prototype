@@ -21,8 +21,8 @@ public enum SOSDeliveryState: Equatable, Sendable {
     case idle
     case countdown(remainingSeconds: Double)
     case localSending
-    case relayedAck(relayHopCount: UInt8, responderId: UInt32)
-    case deliveredToFriend(friendId: UInt32, timestamp: Date)
+    case relayedAck(relayHopCount: UInt8, responderId: String)
+    case deliveredToFriend(friendId: String, timestamp: Date)
     case searchingPeers
     case failed(reason: String)
     
@@ -94,11 +94,14 @@ public struct IncomingSOSAlert: Identifiable, Equatable, Sendable {
     /// 32-bit unique emergency event identifier.
     public let id: UInt32
     
-    /// Member ID of the sender in distress.
-    public let senderId: UInt32
+    /// Initials of the sender in distress (e.g. "DNA").
+    public let senderInitials: String
     
     /// Local display name of the member in distress.
     public var senderName: String
+    
+    /// Backward-compatibility sender identifier.
+    public var senderId: String { senderInitials }
     
     /// Specific category of emergency (`general`, `medical`, `separated`, `security`).
     public let emergencyType: SOSType
@@ -120,8 +123,8 @@ public struct IncomingSOSAlert: Identifiable, Equatable, Sendable {
     
     public init(
         id: UInt32,
-        senderId: UInt32,
-        senderName: String,
+        senderInitials: String,
+        senderName: String? = nil,
         emergencyType: SOSType,
         coordinate: CLLocationCoordinate2D,
         accuracy: UInt8,
@@ -129,9 +132,10 @@ public struct IncomingSOSAlert: Identifiable, Equatable, Sendable {
         batteryLevel: UInt8,
         receivedAt: Date = Date()
     ) {
+        let cleanInitials = InitialsCodec.sanitize(senderInitials)
         self.id = id
-        self.senderId = senderId
-        self.senderName = senderName
+        self.senderInitials = cleanInitials
+        self.senderName = senderName ?? cleanInitials
         self.emergencyType = emergencyType
         self.coordinate = coordinate
         self.accuracy = accuracy
@@ -142,7 +146,7 @@ public struct IncomingSOSAlert: Identifiable, Equatable, Sendable {
     
     public static func == (lhs: IncomingSOSAlert, rhs: IncomingSOSAlert) -> Bool {
         lhs.id == rhs.id &&
-        lhs.senderId == rhs.senderId &&
+        lhs.senderInitials == rhs.senderInitials &&
         lhs.senderName == rhs.senderName &&
         lhs.emergencyType == rhs.emergencyType &&
         lhs.coordinate.latitude == rhs.coordinate.latitude &&

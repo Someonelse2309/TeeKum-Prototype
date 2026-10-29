@@ -9,6 +9,7 @@
 > *Companion Documents:*
 > - [AI Coding Agent System Prompt & Task Playbook (docs/AGENT_PROMPT.md)](docs/AGENT_PROMPT.md)
 > - [Technical Requirements Document (docs/TechnicalRequirements.md)](docs/TechnicalRequirements.md)
+> - [Development Log (docs/DEVELOPMENT_LOG.md)](docs/DEVELOPMENT_LOG.md)
 > 
 > *Last Verified via /grill-me:* 2026-10-28 (Architecture, Tech Stack, 8 Blind Spots, Full User Story, 16-Bit Session ID & 54-Byte Binary Protocol v2 Confirmed)
 
@@ -188,12 +189,10 @@ graph TD
 - **Goal:** Navigate venue geography offline.
 - **Implementation:** Uses Apple MapKit's offline cached map system. Custom vector venue floorplans are planned for future development.
 
-#### User Story 7: Lock Screen Live Activity & Communal Relay Approval
-- **Goal:** Monitor group status from the Lock Screen / Dynamic Island and manage battery-conscious community relaying.
-- **Friend Navigation:** Passively updates friend distance; does not require interactive approval.
-- **Communal Relay Approval:** When stranger packets in the venue mesh need a forwarding hop, an interactive Lock Screen Live Activity surfaces:
-  - Prompt: *"Nearby festival-goers need relay help: [Approve Relay] [Decline]"*
-  - Options: User selects **"Timed (e.g., 30 mins)"** (auto-pauses to save battery) or **"Always Active"** (until manually stopped or battery hits <20%).
+#### User Story 7: Live Activity Companion & Communal Mesh Compact
+- **Goal:** Monitor group status from the Lock Screen / Dynamic Island and maintain background pocket execution while participating in the festival mesh compact.
+- **Phase 1 Companion:** Active Session Live Activity (`ActivityKit`) displays session name, connected direct peers, active meeting point distance, and emergency SOS alerts on the Dynamic Island and Lock Screen, keeping background sockets (`NWListener`) alive via Apple's official location status indicator (`showsBackgroundLocationIndicator = true`).
+- **Phase 2 Communal Mesh Compact:** Group membership requires explicit consent to the festival mesh compact upon QR pairing/creation (*"Join the Mesh: Relay for others while others relay for you. Battery-protected; shuts off at 20%"*). Once joined, member devices automatically forward multi-hop packets for their own group and blindly relay encrypted packets for nearby festival attendees. Relaying is strictly zero-knowledge, rate-limited to 2 pkts/sec, and automatically suspended at 20% battery (Festival Survival Mode).
 
 #### User Story 8: Emergency SOS
 - **Goal:** Instantly summon friends during an emergency.
@@ -268,6 +267,7 @@ TeeKum/
 ├── docs/
 │   ├── TechnicalRequirements.md       // Technical system requirements specification
 │   ├── Architecture.md
+│   ├── DEVELOPMENT_LOG.md             // Chronological development log, agent changes & verification records
 │   └── AGENT_PROMPT.md                // AI coding agent onboarding & task playbook
 └── Tests/
     └── UnitTests/
@@ -355,26 +355,37 @@ The app utilizes a **Fixed 54-Byte Secure Binary Wire Format** transmitted over 
 | **20** | `accuracy` | `UInt8` | `CLLocationAccuracy` (`Double`) | Horizontal accuracy radius in meters (`UInt8(min(255, max(0, accuracy.rounded())))`). |
 | **21** | `statusCode` | `UInt8` | `StatusCode` (`enum: UInt8`) | Compact 1-byte festival activity hash (`0x00` Available, `0x0A` Drinks, `0x0B` Restroom, etc.). |
 | **22..25** | `targetRefId` | `UInt32` | `UInt32?` | Optional 32-bit big-endian ID of target member or meeting point (`0x00000000` if none). |
-| **26..27** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | 2-byte Base-26 encoded 3-letter initials (formula: `(a*676) + (b*26) + c`). Eliminates connection handshake. |
+| **26..27** | `senderInitials` | `UInt16` | `String` (1 to 3 Chars A-Z) | 2-byte Base-27 encoded 1 to 3-letter initials (formula: `(a*729) + (b*27) + c`). Eliminates radio handshake. |
 | **28..37** | `variantData` | `10 Bytes` | `VariantSpecificData` | 10 bytes reserved for variant-specific payloads (see Section 6.2). |
 | **38..53** | `authTag` | `16 Bytes` | `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM authentication tag verifying payload + envelope AAD. |
 
-#### 6.1.1 2-Byte Base-26 Initials Codec (Zero-Handshake Self-Describing Telemetry)
+#### 6.1.1 2-Byte Base-27 Initials Codec & Serverless QR Group Pairing
 
-To eliminate out-of-band P2P connection handshakes and keep every packet self-describing across the multi-hop mesh, member identity inside the 30-byte encrypted payload is encoded as 3 uppercase initial characters (`A`–`Z`) compressed into exactly **2 bytes** (`UInt16`).
+To eliminate out-of-band P2P connection handshakes while allowing flexible member identification, member identity inside the 30-byte encrypted payload is encoded as 1 to 3 uppercase initial characters (`A`–`Z`, e.g. `"D"`, `"AB"`, `"DNA"`) compressed into exactly **2 bytes** (`UInt16`). Group formation uses serverless QR barcode generation/scanning where the host's 256-bit symmetric key and 16-bit `sessionId` are exchanged offline, completely eliminating any runtime radio handshake for member discovery.
 
 - **Mathematical Proof:**
-  There are $26^3 = 17{,}576$ valid 3-letter combinations ($AAA \dots ZZZ$).
-  Because $17{,}576 < 2^{16} = 65{,}536$, all combinations fit inside 2 bytes (`UInt16`).
+  - 1 letter: $26$ combinations
+  - 2 letters: $26 \times 26 = 676$ combinations
+  - 3 letters: $26 \times 26 \times 26 = 17{,}576$ combinations
+  - **Total combinations:** $26 + 676 + 17{,}576 = 18{,}278 \le 65{,}535$ ($2^{16}$).
+  - All 18,278 possible 1 to 3-letter initials fit cleanly inside 2 bytes (`UInt16`).
 
-- **Encoding Algorithm ($3 \text{ chars} \rightarrow 2 \text{ bytes}$):**
-  1. Map characters $c_0, c_1, c_2 \in ['A' \dots 'Z']$ to integers $a, b, c \in [0 \dots 25]$ where $x = \text{ASCII}(c) - 65$.
-  2. Compute base-26 integer: $\text{number} = (a \times 676) + (b \times 26) + c$.
+- **Encoding Algorithm ($1\dots 3 \text{ chars} \rightarrow 2 \text{ bytes}$):**
+  1. Map characters $c_0, c_1, c_2$ to integers $a, b, c$:
+     - $a = \text{ASCII}(c_0) - 64 \in [1 \dots 26]$
+     - $b = \text{length} \ge 2 ? (\text{ASCII}(c_1) - 64) : 0 \in [0 \dots 26]$
+     - $c = \text{length} \ge 3 ? (\text{ASCII}(c_2) - 64) : 0 \in [0 \dots 26]$
+  2. Compute base-27 positional integer:
+     $$\text{number} = (a \times 729) + (b \times 27) + c$$
   3. Split into 2 big-endian bytes:
      $$\text{highByte} = \lfloor \text{number} / 256 \rfloor, \quad \text{lowByte} = \text{number} \bmod 256$$
 
-- **Decoding Algorithm ($2 \text{ bytes} \rightarrow 3 \text{ chars}$):**
-  1. Recombine: $\text{number} = (\text{highByte} \times 256) + \text{lowByte}$. Validate $\text{number} < 17{,}576$.
+- **Decoding Algorithm ($2 \text{ bytes} \rightarrow 1\dots 3 \text{ chars}$):**
+  1. Recombine: $\text{number} = (\text{highByte} \times 256) + \text{lowByte}$. Validate $729 \le \text{number} \le 19{,}682$.
+  2. Extract positional symbols:
+     $$a = \lfloor \text{number} / 729 \rfloor, \quad b = \lfloor (\text{number} \bmod 729) / 27 \rfloor, \quad c = \text{number} \bmod 27$$
+  3. Validate $1 \le a \le 26, 0 \le b \le 26, 0 \le c \le 26$ and $\neg(b = 0 \land c > 0)$.
+  4. Convert back to ASCII: $c_0 = \text{char}(a + 64)$, append $\text{char}(b + 64)$ if $b > 0$, append $\text{char}(c + 64)$ if $c > 0$.
   2. Extract indices:
      $$a = \lfloor \text{number} / 676 \rfloor, \quad b = \lfloor (\text{number} \bmod 676) / 26 \rfloor, \quad c = \text{number} \bmod 26$$
   3. Map back to ASCII characters: $a + 65, b + 65, c + 65$.
@@ -538,14 +549,15 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 
 Use an **AODV-inspired on-demand routing approach** with bounded flooding fallback.
 
--   **Phase 1 (Direct Offline MVP):** Direct peer-to-peer connections between group members.
--   **Phase 2 (Multi-Hop Stranger Mesh):**
-    -   Phones act as blind relays for encrypted packets.
-    -   Relay participation requires explicit user opt-in (via Settings or Lock Screen Live Activity).
-    -   Relay nodes **cannot** decrypt location or status payloads (zero-knowledge relaying).
-    -   **Hop Limit (TTL):** Set to a maximum of **8 hops** to allow coverage across massive multi-kilometer festival grounds.
-    -   **Relay Rate Limit:** Stranger relays cap re-transmissions to **2 packets/second** to preserve battery. SOS packets are exempt from rate limits.
-    -   Duplicate suppression via 5-minute LRU packet cache.
+-   **Phase 1 (Direct Offline MVP):** Direct peer-to-peer connections between group members with Live Activity & background location indicator.
+-   **Phase 2 (Multi-Hop Stranger Mesh & Communal Compact):**
+    -   Phones act as zero-knowledge blind relays for encrypted packets.
+    -   Relay participation is an all-in community compact agreed upon joining or creating a group via a dedicated consent screen.
+    -   Relay nodes **cannot** decrypt location, status, or identity payloads.
+    -   **Hop Limit (TTL):** Set to a maximum of **8 hops** for regular location pings and **15 hops** for rendezvous meeting points.
+    -   **Relay Rate Limit:** Stranger relays cap re-transmissions to **2 packets/second** (<1ms CPU per hop) to preserve battery. SOS packets receive immediate priority.
+    -   Duplicate suppression via 256-entry LRU packet hash cache.
+    -   Automatic suspension at 20% battery (Festival Survival Mode).
 
 ---
 
@@ -652,6 +664,7 @@ Use an **AODV-inspired on-demand routing approach** with bounded flooding fallba
 11. Group creation is **100% serverless** via URL fragment links and QR barcodes.
 12. There is **only ONE active meeting point** at a time for the group.
 13. Wire format is fixed at **54 bytes** (Protocol v2) with big-endian integer coordinates, 16-bit session ID, and full 16-byte authentication tags.
+14. **Mandatory Development Logging:** Every agent or developer modifying the codebase MUST maintain and update the chronological log in [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md). Every development task, feature addition, bug fix, architectural decision, and test verification must be logged to ensure seamless context handoff and traceability.
 
 ---
 
@@ -667,3 +680,61 @@ Use an **AODV-inspired on-demand routing approach** with bounded flooding fallba
 | **6** | **Unintentional Tracking** | Users don't want constant tracking while resting or watching a band. | **Live Sharing Master Toggle:** Turn ON to navigate/find friends; turn OFF to pause tracking. SOS always sends. |
 | **7** | **Panic & Rogue SOS Spam** | Malicious nearby nodes could broadcast fake emergencies to cause a crowd surge. | **Verified Friend Signature:** Only friends who scanned the QR code in person hold the key to trigger emergency alerts. |
 | **8** | **Accidental "Don't Allow" Tap** | Tapping "Don't Allow" on Apple's Bluetooth/Local Network popups permanently breaks offline connectivity. | **Pre-Permission Primers:** Friendly educational screens explaining the need for permissions before Apple dialogs appear. |
+
+---
+
+## 15. Agent Development & Mandatory "Log" Documentation Protocol
+
+All AI coding agents, autonomous subagents, and human developers working on the TeeKum codebase are **strictly required** to maintain a continuous, structured development log in [`docs/DEVELOPMENT_LOG.md`](docs/DEVELOPMENT_LOG.md).
+
+### 15.1 Purpose & Rationale
+
+In multi-agent and iterative software development, session contexts reset and different agents handle successive tasks. The Development Log serves as:
+1. **The Single Ledger of Truth:** An immutable, chronological record documenting *what* was implemented, *why* specific trade-offs were chosen, and *how* changes were validated.
+2. **Seamless Agent Handover:** Any incoming agent or reviewer can read the latest log entries and immediately understand the project state, recent code modifications, open bugs, and next steps without costly reverse-engineering.
+3. **Traceability & Verification:** Every code change is tied directly to verified test results (e.g., unit test passes, physical device tests, build status).
+
+### 15.2 Mandatory Logging Triggers (When the Agent Must Log)
+
+Agents MUST record an entry in `docs/DEVELOPMENT_LOG.md` under the following conditions:
+- **Task Initiation / Planning:** When starting a new feature, major refactor, or phase milestone (recording planned scope and approach).
+- **Task Completion:** Immediately upon completing code changes and verification, before declaring the task finished or concluding the session.
+- **Bug Fixes & Troubleshooting:** When diagnosing and resolving unexpected defects or regressions, documenting the root cause, fix, and regression test results.
+- **Architectural & Protocol Adjustments:** Any deviation or evolution of wire packet schemas, actor interfaces, or persistent data models.
+
+### 15.3 Standard Log Entry Schema
+
+Every entry in `docs/DEVELOPMENT_LOG.md` must follow this standardized Markdown format:
+
+````markdown
+### [YYYY-MM-DD HH:MM] — <Task / Feature / Fix Title>
+- **Contributor / Agent:** <Agent Name / Model / Role>
+- **Status:** <Planned | In Progress | Completed | Blocked>
+- **Target Phase / Milestone:** <e.g., Phase 1 MVP | Phase 2 Multi-Hop Mesh | Bugfix>
+
+#### 1. Objective & Scope
+- Concise description of the request, user story, or problem addressed.
+
+#### 2. Changes Made & Files Touched
+- `<path/to/File.swift>`: Specific changes, classes/methods added or updated.
+- `<path/to/Doc.md>`: Documentation updates or specifications adjusted.
+
+#### 3. Key Decisions & Rationale
+- Architectural or implementation choices made (e.g., actor isolation, memory management, protocol byte alignment).
+- Trade-offs considered and why this approach was selected.
+
+#### 4. Verification & Testing Performed
+- Build results (e.g., `xcodebuild -scheme "TeeKum Prototype" ...` -> BUILD SUCCEEDED).
+- Unit / integration test suite outcomes (e.g., `X tests executed, 0 failures`).
+- Physical device test notes or simulated scenario verification (if applicable).
+
+#### 5. Open Items & Next Steps
+- Concrete items remaining for subsequent agents or developers to pick up.
+````
+
+### 15.4 Core Rules for Development Logging
+
+1. **Never Skip Logging:** No code change, no matter how small (even a single bug fix or refactor), may be completed without an accompanying log entry.
+2. **Reverse-Chronological Ordering:** Maintain entries in reverse-chronological order (newest entry at the top, immediately below the file header) so subsequent agents and reviewers see the latest progress instantly.
+3. **Honest Verification Only:** Never log that a test passed or that a build succeeded without actually executing and validating it.
+4. **Zero Secrets in Logs:** Strictly uphold Rule 8 (Security & Privacy): never record raw encryption keys, Keychain items, or real attendee coordinate logs in `DEVELOPMENT_LOG.md`.
