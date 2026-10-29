@@ -685,6 +685,7 @@ Use an **AODV-inspired on-demand routing approach** with bounded flooding fallba
 ### Phase 3 --- Venue Intelligence & Polish
 -   [ ] Custom venue event vector overlays (stages, medical, water stations).
 -   [ ] Apple Watch companion extension for haptic notifications.
+-   [ ] Close-range AR "Spotter Lens" (RealityKit/ARKit) & UWB precision finding (Nearby Interaction) as an optional micro-navigation HUD inside `FinderBeaconView` (<30m range with auto-timeout; non-primary to preserve battery and glanceability).
 
 ---
 
