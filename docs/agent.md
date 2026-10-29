@@ -10,11 +10,13 @@
 > - [AI Coding Agent System Prompt & Task Playbook (docs/AGENT_PROMPT.md)](docs/AGENT_PROMPT.md)
 > - [Technical Requirements Document (docs/TechnicalRequirements.md)](docs/TechnicalRequirements.md)
 > - [Phase 1 Development Report (docs/PHASE_1_DEVELOPMENT_REPORT.md)](docs/PHASE_1_DEVELOPMENT_REPORT.md)
+> - [Phase 2 Multi-Hop Mesh Architecture (docs/PHASE2_ARCHITECTURE.md)](docs/PHASE2_ARCHITECTURE.md)
+> - [Phase 2 Protocol Decisions & Consensus (docs/PHASE2_PROTOCOL_DECISIONS.md)](docs/PHASE2_PROTOCOL_DECISIONS.md)
 > - [Networking Architecture & Wire Protocol (docs/NETWORKING.md)](docs/NETWORKING.md)
-> - [54-Byte Wire Protocol & Payload Developer Guide (docs/PAYLOAD_GUIDE.md)](docs/PAYLOAD_GUIDE.md)
+> - [56-Byte Wire Protocol & Payload Developer Guide (docs/PAYLOAD_GUIDE.md)](docs/PAYLOAD_GUIDE.md)
 > - [Development Log (docs/DEVELOPMENT_LOG.md)](docs/DEVELOPMENT_LOG.md)
 > 
-> *Last Verified via /grill-me:* 2026-10-28 (Architecture, Tech Stack, 8 Blind Spots, Full User Story, 16-Bit Session ID & 54-Byte Binary Protocol v2 Confirmed)
+> *Last Verified via /grill-me:* 2026-10-29 (Phase 2 Multi-Hop Mesh Architecture, 56-Byte Wire Protocol, 24-Bit Session ID, 7-Byte Deduplication Key, Hybrid AODV & Flooding, TXT relay: 1/0 Peering, Dual-Lane Rate Limiting, 5-State Delivery UX, 3-Mode Relay Policy & 3-Tier Verification Confirmed)
 
 ---
 
@@ -51,7 +53,7 @@ Relay participation must be explicit and opt-in.
     continuous background mesh relaying. Screen-on for active navigation;
     hybrid background wakeups for emergency SOS.
 8.  **Security before packet minimization:** Never weaken cryptography
-    or replay protection just to fit a 54-byte packet.
+    or replay protection just to fit a 56-byte packet.
 9.  **User-controlled live sharing:** Location broadcasting is governed by
     an explicit "Live Sharing" master toggle (active when navigating or
     finding friends, paused when resting/watching shows). SOS is unconditional.
@@ -276,7 +278,8 @@ TeeKum Prototype/
 ├── Services/
 │   ├── PeerTransport.swift               // Authoritative actor protocol, state streams & diagnostics
 │   ├── PeerTransportService.swift        // Network.framework P2P datagram transmission actor (AWDL Bonjour)
-│   ├── StreamMessageFramer.swift         // 54-byte binary stream delimiter, chunk reconstruction, resynchronization
+│   ├── MeshProtocols.swift               // Phase 2 multi-hop mesh protocol interfaces, MeshClock & PacketKey
+│   ├── StreamMessageFramer.swift         // 56-byte binary stream delimiter, chunk reconstruction, resynchronization
 │   ├── PriorityOutboxQueue.swift         // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting) + coalesced Location
 │   ├── CryptoServiceProtocol.swift       // Cryptographic service interface
 │   ├── CryptoService.swift               // ChaChaPoly AEAD, AAD envelope binding & Keychain store (actor)
@@ -290,8 +293,10 @@ TeeKum Prototype/
 │   ├── agent.md                          // Master agent instructions and product principles
 │   ├── DEVELOPMENT_LOG.md                // Chronological development log, agent changes & verification records
 │   ├── PHASE_1_DEVELOPMENT_REPORT.md     // Phase 1 Direct Offline MVP milestone completion report
+│   ├── PHASE2_ARCHITECTURE.md            // Phase 2 Multi-Hop Mesh Architecture Specification
+│   ├── PHASE2_PROTOCOL_DECISIONS.md      // Phase 2 Architectural & Protocol Decisions (Approved via /grill-me)
 │   ├── NETWORKING.md                     // Authoritative networking architecture & protocol guide
-│   ├── PAYLOAD_GUIDE.md                  // 54-byte wire protocol & payload developer guide
+│   ├── PAYLOAD_GUIDE.md                  // 56-byte wire protocol & payload developer guide
 │   ├── PROTOCOL_SPECIFICATION.md         // Cryptographic message protection specification
 │   ├── POC_ACCEPTANCE_REPORT.md          // Final POC integration & verification acceptance report
 │   ├── POC_IMPLEMENTATION_PLAN.md        // Milestone implementation plan & file ownership
@@ -455,7 +460,7 @@ To eliminate out-of-band P2P connection handshakes while allowing flexible membe
 
 ### 6.2 Exact Wire Layout for Each Package Type
 
-Every packet is strictly **54 bytes** total. Below are the exact byte layouts for each message type.
+Every packet is strictly **56 bytes** total. Below are the exact byte layouts for each message type.
 
 #### Type 1: `0x01` — `LOCATION_PING` (Normal Location & Status)
 *Sent every 3–5 seconds while moving, or 15–30 seconds while stationary.*
@@ -463,20 +468,21 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
 | **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x21` (High nibble = Version `2`, Low nibble = Type `1`). |
-| **1** | `hopMetadata` | `UInt8` | `(UInt8, UInt8)` | High 4 bits = Hop Limit (`8`), Low 4 bits = Hop Count (`0` initially). |
-| **2..3** | `sessionId` | `UInt16` | `UInt16` | 16-bit big-endian hash of the active group session (`0x0001...0xFFFF`). |
-| **4..7** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian counter (memberSlot + counter) for replay rejection & duplicate cache. |
-| **8..11** | `latitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Signed 32-bit big-endian: `Int32((latitude * 1_000_000).rounded())` (~11cm res). |
-| **12..15** | `longitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Signed 32-bit big-endian: `Int32((longitude * 1_000_000).rounded())` (~11cm res). |
-| **16..19** | `timestamp` | `UInt32` | `Date` | Big-endian Unix epoch seconds (`UInt32(date.timeIntervalSince1970)`). |
-| **20** | `accuracy` | `UInt8` | `CLLocationAccuracy` (`Double`) | Horizontal accuracy radius in meters (`0` to `255`m). |
-| **21** | `statusCode` | `UInt8` | `StatusCode` (`enum: UInt8`) | Coded activity hash (`0x00` Available, `0x0A` Drinks, `0x0B` Restroom, etc.). |
-| **22..25** | `targetRefId` | `UInt32` | `UInt32?` | Big-endian ID of target friend or landmark (`0x00000000` if none). |
-| **26..27** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-26 encoded initials of transmitting member. |
-| **28** | `batteryLevel` | `UInt8` | `Float` | Sender battery percentage (`0` to `100`%). |
-| **29** | `heading` | `UInt8` | `CLLocationDirection` (`Double`) | Compass heading (`0–255` representing 0–360°, `degrees * 255 / 360`). |
-| **30..37** | `reserved` | `8 Bytes` | `Data` | Reserved for future expansion (padded with `0x0000000000000000`). |
-| **38..53** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM MAC tag sealing payload + envelope AAD. |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Forwarding budget ($1 \dots 8$, max 8 hops). Authenticated in AAD. |
+| **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hops ($0 \dots \text{hopLimit}$, starts at `0`). Mutated per relay; masked to `0x00` in AAD. |
+| **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian group session identifier (`0x000001...0xFFFFFF`). |
+| **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian counter (memberSlot + counter) for replay rejection & duplicate cache. |
+| **10..13** | `latitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Signed 32-bit big-endian: `Int32((latitude * 1_000_000).rounded())` (~11cm res). |
+| **14..17** | `longitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Signed 32-bit big-endian: `Int32((longitude * 1_000_000).rounded())` (~11cm res). |
+| **18..21** | `timestamp` | `UInt32` | `Date` | Big-endian Unix epoch seconds (`UInt32(date.timeIntervalSince1970)`). |
+| **22** | `accuracy` | `UInt8` | `CLLocationAccuracy` (`Double`) | Horizontal accuracy radius in meters (`0` to `255`m). |
+| **23** | `statusCode` | `UInt8` | `StatusCode` (`enum: UInt8`) | Coded activity hash (`0x00` Available, `0x0A` Drinks, `0x0B` Restroom, etc.). |
+| **24..27** | `targetRefId` | `UInt32` | `UInt32?` | Big-endian ID of target friend or landmark (`0x00000000` if none). |
+| **28..29** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of transmitting member. |
+| **30** | `batteryLevel` | `UInt8` | `Float` | Sender battery percentage (`0` to `100`%). |
+| **31** | `heading` | `UInt8` | `CLLocationDirection` (`Double`) | Compass heading (`0–255` representing 0–360°, `degrees * 255 / 360`). |
+| **32..39** | `reserved` | `8 Bytes` | `Data` | Reserved for future expansion (padded with `0x0000000000000000`). |
+| **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM MAC tag sealing payload + envelope AAD. |
 
 #### Type 2: `0x02` — `SOS` (Urgent Emergency Alert)
 *Sent immediately upon 3-second hold. Preempts all queues and transmits with bounded retries.*
@@ -484,20 +490,21 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
 | **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x22` (High nibble = Version `2`, Low nibble = Type `2`). |
-| **1** | `hopMetadata` | `UInt8` | `(UInt8, UInt8)` | High 4 bits = Hop Limit (`15` for urgent emergency reach), Low 4 bits = Hop Count (`0` initially). |
-| **2..3** | `sessionId` | `UInt16` | `UInt16` | 16-bit big-endian hash of the active group session. |
-| **4..7** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
-| **8..11** | `latitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Freshest available latitude (`Double * 1_000_000`, signed 32-bit big-endian). |
-| **12..15** | `longitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Freshest available longitude (`Double * 1_000_000`, signed 32-bit big-endian). |
-| **16..19** | `timestamp` | `UInt32` | `Date` | Measurement timestamp of that coordinate (epoch seconds). |
-| **20** | `accuracy` | `UInt8` | `CLLocationAccuracy` (`Double`) | Accuracy radius in meters at measurement time. |
-| **21** | `statusCode` | `UInt8` | `StatusCode` | Fixed urgent status code: `0x01` (`SOS`). |
-| **22..25** | `sosEventId` | `UInt32` | `UInt32` | Unique random 32-bit event ID (used to deduplicate multi-hop copies). |
-| **26..27** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-26 encoded initials of member in distress. |
-| **28** | `emergencyType` | `UInt8` | `SOSType` (`enum: UInt8`) | `0x01` Medical, `0x02` Lost/Separated, `0x03` Harassment/Security, `0x00` General. |
-| **29** | `batteryLevel` | `UInt8` | `Float` | Current battery % of sender's phone (`0` to `100`%). |
-| **30..37** | `reserved` | `8 Bytes` | `Data` | Reserved padding (`0x0000000000000000`). |
-| **38..53** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit MAC tag verifying group signature (prevents stranger fake alarms). |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Forwarding budget ($1 \dots 8$, max 8 hops). Authenticated in AAD. |
+| **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hops ($0 \dots \text{hopLimit}$, starts at `0`). Mutated per relay; masked to `0x00` in AAD. |
+| **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian group session identifier. |
+| **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
+| **10..13** | `latitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Freshest available latitude (`Double * 1_000_000`, signed 32-bit big-endian). |
+| **14..17** | `longitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Freshest available longitude (`Double * 1_000_000`, signed 32-bit big-endian). |
+| **18..21** | `timestamp` | `UInt32` | `Date` | Measurement timestamp of that coordinate (epoch seconds). |
+| **22** | `accuracy` | `UInt8` | `CLLocationAccuracy` (`Double`) | Accuracy radius in meters at measurement time. |
+| **23** | `statusCode` | `UInt8` | `StatusCode` | Fixed urgent status code: `0x01` (`SOS`). |
+| **24..27** | `sosEventId` | `UInt32` | `UInt32` | Unique random 32-bit event ID (used to deduplicate multi-hop copies). |
+| **28..29** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of member in distress. |
+| **30** | `emergencyType` | `UInt8` | `SOSType` (`enum: UInt8`) | `0x01` Medical, `0x02` Lost/Separated, `0x03` Harassment/Security, `0x00` General. |
+| **31** | `batteryLevel` | `UInt8` | `Float` | Current battery % of sender's phone (`0` to `100`%). |
+| **32..39** | `reserved` | `8 Bytes` | `Data` | Reserved padding (`0x0000000000000000`). |
+| **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit MAC tag verifying group signature (prevents stranger fake alarms). |
 
 #### Type 3: `0x03` — `MEETING_UPDATE` (Rendezvous Landmark & Attendance)
 *Sent when proposing, accepting ("I'll be there"), or cancelling a single active meeting point.*
@@ -505,19 +512,20 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
 | **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x23` (High nibble = Version `2`, Low nibble = Type `3`). |
-| **1** | `hopMetadata` | `UInt8` | `(UInt8, UInt8)` | High 4 bits = Hop Limit (`8`), Low 4 bits = Hop Count (`0`). |
-| **2..3** | `sessionId` | `UInt16` | `UInt16` | 16-bit big-endian hash of the active group session. |
-| **4..7** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
-| **8..11** | `meetingLat` | `Int32` | `CLLocationDegrees` (`Double`) | Rendezvous spot latitude (`Double * 1_000_000`, signed 32-bit big-endian). |
-| **12..15** | `meetingLon` | `Int32` | `CLLocationDegrees` (`Double`) | Rendezvous spot longitude (`Double * 1_000_000`, signed 32-bit big-endian). |
-| **16..19** | `meetupTime` | `UInt32` | `Date` | Target rendezvous time (Unix epoch seconds, e.g. 10:15 PM). |
-| **20** | `meetingAction` | `UInt8` | `MeetingAction` (`enum: UInt8`) | `0x01` Propose, `0x02` Accept ("I'll be there"), `0x03` Decline, `0x04` Cancel. |
-| **21** | `attendanceStatus`| `UInt8` | `StatusCode` | `0x01` Attending, `0x02` Can't Make It, `0x09` At Meeting Point. |
-| **22..25** | `meetingPointId`| `UInt32` | `UInt32` | Unique 32-bit ID for this rendezvous instance. |
-| **26..27** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-26 encoded initials of member proposing/accepting. |
-| **28..31** | `landmarkId` | `UInt32` | `UInt32?` | Pre-set venue landmark ID (`0x00000001` Gate 1, `0x00000002` Stage A; `0` if pin). |
-| **32..37** | `reserved` | `6 Bytes` | `Data` | Padding (`0x000000000000`). |
-| **38..53** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM MAC tag. |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Forwarding budget ($1 \dots 8$, max 8 hops). Authenticated in AAD. |
+| **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hops ($0 \dots \text{hopLimit}$, starts at `0`). Masked to `0x00` in AAD. |
+| **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian group session ID. |
+| **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
+| **10..13** | `meetingLat` | `Int32` | `CLLocationDegrees` (`Double`) | Rendezvous spot latitude (`Double * 1_000_000`, signed 32-bit big-endian). |
+| **14..17** | `meetingLon` | `Int32` | `CLLocationDegrees` (`Double`) | Rendezvous spot longitude (`Double * 1_000_000`, signed 32-bit big-endian). |
+| **18..21** | `meetupTime` | `UInt32` | `Date` | Target rendezvous time (Unix epoch seconds, e.g. 10:15 PM). |
+| **22** | `meetingAction` | `UInt8` | `MeetingAction` (`enum: UInt8`) | `0x01` Propose, `0x02` Accept ("I'll be there"), `0x03` Decline, `0x04` Cancel. |
+| **23** | `attendanceStatus`| `UInt8` | `StatusCode` | `0x01` Attending, `0x02` Can't Make It, `0x09` At Meeting Point. |
+| **24..27** | `meetingPointId`| `UInt32` | `UInt32` | Unique 32-bit ID for this rendezvous instance. |
+| **28..29** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of member proposing/accepting. |
+| **30..33** | `landmarkId` | `UInt32` | `UInt32?` | Pre-set venue landmark ID (`0x00000001` Gate 1, `0x00000002` Stage A; `0` if pin). |
+| **34..39** | `reserved` | `6 Bytes` | `Data` | Padding (`0x000000000000`). |
+| **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM MAC tag. |
 
 #### Type 4: `0x06` — `ACK` (Receipt Confirmation)
 *Sent to confirm delivery of an SOS alert, a targeted status, or a rendezvous update.*
@@ -525,18 +533,19 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
 | **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x26` (High nibble = Version `2`, Low nibble = Type `6`). |
-| **1** | `hopMetadata` | `UInt8` | `(UInt8, UInt8)` | High 4 bits = Hop Limit (`15` for SOS/meeting ACK, `8` for ping), Low 4 bits = Hop Count (`0`). |
-| **2..3** | `sessionId` | `UInt16` | `UInt16` | 16-bit big-endian group session ID. |
-| **4..7** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
-| **8..11** | `ackedSeqNumber`| `UInt32` | `UInt32` | The exact sequence number of the message being acknowledged. |
-| **12..13** | `ackedSenderInitials` | `UInt16` | `String` (3 Chars A-Z) | 2-byte Base-26 encoded initials of the sender whose message is confirmed. |
-| **14..17** | `ackTimestamp` | `UInt32` | `Date` | Timestamp when the receiver got the message (epoch seconds). |
-| **18** | `ackStatus` | `UInt8` | `ACKStatus` (`enum: UInt8`) | `0x01` Delivered to Intended Recipient, `0x02` Relayed by Mesh Hop. |
-| **19** | `receivedRssi` | `Int8` | `Int8` | Signal strength in dBm observed on arrival (e.g., `-65` dBm). |
-| **20..23** | `originalEventId`| `UInt32` | `UInt32` | Original event ID (matching `sosEventId` or `meetingPointId`). |
-| **24..25** | `responderInitials` | `UInt16` | `String` (3 Chars A-Z) | 2-byte Base-26 encoded initials of device confirming receipt. |
-| **26..37** | `reserved` | `12 Bytes`| `Data` | Padding (`0x000000000000000000000000`). |
-| **38..53** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM MAC tag. |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Forwarding budget ($1 \dots 8$, max 8 hops). Authenticated in AAD. |
+| **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hops ($0 \dots \text{hopLimit}$, starts at `0`). Masked to `0x00` in AAD. |
+| **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian group session ID. |
+| **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
+| **10..13** | `ackedSeqNumber`| `UInt32` | `UInt32` | The exact sequence number of the message being acknowledged. |
+| **14..15** | `ackedSenderInitials` | `UInt16` | `String` (3 Chars A-Z) | 2-byte Base-27 encoded initials of the sender whose message is confirmed. |
+| **16..19** | `ackTimestamp` | `UInt32` | `Date` | Timestamp when the receiver got the message (epoch seconds). |
+| **20** | `ackStatus` | `UInt8` | `ACKStatus` (`enum: UInt8`) | `0x01` Delivered to Intended Recipient, `0x02` Relayed by Mesh Hop. |
+| **21** | `receivedRssi` | `Int8` | `Int8` | Signal strength in dBm observed on arrival (e.g., `-65` dBm). |
+| **22..25** | `originalEventId`| `UInt32` | `UInt32` | Original event ID (matching `sosEventId` or `meetingPointId`). |
+| **26..27** | `responderInitials` | `UInt16` | `String` (3 Chars A-Z) | 2-byte Base-27 encoded initials of device confirming receipt. |
+| **28..39** | `reserved` | `12 Bytes`| `Data` | Padding (`0x000000000000000000000000`). |
+| **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM MAC tag. |
 
 #### Types 5 & 6: `0x04` / `0x05` — `ROUTE_REQ` & `ROUTE_RESP` (Phase 2 Mesh Discovery)
 *Used in Phase 2 for on-demand AODV route discovery when finding multi-hop paths across large venues.*
@@ -544,23 +553,26 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
 | **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x24` (`ROUTE_REQ`) or `0x25` (`ROUTE_RESP`). |
-| **1** | `hopMetadata` | `UInt8` | `(UInt8, UInt8)` | High 4 bits = Hop Limit (`8`), Low 4 bits = Hop Count (`0` initially). |
-| **2..3** | `sessionId` | `UInt16` | `UInt16` | 16-bit big-endian group session ID. |
-| **4..7** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
-| **8..9** | `originatorInitials` | `UInt16` | `String` (3 Chars A-Z) | 2-byte Base-26 encoded initials of member seeking route. |
-| **10..11** | `targetInitials` | `UInt16` | `String` (3 Chars A-Z) | 2-byte Base-26 encoded initials of destination friend sought. |
-| **12..15** | `discoveryNonce`| `UInt32` | `UInt32` | Unique random nonce to suppress duplicate route broadcasts. |
-| **16** | `routeCost` | `UInt8` | `UInt8` | Cumulative path cost / metric (hop count + link quality penalty). |
-| **17..37** | `reserved` | `21 Bytes`| `Data` | Reserved routing metadata / path tracking. |
-| **38..53** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit MAC tag verifying legitimate group member request. |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Forwarding budget ($1 \dots 8$, max 8 hops). Authenticated in AAD. |
+| **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hops ($0 \dots \text{hopLimit}$, starts at `0`). Masked to `0x00` in AAD. |
+| **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian group session ID. |
+| **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
+| **10..11** | `originatorInitials` | `UInt16` | `String` (3 Chars A-Z) | 2-byte Base-27 encoded initials of member seeking route. |
+| **12..13** | `targetInitials` | `UInt16` | `String` (3 Chars A-Z) | 2-byte Base-27 encoded initials of destination friend sought. |
+| **14..17** | `discoveryNonce`| `UInt32` | `UInt32` | Unique random nonce to suppress duplicate route broadcasts. |
+| **18** | `routeCost` | `UInt8` | `UInt8` | Cumulative path cost / metric (hop count + link quality penalty). |
+| **19..39** | `reserved` | `21 Bytes`| `Data` | Reserved routing metadata / path tracking. |
+| **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit MAC tag verifying legitimate group member request. |
 
 ---
 
 ### 6.3 Envelope & Relay Separation Architecture
 
-- **Outer Envelope (Bytes 0–7):** Transmitted in the clear so stranger relays can inspect `hopCount`, `hopLimit`, `sessionId`, and `sequenceNumber` to forward packets and reject duplicates.
-- **Inner Payload (Bytes 8–37):** Encrypted using the group's symmetric key. Unrelated relay nodes possess no group keys and see only opaque ciphertext.
-- **Associated Authenticated Data (AAD):** The 8-byte outer envelope is injected as Associated Data into the cryptographic cipher (with `hopCount` masked to 0x00). If any rogue node tampers with `sessionId`, `sequenceNumber`, or payload bytes, the 16-byte Poly1305 authentication tag fails verification upon reception and the packet is immediately dropped.
+- **Outer Envelope (Bytes 0–9):** Transmitted in the clear so stranger relays can inspect `hopLimit`, `hopCount`, `sessionId`, and `sequenceNumber` to forward packets and reject duplicates.
+- **Inner Payload (Bytes 10–39):** Encrypted using the group's symmetric key. Unrelated relay nodes possess no group keys and see only opaque ciphertext.
+- **Associated Authenticated Data (AAD):** The 10-byte outer envelope is injected as Associated Data into the cryptographic cipher with `hopCount` (Byte 2) masked to `0x00`:
+  $$\text{AAD} = \big(\mathtt{versionAndType} \, [1\text{B}] \, \parallel \, \mathtt{hopLimit} \, [1\text{B}] \, \parallel \, \mathtt{0x00} \, [1\text{B}] \, \parallel \, \mathtt{sessionId} \, [3\text{B}] \, \parallel \, \mathtt{sequenceNumber} \, [4\text{B}]\big)$$
+  If any rogue node tampers with `sessionId`, `sequenceNumber`, `hopLimit`, or payload bytes, the 16-byte Poly1305 authentication tag fails verification upon reception and the packet is immediately dropped.
 
 ---
 
@@ -570,7 +582,7 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 2. **6-Step Inbound Filter:**
    1. *Size Check:* Ensure exactly 56 bytes.
    2. *Version Check:* Ensure `version == 0x02`.
-   3. *Deduplication Check:* Drop if `(sessionId, sequenceNumber)` is in the 5-minute LRU packet cache.
+   3. *Deduplication Check:* Drop if compact 7-byte key `(sessionId, sequenceNumber)` is in the 1,024-entry 5-minute LRU packet cache.
    4. *Crypto Verification:* Verify 16-byte auth tag using group key. Drop on failure.
    5. *Sequence & Timestamp Check:* Verify sequence number is fresh; do not overwrite newer member state with delayed coordinates.
    6. *UI & Siren Dispatch:* Update map pins and trigger audible/haptic alert if SOS.
@@ -579,23 +591,28 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 
 ## 7. Mesh Routing and Forwarding
 
-Use an **AODV-inspired on-demand routing approach** with bounded flooding fallback.
+Use a **Hybrid AODV-inspired on-demand routing approach** with bounded flooding fallback (finalized and approved via `/grill-me`).
 
 -   **Phase 1 (Direct Offline MVP):** Direct peer-to-peer connections between group members with Live Activity & background location indicator. Uses 1-byte `hopMetadata` (`hopLimit: 4 bits` | `hopCount: 4 bits`, range 0..15).
--   **Phase 2 (Multi-Hop Stranger Mesh & Communal Compact):**
-    -   Phones act as zero-knowledge blind relays for encrypted packets.
-    -   Relay participation is an all-in community compact agreed upon joining or creating a group via a dedicated consent screen.
-    -   Relay nodes **cannot** decrypt location, status, or identity payloads.
-    -   **Expanded 2-Byte Hop Control (Phase 2 Evolution):**
-        -   To accommodate massive festival grounds, racecourses, and multi-tier stadium venues where paths exceed 15 hops, the hop mechanism will evolve from a 4-bit/4-bit single byte into **two dedicated 8-bit bytes**:
-            1. `hopLimit: UInt8` (Byte 1): Immutable forwarding budget ($0\dots 255$, e.g. 16 for normal pings, 32 for SOS/rendezvous). Authenticated verbatim inside the ChaCha20-Poly1305 AAD to prevent rogue relays from inflating packet lifetime.
-            2. `hopCount: UInt8` (Byte 2): Mutable traversal counter ($0\dots 255$, starts at `0`). Incrementing per relay. Masked to `0x00` during AAD authentication so intermediate nodes can mutate it without invalidating the 128-bit MAC tag.
-        -   **Wire Standard (56 Bytes):** The envelope expands to 10 bytes (incorporating dedicated 8-bit `hopLimit` and `hopCount`, 24-bit `sessionId`, and 32-bit `sequenceNumber`). Combined with the intact 30-byte payload and 16-byte Poly1305 auth tag, this yields an exact 56-byte wire datagram without requiring any payload padding reduction.
-        -   **Vulnerability Prevention:** A single decrementing TTL byte was evaluated and rejected because a mutating TTL cannot be authenticated without masking it completely in AAD, leaving the packet vulnerable to rogue nodes resetting the TTL to 255 and causing infinite broadcast storms and battery exhaustion. The 2-byte split (`hopLimit` sealed + `hopCount` masked) provides full tamper-resistance, prevents relay loops, and gives the destination full telemetry on path length.
-    -   **Hop Limit (TTL) Budgets:** Set to a default of **16 hops** for regular location pings and **32 hops** for rendezvous meeting points and emergency SOS alerts (with ceiling up to 255 if needed).
-    -   **Relay Rate Limit:** Stranger relays cap re-transmissions to **2 packets/second** (<1ms CPU per hop) to preserve battery. SOS packets receive immediate priority.
-    -   Duplicate suppression via 256-entry LRU packet hash cache.
-    -   Automatic suspension at 20% battery (Festival Survival Mode).
+-   **Phase 2 (Multi-Hop Stranger Mesh & Communal Relay):**
+    -   Phones act as zero-knowledge blind relays for encrypted packets across group boundaries.
+    -   Relay participation offers three user-controlled modes: **Always Active** (while battery $\ge 20\%$), **Timed 30 Min** (auto-pauses after 30 minutes), and **Disabled** (relay OFF). Accessible in-app and on Lock Screen Live Activity.
+    -   Relay nodes **cannot** decrypt location, status, or identity payloads; they inspect only the 10-byte cleartext envelope.
+    -   **Dedicated 2-Byte Hop Control:**
+        1. `hopLimit: UInt8` (Byte 1): Immutable forwarding budget ($1\dots 8$, max 8 hops). Authenticated verbatim inside the ChaCha20-Poly1305 AAD to prevent rogue relays from inflating packet lifetime.
+        2. `hopCount: UInt8` (Byte 2): Mutable traversal counter ($0\dots \text{hopLimit}$, starts at `0`). Incremented per relay. Masked to `0x00` during AAD authentication so intermediate nodes can mutate it without invalidating the 128-bit MAC tag.
+    -   **Wire Standard (56 Bytes):** Fixed 56-byte wire format combining 10-byte cleartext envelope (`1B versionAndType` + `1B hopLimit` + `1B hopCount` + `3B sessionId` + `4B sequenceNumber`), 30-byte payload, and 16-byte Poly1305 auth tag.
+    -   **Deduplication Key:** Compact 7-byte composite key `(sessionId: 3B, sequenceNumber: 4B)` stored in a 1,024-entry bounded LRU cache with a 5-minute (300s) retention window. Excludes mutable `hopCount` to maintain identical identity across all hops.
+    -   **Communal Peer Discovery:** Single Bonjour service `_teekum._tcp` with TXT `relay: 1/0` flag. Group members with matching session ID always peer; stranger nodes peer only if relaying is enabled.
+    -   **Relay Rate Limiting:** Dual-lane rate limiter:
+        - Ordinary relay traffic capped at **2 packets/second** (token bucket: capacity 4 tokens, refill 2/sec).
+        - Emergency SOS has a dedicated high-priority lane (burst up to **4 packets/second**) that preempts routine pings while protecting against denial-of-service battery drain.
+    -   **Routing Strategy (Hybrid Model):**
+        - Emergency SOS and routine location pings use immediate **bounded flooding** (max 8 hops, deduplicated). SOS never waits for route discovery.
+        - ACKs follow established reverse routes unicast if known, or flood if unknown.
+        - On-demand AODV (`ROUTE_REQ` / `ROUTE_RESP`) is used for directed point-to-point queries.
+    -   **5-State Delivery Semantics:** `acceptedLocally` $\rightarrow$ `forwardedToNextHop` $\rightarrow$ `relayedByMeshHop` $\rightarrow$ `deliveredToFriend` $\rightarrow$ `deliveryTimedOut`. Retries exhausting after relay preserve `Relayed by Mesh (Friend Unconfirmed)`.
+    -   **Automatic Suspension at 20% Battery:** Hard cutoff terminates all stranger relaying and background sessions at <20% battery or Low Power Mode (Festival Survival Mode).
 
 ---
 
@@ -675,12 +692,13 @@ Use an **AODV-inspired on-demand routing approach** with bounded flooding fallba
 -   [x] Festival Survival Mode (<20% battery throttling).
 
 ### Phase 2 --- Multi-Hop Mesh & Communal Relay
--   [ ] Neighbor and routing tables (AODV-style on-demand).
--   [ ] Blind packet relaying with opt-in user toggle.
--   [ ] Lock Screen Live Activity for communal relay approval (Timed 30m vs Always Active).
--   [ ] Forwarding budget, hop limits (max 8 in Phase 1, configurable up to 255 in Phase 2), and packet cache deduplication.
--   [ ] Expand hop control to 2 separate bytes (`hopLimit: UInt8`, `hopCount: UInt8`) supporting up to 255 hops with AAD masking and payload padding absorption.
--   [ ] Multi-hop SOS forwarding on physical devices.
+-   [x] Multi-Hop Mesh Architecture & Protocol Decisions via `/grill-me` ([docs/PHASE2_ARCHITECTURE.md](PHASE2_ARCHITECTURE.md), [docs/PHASE2_PROTOCOL_DECISIONS.md](PHASE2_PROTOCOL_DECISIONS.md)).
+-   [x] Shared Swift Protocol Interfaces & Testable Clock ([TeeKum Prototype/Services/MeshProtocols.swift](Services/MeshProtocols.swift)).
+-   [x] **Milestone 2.1:** Protocol Codec, 56-Byte Wire Framer, Rate Limiter (2 pkts/s ordinary, 4 pkts/s SOS) & 7-Byte Deduplication Cache (1,024 entries, 5m TTL).
+-   [x] **Milestone 2.2:** Open Neighbor Peering & Topology Management (`NeighborTable.swift`, Bonjour `_teekum._tcp` with TXT `relay: 1/0` flag).
+-   [x] **Milestone 2.3:** AODV Routing Engine & Bounded Blind Forwarding (`RoutingTable.swift`, `PacketForwarder.swift`, max 8 hops ceiling).
+-   [x] **Milestone 2.4:** Communal Relay Policy, Battery Guard (<20% cutoff) & Lock Screen Live Activity Controls (Always Active vs Timed 30m vs Disabled) ([docs/Phase 2/BATTERY_AND_BACKGROUND_POLICY.md](Phase%202/BATTERY_AND_BACKGROUND_POLICY.md)).
+-   [x] **Milestone 2.5:** Multi-Hop SOS End-to-End Delivery, Multi-Hop ACKs & Physical Device Test Protocol ([docs/Phase 2/PHYSICAL_DEVICE_SOS_MULTIHOP_TEST.md](Phase%202/PHYSICAL_DEVICE_SOS_MULTIHOP_TEST.md)).
 
 ### Phase 3 --- Venue Intelligence & Polish
 -   [ ] Custom venue event vector overlays (stages, medical, water stations).

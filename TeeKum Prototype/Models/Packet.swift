@@ -286,7 +286,7 @@ public struct CleartextEnvelope: Equatable, Sendable {
 
 // MARK: - 56-Byte Wire Packet
 
-public struct RawWirePacket: Equatable, Sendable {
+nonisolated public struct RawWirePacket: Equatable, Sendable {
     public var envelope: CleartextEnvelope
     public var ciphertext: Data
     public var authTag: Data

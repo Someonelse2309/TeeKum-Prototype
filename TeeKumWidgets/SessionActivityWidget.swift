@@ -92,9 +92,14 @@ public struct SessionActivityWidget: Widget {
                         }
                         .padding(.horizontal, 6)
                     } else {
-                        Text("Connected to Festival Mesh")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.gray)
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(context.state.isRelayActive ? Color(red: 0.1, green: 0.9, blue: 0.4) : Color.gray)
+                                .frame(width: 6, height: 6)
+                            Text(context.state.relayStatusText ?? "Festival Mesh Standby")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundStyle(context.state.isRelayActive ? Color(red: 0.1, green: 0.9, blue: 0.4) : .gray)
+                        }
                     }
                 }
             } compactLeading: {

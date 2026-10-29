@@ -56,19 +56,24 @@ public final class TestMeshClock: MeshClock, @unchecked Sendable {
 public struct PacketKey: Hashable, Sendable, CustomStringConvertible {
     public let sessionId: UInt32        // 24-bit value (0x000000...0xFFFFFF)
     public let sequenceNumber: UInt32   // 32-bit sequence counter
+    public let type: PacketType?        // Optional packet type discriminator
     
-    public init(sessionId: UInt32, sequenceNumber: UInt32) {
+    public init(sessionId: UInt32, sequenceNumber: UInt32, type: PacketType? = nil) {
         self.sessionId = sessionId & 0x00FFFFFF
         self.sequenceNumber = sequenceNumber
+        self.type = type
     }
     
     public init(wirePacket: RawWirePacket) {
         self.sessionId = UInt32(wirePacket.envelope.sessionId)
         self.sequenceNumber = wirePacket.envelope.sequenceNumber
+        self.type = wirePacket.envelope.type
     }
     
     public init?(wireData: Data) {
         guard wireData.count >= 10 else { return nil }
+        let typeRaw = wireData[wireData.startIndex] & 0x0F
+        let pType = PacketType(rawValue: typeRaw)
         let b3 = UInt32(wireData[wireData.startIndex + 3])
         let b4 = UInt32(wireData[wireData.startIndex + 4])
         let b5 = UInt32(wireData[wireData.startIndex + 5])
@@ -78,10 +83,12 @@ public struct PacketKey: Hashable, Sendable, CustomStringConvertible {
         }
         self.sessionId = sid
         self.sequenceNumber = seq
+        self.type = pType
     }
     
     public var description: String {
-        "PacketKey(sid: 0x\(String(format: "%06X", sessionId)), seq: \(sequenceNumber))"
+        let typeStr = type.map { "\($0)" } ?? "any"
+        return "PacketKey(sid: 0x\(String(format: "%06X", sessionId)), seq: \(sequenceNumber), type: \(typeStr))"
     }
 }
 
@@ -284,6 +291,7 @@ nonisolated public struct RouteEntry: Sendable, Equatable {
     public let routeCost: UInt8              // Cumulative cost (hops + link quality penalty)
     public let sequenceNumber: UInt32        // Destination sequence counter
     public let expiresAt: Date               // Eviction deadline
+    public let sessionId: UInt32?            // Group session identifier for cross-group isolation
     
     public var isFresh: Bool { Date() < expiresAt }
     
@@ -293,7 +301,8 @@ nonisolated public struct RouteEntry: Sendable, Equatable {
         hopCount: UInt8,
         routeCost: UInt8,
         sequenceNumber: UInt32,
-        expiresAt: Date
+        expiresAt: Date,
+        sessionId: UInt32? = nil
     ) {
         self.destinationId = destinationId
         self.nextHopPeerId = nextHopPeerId
@@ -301,6 +310,7 @@ nonisolated public struct RouteEntry: Sendable, Equatable {
         self.routeCost = routeCost
         self.sequenceNumber = sequenceNumber
         self.expiresAt = expiresAt
+        self.sessionId = sessionId
     }
 }
 
@@ -353,6 +363,143 @@ public protocol RoutingTableManaging: Actor {
     
     /// Evicts expired route records from memory.
     func purgeExpiredRoutes() async
+    
+    /// Clears all routes for session reset or teardown.
+    func removeAll() async
+}
+
+// MARK: - Route Discovery Enums & Protocol
+
+public enum RouteDiscoveryFailure: Error, Sendable, Equatable, LocalizedError {
+    case timeout
+    case destinationUnreachable
+    case hopLimitExceeded
+    case floodingBudgetExhausted
+    case alreadyInProgress
+    case sessionTerminated
+    case loopDetected
+    case transportNotReady
+    
+    public var errorDescription: String? {
+        switch self {
+        case .timeout:
+            return "Route discovery timed out without response."
+        case .destinationUnreachable:
+            return "Target destination is unreachable across the mesh."
+        case .hopLimitExceeded:
+            return "Route exceeds the maximum allowed 8 hops."
+        case .floodingBudgetExhausted:
+            return "Route discovery flooding budget exhausted (rate limited)."
+        case .alreadyInProgress:
+            return "A route discovery for this destination is already in progress."
+        case .sessionTerminated:
+            return "Active session was terminated during route discovery."
+        case .loopDetected:
+            return "Routing loop detected; route advertisement rejected."
+        case .transportNotReady:
+            return "Mesh transport is stopped or has no active radio connections."
+        }
+    }
+}
+
+public enum RouteReqHandlingResult: Sendable, Equatable {
+    case answeredWithRResp(targetInitials: String, nextHop: String)
+    case forwarded(nextHops: [String], hopCount: UInt8)
+    case droppedLoopDetected
+    case droppedDuplicate
+    case droppedHopLimitExceeded
+    case droppedSecurityFailed
+    case droppedFloodingThrottled
+}
+
+public enum RouteRespHandlingResult: Sendable, Equatable {
+    case completedDiscovery(destination: String, nextHop: String, hopCount: UInt8)
+    case forwardedToReverseHop(nextHop: String, hopCount: UInt8)
+    case droppedStaleOrUnsolicited
+    case droppedLoopDetected
+    case droppedHopLimitExceeded
+    case droppedSecurityFailed
+}
+
+nonisolated public struct RouteDiscoveryDiagnostics: Sendable, Equatable {
+    public let activeInFlightDiscoveries: Int
+    public let totalDiscoveriesInitiated: Int
+    public let totalDiscoveriesSucceeded: Int
+    public let totalDiscoveriesFailed: Int
+    public let totalRReqSent: Int
+    public let totalRReqReceived: Int
+    public let totalRRespSent: Int
+    public let totalRRespReceived: Int
+    public let totalRoutesInvalidated: Int
+    public let activeRoutesCount: Int
+    
+    public init(
+        activeInFlightDiscoveries: Int = 0,
+        totalDiscoveriesInitiated: Int = 0,
+        totalDiscoveriesSucceeded: Int = 0,
+        totalDiscoveriesFailed: Int = 0,
+        totalRReqSent: Int = 0,
+        totalRReqReceived: Int = 0,
+        totalRRespSent: Int = 0,
+        totalRRespReceived: Int = 0,
+        totalRoutesInvalidated: Int = 0,
+        activeRoutesCount: Int = 0
+    ) {
+        self.activeInFlightDiscoveries = activeInFlightDiscoveries
+        self.totalDiscoveriesInitiated = totalDiscoveriesInitiated
+        self.totalDiscoveriesSucceeded = totalDiscoveriesSucceeded
+        self.totalDiscoveriesFailed = totalDiscoveriesFailed
+        self.totalRReqSent = totalRReqSent
+        self.totalRReqReceived = totalRReqReceived
+        self.totalRRespSent = totalRRespSent
+        self.totalRRespReceived = totalRRespReceived
+        self.totalRoutesInvalidated = totalRoutesInvalidated
+        self.activeRoutesCount = activeRoutesCount
+    }
+}
+
+public protocol RouteDiscoveryManaging: Actor {
+    /// Resolves an on-demand route towards target initials in the given session.
+    /// If an active unexpired route exists in the routing table, returns it immediately.
+    /// Otherwise, initiates an AODV route discovery with rate limiting and timeout.
+    func resolveRoute(
+        to targetInitials: String,
+        session: GroupSession,
+        timeout: TimeInterval
+    ) async throws -> RouteEntry
+    
+    /// Forces initiation of route discovery regardless of existing cached routes.
+    func initiateDiscovery(
+        to targetInitials: String,
+        session: GroupSession,
+        timeout: TimeInterval
+    ) async throws -> RouteEntry
+    
+    /// Ingests and processes an inbound Route Request packet.
+    func handleInboundRouteReq(
+        wireData: Data,
+        fromPeerId: String,
+        session: GroupSession
+    ) async throws -> RouteReqHandlingResult
+    
+    /// Ingests and processes an inbound Route Response packet.
+    func handleInboundRouteResp(
+        wireData: Data,
+        fromPeerId: String,
+        session: GroupSession
+    ) async throws -> RouteRespHandlingResult
+    
+    /// Handles neighbor disconnection: invalidates dependent routes.
+    func handleNeighborDisconnected(peerId: String) async
+    
+    /// Invalidates a route towards a specific destination.
+    func invalidateRoute(towards targetInitials: String, session: GroupSession?) async
+    
+    /// Teardown: cancels in-flight discoveries and purges session routes.
+    func teardown(sessionId: UInt32?) async
+    
+    /// Live diagnostics snapshot for HUD or telemetry.
+    func diagnosticsSnapshot() async -> RouteDiscoveryDiagnostics
 }
 
 // MARK: - Subsystem 3: Packet Forwarding & Forwarding Budgets
@@ -408,6 +555,42 @@ public enum RelayParticipationMode: String, Sendable, Codable, CaseIterable {
     case timed30Minutes      // Relay for 30 minutes, then automatically pause
 }
 
+public enum RelayStatus: Sendable, Equatable {
+    case activeAlways
+    case activeTimed(remainingSeconds: Int)
+    case pausedSurvivalBattery
+    case pausedLowPowerMode
+    case stoppedDisabled
+    case timedExpired
+    
+    public var isForwardingPermitted: Bool {
+        switch self {
+        case .activeAlways, .activeTimed:
+            return true
+        case .pausedSurvivalBattery, .pausedLowPowerMode, .stoppedDisabled, .timedExpired:
+            return false
+        }
+    }
+    
+    public var displayTitle: String {
+        switch self {
+        case .activeAlways:
+            return "Active (Always)"
+        case .activeTimed(let remainingSeconds):
+            let mins = max(1, remainingSeconds / 60)
+            return "Active (Timed: \(mins)m left)"
+        case .pausedSurvivalBattery:
+            return "Paused (<20% Battery)"
+        case .pausedLowPowerMode:
+            return "Paused (Low Power Mode)"
+        case .stoppedDisabled:
+            return "Stopped (Disabled)"
+        case .timedExpired:
+            return "Paused (30m Expired)"
+        }
+    }
+}
+
 nonisolated public struct RelayPolicyState: Sendable, Equatable {
     public let mode: RelayParticipationMode
     public let batteryLevel: Float           // 0.0 to 1.0
@@ -426,13 +609,36 @@ nonisolated public struct RelayPolicyState: Sendable, Equatable {
         self.timedExpiryDate = timedExpiryDate
     }
     
-    public var isRelayPermitted: Bool {
+    public func isPermitted(at now: Date = Date()) -> Bool {
         guard mode != .disabled else { return false }
         guard batteryLevel >= 0.20 && !isLowPowerModeActive else { return false }
         if let expiry = timedExpiryDate {
-            return Date() < expiry
+            return now < expiry
         }
         return true
+    }
+    
+    public var isRelayPermitted: Bool {
+        isPermitted(at: Date())
+    }
+    
+    public func status(at now: Date = Date()) -> RelayStatus {
+        guard mode != .disabled else { return .stoppedDisabled }
+        if batteryLevel < 0.20 { return .pausedSurvivalBattery }
+        if isLowPowerModeActive { return .pausedLowPowerMode }
+        if let expiry = timedExpiryDate {
+            if now >= expiry {
+                return .timedExpired
+            } else {
+                let remaining = max(0, Int(expiry.timeIntervalSince(now)))
+                return .activeTimed(remainingSeconds: remaining)
+            }
+        }
+        return .activeAlways
+    }
+    
+    public func statusDescription(at now: Date = Date()) -> String {
+        status(at: now).displayTitle
     }
 }
 
@@ -442,6 +648,12 @@ public protocol RelayPolicyManaging: Actor {
     
     /// Updates user-selected participation mode (from UI or Lock Screen).
     func setParticipationMode(_ mode: RelayParticipationMode) async
+    
+    /// Sets timed participation mode for the specified duration (default 30 minutes / 1800s).
+    func setTimedParticipation(durationSeconds: TimeInterval) async
+    
+    /// Promptly halts relaying and drains/cancels queued work.
+    func stopRelaying() async
     
     /// Updates hardware power metrics from UIDevice / ProcessInfo.
     func updatePowerMetrics(batteryLevel: Float, isLowPowerMode: Bool) async
@@ -487,8 +699,10 @@ public enum DropReason: Sendable, Equatable {
     case rateLimitExceeded
     case batteryThrottled
     case policyDisabled
+    case queueSaturation
     case malformed
     case securityVerificationFailed
+    case simulatedLoss
 }
 
 public struct RelayTelemetry: Sendable, Equatable {
@@ -497,6 +711,8 @@ public struct RelayTelemetry: Sendable, Equatable {
     public let packetsDroppedRateLimit: Int
     public let packetsDroppedHopLimit: Int
     public let duplicatePacketsSuppressed: Int
+    public let packetsDroppedPolicy: Int
+    public let packetsDroppedBattery: Int
     public let activeRoutesCount: Int
     public let activeNeighborsCount: Int
     public let currentForwardingRatePerSec: Double
@@ -508,6 +724,8 @@ public struct RelayTelemetry: Sendable, Equatable {
         packetsDroppedRateLimit: Int = 0,
         packetsDroppedHopLimit: Int = 0,
         duplicatePacketsSuppressed: Int = 0,
+        packetsDroppedPolicy: Int = 0,
+        packetsDroppedBattery: Int = 0,
         activeRoutesCount: Int = 0,
         activeNeighborsCount: Int = 0,
         currentForwardingRatePerSec: Double = 0.0,
@@ -518,6 +736,8 @@ public struct RelayTelemetry: Sendable, Equatable {
         self.packetsDroppedRateLimit = packetsDroppedRateLimit
         self.packetsDroppedHopLimit = packetsDroppedHopLimit
         self.duplicatePacketsSuppressed = duplicatePacketsSuppressed
+        self.packetsDroppedPolicy = packetsDroppedPolicy
+        self.packetsDroppedBattery = packetsDroppedBattery
         self.activeRoutesCount = activeRoutesCount
         self.activeNeighborsCount = activeNeighborsCount
         self.currentForwardingRatePerSec = currentForwardingRatePerSec

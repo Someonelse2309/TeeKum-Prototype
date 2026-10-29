@@ -38,28 +38,59 @@ public actor RoutingTable: RoutingTableManaging {
         self.clock = clock
     }
     
+    // MARK: - Key Generation Helper
+    
+    public static func routeKey(destinationId: String, sessionId: UInt32? = nil) -> String {
+        if let sid = sessionId {
+            return String(format: "%06X:%@", sid & 0x00FFFFFF, destinationId)
+        }
+        return destinationId
+    }
+    
     // MARK: - Forward Route Queries & Ingestion
+    
+    /// Looks up an active, unexpired route towards the given destination identifier,
+    /// optionally scoped to a specific group session to prevent cross-group route leakage.
+    public func findRoute(to destinationId: String, inSession sessionId: UInt32? = nil) async -> RouteEntry? {
+        let key = RoutingTable.routeKey(destinationId: destinationId, sessionId: sessionId)
+        let now = clock.now()
+        
+        if let entry = forwardRoutes[key] {
+            if now >= entry.expiresAt {
+                forwardRoutes.removeValue(forKey: key)
+                return nil
+            }
+            return entry
+        }
+        
+        // Fallback: if sessionId was specified but no session-scoped route was recorded,
+        // check if a raw unscoped route exists (backward compatibility).
+        if sessionId != nil, let entry = forwardRoutes[destinationId] {
+            if now >= entry.expiresAt {
+                forwardRoutes.removeValue(forKey: destinationId)
+                return nil
+            }
+            return entry
+        }
+        
+        return nil
+    }
     
     /// Looks up an active, unexpired route towards the given destination identifier.
     public func findRoute(to destinationId: String) async -> RouteEntry? {
-        guard let entry = forwardRoutes[destinationId] else { return nil }
-        let now = clock.now()
-        if now >= entry.expiresAt {
-            forwardRoutes.removeValue(forKey: destinationId)
-            return nil
-        }
-        return entry
+        await findRoute(to: destinationId, inSession: nil)
     }
     
-    /// Inserts or updates a forward route entry, enforcing AODV sequence number monotonicity
-    /// and maximum hop limit bounds (capped at 8 hops).
+    /// Inserts or updates a forward route entry, enforcing AODV sequence number monotonicity,
+    /// cross-group scoping, and maximum hop limit bounds (capped at 8 hops).
     public func recordForwardRoute(
         destinationId: String,
         nextHop: String,
         hopCount: UInt8,
         cost: UInt8,
         sequenceNumber: UInt32,
-        ttl: TimeInterval
+        ttl: TimeInterval,
+        sessionId: UInt32? = nil
     ) async {
         // Security constraint: enforce maximum hop limit (8 hops)
         guard hopCount <= PacketConstants.defaultHopLimit else {
@@ -68,11 +99,12 @@ public actor RoutingTable: RoutingTableManaging {
         
         let now = clock.now()
         let expiresAt = now.addingTimeInterval(max(1.0, ttl))
+        let key = RoutingTable.routeKey(destinationId: destinationId, sessionId: sessionId)
         
         // AODV Route Selection Rule:
         // 1. Prefer higher destination sequence number (fresher route)
         // 2. If sequence numbers are equal, prefer lower cost or lower hop count
-        if let existing = forwardRoutes[destinationId], existing.expiresAt > now {
+        if let existing = forwardRoutes[key], existing.expiresAt > now {
             if sequenceNumber < existing.sequenceNumber {
                 // Reject stale sequence number
                 return
@@ -85,7 +117,7 @@ public actor RoutingTable: RoutingTableManaging {
         }
         
         // Bounded capacity eviction
-        if forwardRoutes.count >= maxForwardRoutes && forwardRoutes[destinationId] == nil {
+        if forwardRoutes.count >= maxForwardRoutes && forwardRoutes[key] == nil {
             evictEarliestExpiringForwardRoute(now: now)
         }
         
@@ -95,9 +127,29 @@ public actor RoutingTable: RoutingTableManaging {
             hopCount: hopCount,
             routeCost: cost,
             sequenceNumber: sequenceNumber,
-            expiresAt: expiresAt
+            expiresAt: expiresAt,
+            sessionId: sessionId
         )
-        forwardRoutes[destinationId] = entry
+        forwardRoutes[key] = entry
+    }
+    
+    public func recordForwardRoute(
+        destinationId: String,
+        nextHop: String,
+        hopCount: UInt8,
+        cost: UInt8,
+        sequenceNumber: UInt32,
+        ttl: TimeInterval
+    ) async {
+        await recordForwardRoute(
+            destinationId: destinationId,
+            nextHop: nextHop,
+            hopCount: hopCount,
+            cost: cost,
+            sequenceNumber: sequenceNumber,
+            ttl: ttl,
+            sessionId: nil
+        )
     }
     
     // MARK: - Reverse Route Ingestion & Consumption
@@ -153,18 +205,47 @@ public actor RoutingTable: RoutingTableManaging {
     // MARK: - Invalidation & Maintenance
     
     /// Invalidates all routes towards destinationId, or using destinationId as a next hop.
-    public func invalidateRoute(towards destinationId: String) async {
+    public func invalidateRoute(towards destinationId: String, inSession sessionId: UInt32? = nil) async {
+        let key = RoutingTable.routeKey(destinationId: destinationId, sessionId: sessionId)
+        forwardRoutes.removeValue(forKey: key)
         forwardRoutes.removeValue(forKey: destinationId)
         
         // Also invalidate any routes whose next-hop is the disconnected neighbor
         var keysToInvalidate: [String] = []
-        for (key, route) in forwardRoutes {
+        for (k, route) in forwardRoutes {
             if route.nextHopPeerId == destinationId {
+                keysToInvalidate.append(k)
+            }
+        }
+        for k in keysToInvalidate {
+            forwardRoutes.removeValue(forKey: k)
+        }
+    }
+    
+    public func invalidateRoute(towards destinationId: String) async {
+        await invalidateRoute(towards: destinationId, inSession: nil)
+    }
+    
+    /// Invalidates all routes whose next-hop is the disconnected neighbor.
+    public func invalidateRoutesUsingNextHop(_ nextHopPeerId: String) async {
+        var keysToInvalidate: [String] = []
+        for (key, route) in forwardRoutes {
+            if route.nextHopPeerId == nextHopPeerId {
                 keysToInvalidate.append(key)
             }
         }
         for key in keysToInvalidate {
             forwardRoutes.removeValue(forKey: key)
+        }
+    }
+    
+    /// Invalidates all forward routes belonging to a specific group session (e.g. on teardown or leave).
+    public func invalidateRoutes(forSessionId sessionId: UInt32) async {
+        let prefix = String(format: "%06X:", sessionId & 0x00FFFFFF)
+        forwardRoutes = forwardRoutes.filter { key, route in
+            if route.sessionId == sessionId { return false }
+            if key.hasPrefix(prefix) { return false }
+            return true
         }
     }
     
@@ -176,6 +257,18 @@ public actor RoutingTable: RoutingTableManaging {
     }
     
     // MARK: - Observability & Telemetry Queries
+    
+    /// Returns a snapshot of all active, unexpired forward routes.
+    public func allForwardRoutes() async -> [RouteEntry] {
+        let now = clock.now()
+        return forwardRoutes.values.filter { $0.expiresAt > now }
+    }
+    
+    /// Returns a snapshot of all active, unexpired reverse routes.
+    public func allReverseRoutes() async -> [ReverseRouteEntry] {
+        let now = clock.now()
+        return reverseRoutes.values.filter { $0.expiresAt > now }
+    }
     
     /// Current count of active forward routes.
     public var activeForwardRoutesCount: Int {

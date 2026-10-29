@@ -38,12 +38,20 @@ public final class SOSViewModel {
     public var transport: PeerTransport?
     public var audioAlerter: SOSAudioAlerting?
     public var memberNameResolver: (@MainActor (String) -> String?)?
+    public var routingTable: RoutingTableManaging?
+    public var neighborTable: NeighborManaging?
+    public var rateLimiter: ForwardingBudgetManaging?
+    public var forwardingEngine: SOSForwardingManaging?
+    public var clock: MeshClock?
     private let dateProvider: @Sendable () -> Date
     
     // MARK: - Delivery & Gesture State
     
     /// Current honest delivery feedback state.
     public var deliveryState: SOSDeliveryState = .idle
+    
+    /// Categorization of route choice taken for emergency SOS dispatch.
+    public private(set) var currentRouteChoice: RouteChoice = .none
     
     /// Duration in seconds required to hold the SOS button.
     public let holdThresholdSeconds: Double = 3.0
@@ -80,11 +88,28 @@ public final class SOSViewModel {
     /// Timestamp when friend delivery confirmation arrived.
     public private(set) var lastDeliveredTimestamp: Date?
     
+    /// Hop count traversed by confirmed friend delivery ACK.
+    public private(set) var lastDeliveredHopCount: UInt8?
+    
     /// Last observed hop count from relay acknowledgement.
     public private(set) var lastRelayHopCount: UInt8?
     
     /// Last observed relay responder ID (initials).
     public private(set) var lastRelayResponderId: String?
+    
+    /// Diagnostics snapshot summarizing hop count, retries, route choice, and acknowledgement stage.
+    public var diagnostics: SOSDiagnostics {
+        SOSDiagnostics(
+            eventId: activeSOSEventId,
+            hopCount: lastDeliveredHopCount ?? lastRelayHopCount,
+            retryCount: retryCount,
+            routeChoice: currentRouteChoice,
+            stage: deliveryState.stage,
+            lastDeliveredFriendId: lastDeliveredFriendId,
+            lastRelayResponderId: lastRelayResponderId,
+            timestamp: dateProvider()
+        )
+    }
     
     // MARK: - Ingestion & Duplicate Suppression Cache
     
@@ -136,7 +161,12 @@ public final class SOSViewModel {
         cryptoService: CryptoServiceProvider? = nil,
         transport: PeerTransport? = nil,
         audioAlerter: SOSAudioAlerting? = nil,
-        memberNameResolver: (@MainActor (String) -> String?)? = nil
+        memberNameResolver: (@MainActor (String) -> String?)? = nil,
+        routingTable: RoutingTableManaging? = nil,
+        neighborTable: NeighborManaging? = nil,
+        rateLimiter: ForwardingBudgetManaging? = nil,
+        forwardingEngine: SOSForwardingManaging? = nil,
+        clock: MeshClock? = nil
     ) {
         if let locationService { self.locationService = locationService }
         if let sessionProvider { self.sessionProvider = sessionProvider }
@@ -144,6 +174,11 @@ public final class SOSViewModel {
         if let audioAlerter { self.audioAlerter = audioAlerter }
         if let transport { self.transport = transport }
         if let memberNameResolver { self.memberNameResolver = memberNameResolver }
+        if let routingTable { self.routingTable = routingTable }
+        if let neighborTable { self.neighborTable = neighborTable }
+        if let rateLimiter { self.rateLimiter = rateLimiter }
+        if let forwardingEngine { self.forwardingEngine = forwardingEngine }
+        if let clock { self.clock = clock }
     }
     
     // MARK: - Hold Gesture State Machine
@@ -209,8 +244,11 @@ public final class SOSViewModel {
         // Check peer connectivity to set initial honest state
         let peerCount = await transport?.activeDirectPeerCount() ?? 0
         if peerCount == 0 {
-            self.deliveryState = .searchingPeers
-        } else {
+            if !self.deliveryState.isRelayed && !self.deliveryState.isDelivered {
+                self.deliveryState = .searchingPeers
+                self.currentRouteChoice = .none
+            }
+        } else if !self.deliveryState.isRelayed && !self.deliveryState.isDelivered {
             self.deliveryState = .localSending
         }
         
@@ -222,7 +260,8 @@ public final class SOSViewModel {
     }
     
     /// Assembles, cryptographically seals, and broadcasts a 56-byte SOS packet.
-    private func broadcastSOSWirePacket(eventId: UInt32, emergencyType: SOSType, session: GroupSession) async {
+    /// Prefers known usable route in routing table when available; falls back to bounded flooding.
+    public func broadcastSOSWirePacket(eventId: UInt32, emergencyType: SOSType, session: GroupSession) async {
         guard let cryptoService, let transport else { return }
         
         // Freshest available coordinate without pretending an old fix is new
@@ -275,13 +314,37 @@ public final class SOSViewModel {
             let wirePacket = RawWirePacket(envelope: envelope, ciphertext: sealed.ciphertext, authTag: sealed.authTag)
             let wireData = try wirePacket.toWireData()
             
-            // Broadcast packet (queued into urgent priority lane)
-            try await transport.broadcastPacket(wireData)
+            // Route Selection: Prefer known usable route when available
+            var routeUsed = false
+            if let routingTable = routingTable {
+                let neighbors = await neighborTable?.activeNeighbors() ?? []
+                let connectedPeerIds = Set(neighbors.map(\.id))
+                for neighbor in neighbors where neighbor.isGroupMember {
+                    if let route = await routingTable.findRoute(to: neighbor.id), route.isFresh, connectedPeerIds.contains(route.nextHopPeerId) {
+                        self.currentRouteChoice = .knownRoute(nextHop: route.nextHopPeerId, hopCount: route.hopCount)
+                        if let meshTransport = transport as? MeshTransport {
+                            _ = try await meshTransport.sendFrame(wireData, to: route.nextHopPeerId)
+                        } else {
+                            try await transport.sendPacket(wireData, to: route.nextHopPeerId)
+                        }
+                        routeUsed = true
+                        break
+                    }
+                }
+            }
+            
+            if !routeUsed {
+                let peerCount = await transport.activeDirectPeerCount()
+                self.currentRouteChoice = peerCount == 0 ? .none : .boundedFlooding(neighborCount: peerCount)
+                // Broadcast packet (queued into urgent priority lane)
+                try await transport.broadcastPacket(wireData)
+            }
         } catch {
             // Radio transport errors
             let peerCount = await transport.activeDirectPeerCount()
             if peerCount == 0 {
                 self.deliveryState = .searchingPeers
+                self.currentRouteChoice = .none
             } else {
                 self.deliveryState = .failed(reason: error.localizedDescription)
             }
@@ -304,32 +367,47 @@ public final class SOSViewModel {
                     break
                 }
                 
-                if self.retryCount < self.maxRetries {
-                    self.retryCount += 1
-                    
-                    let peerCount = await self.transport?.activeDirectPeerCount() ?? 0
-                    if peerCount == 0 {
-                        self.deliveryState = .searchingPeers
-                    } else if !self.deliveryState.isRelayed {
-                        self.deliveryState = .localSending
-                    }
-                    
-                    await self.broadcastSOSWirePacket(eventId: eventId, emergencyType: emergencyType, session: session)
-                } else {
-                    // Retries exhausted without friend delivery
-                    let peerCount = await self.transport?.activeDirectPeerCount() ?? 0
-                    if self.deliveryState.isRelayed {
-                        // Keep relayed state: relay forwarded, but friend ACK never confirmed
-                        break
-                    } else if peerCount == 0 {
-                        self.deliveryState = .searchingPeers
-                    } else {
-                        self.deliveryState = .failed(reason: "Delivery confirmation timeout: exhausted \(self.maxRetries) retries without recipient ACK.")
-                    }
-                    break
-                }
+                await self.executeRetryAttempt(eventId: eventId, emergencyType: emergencyType, session: session)
             }
         }
+    }
+    
+    /// Executes a single bounded retry attempt. Can be invoked directly in deterministic tests.
+    public func executeRetryAttempt(eventId: UInt32, emergencyType: SOSType, session: GroupSession) async {
+        guard !deliveryState.isDelivered else { return }
+        
+        if retryCount < maxRetries {
+            retryCount += 1
+            
+            let peerCount = await transport?.activeDirectPeerCount() ?? 0
+            if peerCount == 0 {
+                if !self.deliveryState.isRelayed {
+                    self.deliveryState = .searchingPeers
+                    self.currentRouteChoice = .none
+                }
+            } else if !self.deliveryState.isRelayed {
+                self.deliveryState = .localSending
+            }
+            
+            await broadcastSOSWirePacket(eventId: eventId, emergencyType: emergencyType, session: session)
+        } else {
+            // Retries exhausted without friend delivery
+            let peerCount = await transport?.activeDirectPeerCount() ?? 0
+            if self.deliveryState.isRelayed {
+                // Keep relayed state honestly showing it was relayed but unconfirmed by friend
+            } else if peerCount == 0 {
+                self.deliveryState = .searchingPeers
+            } else {
+                self.deliveryState = .failed(reason: "Delivery confirmation timeout: exhausted \(maxRetries) retries without recipient ACK.")
+            }
+            cancelRetryTask()
+        }
+    }
+    
+    /// Triggers an immediate retry attempt for the active SOS event without waiting for the timer.
+    public func triggerRetryNow() async {
+        guard let eventId = activeSOSEventId, let session = sessionProvider?() else { return }
+        await executeRetryAttempt(eventId: eventId, emergencyType: currentEmergencyType, session: session)
     }
     
     private func cancelRetryTask() {
@@ -357,6 +435,7 @@ public final class SOSViewModel {
             cancelRetryTask()
             lastDeliveredFriendId = responderId
             lastDeliveredTimestamp = dateProvider()
+            lastDeliveredHopCount = hopCount
             deliveryState = .deliveredToFriend(friendId: responderId, timestamp: dateProvider())
             
         case .relayedByMeshHop:
@@ -542,8 +621,19 @@ public final class SOSViewModel {
             let wirePacket = RawWirePacket(envelope: ackEnvelope, ciphertext: sealed.ciphertext, authTag: sealed.authTag)
             let wireData = try wirePacket.toWireData()
             
-            // Broadcast ACK via Urgent Lane
-            try await transport.broadcastPacket(wireData)
+            // Multi-Hop Return Route Selection: Prefer known usable route towards the distressed sender
+            if let routingTable = routingTable,
+               let route = await routingTable.findRoute(to: sosPayload.senderInitials),
+               route.isFresh {
+                if let meshTransport = transport as? MeshTransport {
+                    _ = try await meshTransport.sendFrame(wireData, to: route.nextHopPeerId)
+                } else {
+                    try await transport.sendPacket(wireData, to: route.nextHopPeerId)
+                }
+            } else {
+                // Broadcast ACK via Urgent Lane (Bounded Flooding Fallback)
+                try await transport.broadcastPacket(wireData)
+            }
             totalEmittedAcksCount += 1
         } catch {
             // Transport failure
@@ -565,7 +655,13 @@ public final class SOSViewModel {
         holdStartTime = nil
         holdProgress = 0.0
         deliveryState = .idle
+        currentRouteChoice = .none
         activeSOSEventId = nil
         retryCount = 0
+        lastDeliveredHopCount = nil
+        lastDeliveredFriendId = nil
+        lastDeliveredTimestamp = nil
+        lastRelayHopCount = nil
+        lastRelayResponderId = nil
     }
 }

@@ -87,6 +87,89 @@ public enum SOSDeliveryState: Equatable, Sendable {
         if case .failed = self { return true }
         return false
     }
+    
+    /// Normalized lifecycle stage of delivery progression.
+    public var stage: AcknowledgementStage {
+        switch self {
+        case .idle, .countdown:
+            return .idle
+        case .localSending:
+            return .localSending
+        case .searchingPeers:
+            return .searchingPeers
+        case .relayedAck:
+            return .relayedAck
+        case .deliveredToFriend:
+            return .deliveredToFriend
+        case .failed:
+            return .deliveryTimedOut
+        }
+    }
+}
+
+// MARK: - Route Choice & Diagnostic Models
+
+/// Categorization of route choice taken when dispatching or relaying an emergency SOS event.
+public enum RouteChoice: Equatable, Sendable, CustomStringConvertible {
+    case directPeer(peerId: String)
+    case knownRoute(nextHop: String, hopCount: UInt8)
+    case boundedFlooding(neighborCount: Int)
+    case none
+    
+    public var description: String {
+        switch self {
+        case let .directPeer(id):
+            return "Direct Peer (\(id))"
+        case let .knownRoute(nextHop, hopCount):
+            return "Known Route via \(nextHop) (\(hopCount) \(hopCount == 1 ? "hop" : "hops"))"
+        case let .boundedFlooding(count):
+            return "Bounded Flooding (\(count) \(count == 1 ? "neighbor" : "neighbors"))"
+        case .none:
+            return "None (No Reachable Peers)"
+        }
+    }
+}
+
+/// Verifiable delivery and acknowledgement stages matching Phase 2 specifications.
+public enum AcknowledgementStage: String, Equatable, Sendable {
+    case idle = "IDLE"
+    case localSending = "LOCAL_SENDING"
+    case searchingPeers = "SEARCHING_PEERS"
+    case relayedAck = "RELAY_ACK"
+    case deliveredToFriend = "DELIVERED_TO_FRIEND"
+    case deliveryTimedOut = "DELIVERY_TIMED_OUT"
+}
+
+/// Instantaneous diagnostic snapshot of an in-flight or completed SOS event.
+public struct SOSDiagnostics: Equatable, Sendable {
+    public let eventId: UInt32?
+    public let hopCount: UInt8?
+    public let retryCount: Int
+    public let routeChoice: RouteChoice
+    public let stage: AcknowledgementStage
+    public let lastDeliveredFriendId: String?
+    public let lastRelayResponderId: String?
+    public let timestamp: Date
+    
+    public init(
+        eventId: UInt32? = nil,
+        hopCount: UInt8? = nil,
+        retryCount: Int = 0,
+        routeChoice: RouteChoice = .none,
+        stage: AcknowledgementStage = .idle,
+        lastDeliveredFriendId: String? = nil,
+        lastRelayResponderId: String? = nil,
+        timestamp: Date = Date()
+    ) {
+        self.eventId = eventId
+        self.hopCount = hopCount
+        self.retryCount = retryCount
+        self.routeChoice = routeChoice
+        self.stage = stage
+        self.lastDeliveredFriendId = lastDeliveredFriendId
+        self.lastRelayResponderId = lastRelayResponderId
+        self.timestamp = timestamp
+    }
 }
 
 /// Represents an authenticated emergency SOS received from a verified group member.

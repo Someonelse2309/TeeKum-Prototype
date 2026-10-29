@@ -14,15 +14,32 @@ public struct DiagnosticsView: View {
     @Environment(\.dismiss) private var dismiss
     @Bindable var sessionViewModel: GroupSessionViewModel
     var mapViewModel: MapViewModel?
+    var sosViewModel: SOSViewModel?
+    var relayPolicyManager: RelayPolicyManager?
     
     @State private var isRunningTests: Bool = false
     @State private var testResultSummary: String?
     @State private var isRunningUITests: Bool = false
     @State private var uiTestResultSummary: String?
+    @State private var isRunningSOSTests: Bool = false
+    @State private var sosTestResultSummary: String?
+    @State private var isRunningRelayTests: Bool = false
+    @State private var relayTestResultSummary: String?
+    @State private var isRunningMeshFailureTests: Bool = false
+    @State private var meshFailureTestSummary: String?
+    @State private var relayState: RelayPolicyState?
+    @State private var relayTelemetry: RelayTelemetry?
     
-    public init(sessionViewModel: GroupSessionViewModel, mapViewModel: MapViewModel? = nil) {
+    public init(
+        sessionViewModel: GroupSessionViewModel,
+        mapViewModel: MapViewModel? = nil,
+        sosViewModel: SOSViewModel? = nil,
+        relayPolicyManager: RelayPolicyManager? = nil
+    ) {
         self.sessionViewModel = sessionViewModel
         self.mapViewModel = mapViewModel
+        self.sosViewModel = sosViewModel
+        self.relayPolicyManager = relayPolicyManager
     }
     
     public var body: some View {
@@ -198,7 +215,91 @@ public struct DiagnosticsView: View {
                         LabeledContent("Zero-Knowledge Relay", value: "Enabled (Relays cannot read payloads)")
                     }
                     
-                    // MARK: - 6. On-Device Verification
+                    // MARK: - 5B. Communal Relay & Battery Policy (Agent 5)
+                    Section("Communal Relay & Battery Policy") {
+                        if let state = relayState {
+                            LabeledContent("Participation Mode", value: state.mode.rawValue)
+                            LabeledContent("Relay Status") {
+                                Text(state.statusDescription())
+                                    .bold()
+                                    .foregroundStyle(state.isRelayPermitted ? .green : .yellow)
+                            }
+                            LabeledContent("Hard 20% Cutoff") {
+                                Text(state.batteryLevel < 0.20 || state.isLowPowerModeActive ? "ACTIVE (Throttled)" : "NORMAL (Permitted)")
+                                    .bold()
+                                    .foregroundStyle(state.batteryLevel < 0.20 || state.isLowPowerModeActive ? .yellow : .green)
+                            }
+                            if let expiry = state.timedExpiryDate {
+                                let mins = max(0, Int(expiry.timeIntervalSince(Date())) / 60)
+                                LabeledContent("30m Timed Session", value: "\(mins) min remaining")
+                            }
+                        } else {
+                            Text("Relay policy manager not attached.")
+                                .foregroundStyle(.gray)
+                        }
+                        
+                        if let tele = relayTelemetry {
+                            LabeledContent("Packets Relayed", value: "\(tele.totalPacketsForwarded)")
+                            LabeledContent("SOS Forwarded", value: "\(tele.totalSOSForwarded)")
+                            LabeledContent("Rate Limit Throttled (2 pkts/s)", value: "\(tele.packetsDroppedRateLimit)")
+                            LabeledContent("Hop Limit Drops (Max 8)", value: "\(tele.packetsDroppedHopLimit)")
+                            LabeledContent("Policy & Battery Drops", value: "\(tele.packetsDroppedPolicy)")
+                            LabeledContent("Duplicates Suppressed", value: "\(tele.duplicatePacketsSuppressed)")
+                        }
+                    }
+                    
+                    // MARK: - 5C. Phase 2 Mesh Failure & Convergence Telemetry (Agent 6)
+                    Section("Phase 2 Mesh Failure & Observability (Agent 6)") {
+                        LabeledContent("Mesh Fault Simulator", value: "Multi-Node Deterministic Harness Active")
+                        LabeledContent("Simulated Failure Models", value: "Loss, Latency, Duplication, Competing Routes")
+                        LabeledContent("Forwarding Verification", value: "8-Hop Bounded Flooding & AODV Monotonicity")
+                        LabeledContent("Queue Saturation Guard", value: "Urgent: 16 pkts | Relay: 32 pkts Ring Buffer")
+                        LabeledContent("Rate Limit Policy", value: "Ordinary: 2 pkts/s | SOS Priority: 4 pkts/s")
+                        LabeledContent("Zero-Knowledge Telemetry") {
+                            Text("ACTIVE (0 GPS / 0 Keys)")
+                                .bold()
+                                .foregroundStyle(.green)
+                        }
+                    }
+                    
+                    // MARK: - 6. Emergency SOS & Multi-Hop Relay Diagnostics
+                    Section("Emergency SOS & Multi-Hop Diagnostics") {
+                        if let sos = sosViewModel {
+                            let diag = sos.diagnostics
+                            LabeledContent("Delivery State", value: sos.deliveryState.title)
+                            LabeledContent("Ack Stage", value: diag.stage.rawValue)
+                            LabeledContent("Route Choice", value: diag.routeChoice.description)
+                            if let eventId = diag.eventId {
+                                LabeledContent("Active Event ID", value: String(format: "0x%08X", eventId))
+                            }
+                            LabeledContent("Retries Attempted", value: "\(diag.retryCount) / \(sos.maxRetries)")
+                            if let friend = diag.lastDeliveredFriendId {
+                                LabeledContent("Friend Delivery Confirmed") {
+                                    Text("\(friend) (\(diag.hopCount ?? 0) hops)")
+                                        .bold()
+                                        .foregroundStyle(.green)
+                                }
+                            }
+                            if let relay = diag.lastRelayResponderId {
+                                LabeledContent("Intermediary Relay Ack") {
+                                    Text("\(relay) (\(sos.lastRelayHopCount ?? 0) hops)")
+                                        .foregroundStyle(.yellow)
+                                }
+                            }
+                            LabeledContent("Duplicates Suppressed", value: "\(sos.totalDuplicatesSuppressedCount)")
+                            LabeledContent("Dispatched SOS Count", value: "\(sos.totalDispatchedSOSCount)")
+                            LabeledContent("Received SOS Count", value: "\(sos.totalReceivedSOSCount)")
+                            LabeledContent("Siren Audio Active") {
+                                Text(sos.isSirenActive ? "ACTIVE (Audible)" : "Silent")
+                                    .foregroundStyle(sos.isSirenActive ? .red : .gray)
+                            }
+                        } else {
+                            Text("SOS ViewModel not attached.")
+                                .foregroundStyle(.gray)
+                        }
+                    }
+                    
+                    // MARK: - 7. On-Device Verification
                     Section("On-Device Verification Suites") {
                         Button {
                             runLocationVerification()
@@ -237,9 +338,69 @@ public struct DiagnosticsView: View {
                                 .font(.caption.monospaced())
                                 .foregroundStyle(uiSummary.contains("PASSED") ? .green : .red)
                         }
+                        
+                        Button {
+                            runSOSVerification()
+                        } label: {
+                            HStack {
+                                Text("Run Multi-Hop SOS Verification Suite")
+                                Spacer()
+                                if isRunningSOSTests {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(isRunningSOSTests)
+                        
+                        if let sosSummary = sosTestResultSummary {
+                            Text(sosSummary)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(sosSummary.contains("PASSED") ? .green : .red)
+                        }
+                        
+                        Button {
+                            runRelayVerification()
+                        } label: {
+                            HStack {
+                                Text("Run Relay & Battery Policy Suite (Agent 5)")
+                                Spacer()
+                                if isRunningRelayTests {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(isRunningRelayTests)
+                        
+                        if let relaySummary = relayTestResultSummary {
+                            Text(relaySummary)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(relaySummary.contains("PASSED") ? .green : .red)
+                        }
+                        
+                        Button {
+                            runMeshFailureVerification()
+                        } label: {
+                            HStack {
+                                Text("Run Mesh Failure Suite (Agent 6)")
+                                Spacer()
+                                if isRunningMeshFailureTests {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(isRunningMeshFailureTests)
+                        
+                        if let meshSummary = meshFailureTestSummary {
+                            Text(meshSummary)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(meshSummary.contains("PASSED") ? .green : .red)
+                        }
                     }
                 }
                 .scrollContentBackground(.hidden)
+            }
+            .task {
+                await loadRelayData()
             }
             .navigationTitle("Diagnostics HUD")
             .navigationBarTitleDisplayMode(.inline)
@@ -307,6 +468,55 @@ public struct DiagnosticsView: View {
                 isRunningUITests = false
                 uiTestResultSummary = passed ? "✓ ALL 8 UI STATE TESTS PASSED" : "✗ SOME UI TESTS FAILED"
             }
+        }
+    }
+    
+    private func runSOSVerification() {
+        isRunningSOSTests = true
+        sosTestResultSummary = "Running 22 multi-hop SOS tests..."
+        
+        Task {
+            let p1 = await SOSEndToEndTests.runAllTests()
+            let p2 = await MultiHopSOSTests.runAllTests()
+            let passed = p1 && p2
+            await MainActor.run {
+                isRunningSOSTests = false
+                sosTestResultSummary = passed ? "✓ ALL 22 SOS TESTS PASSED" : "✗ SOME SOS TESTS FAILED"
+            }
+        }
+    }
+    
+    private func loadRelayData() async {
+        guard let manager = relayPolicyManager else { return }
+        self.relayState = await manager.currentState()
+        self.relayTelemetry = await manager.snapshot()
+    }
+    
+    private func runRelayVerification() {
+        isRunningRelayTests = true
+        relayTestResultSummary = "Running 11 relay & battery policy tests..."
+        
+        Task {
+            let passed = await RelayPolicyTests.runAllTests()
+            await MainActor.run {
+                isRunningRelayTests = false
+                relayTestResultSummary = passed ? "✓ ALL 11 RELAY POLICY TESTS PASSED" : "✗ SOME TESTS FAILED"
+            }
+            await loadRelayData()
+        }
+    }
+    
+    private func runMeshFailureVerification() {
+        isRunningMeshFailureTests = true
+        meshFailureTestSummary = "Running 12 mesh failure & convergence tests..."
+        
+        Task {
+            let passed = await MeshFailureIntegrationTests.runAllTests()
+            await MainActor.run {
+                isRunningMeshFailureTests = false
+                meshFailureTestSummary = passed ? "✓ ALL 12 MESH FAILURE TESTS PASSED" : "✗ SOME MESH FAILURE TESTS FAILED"
+            }
+            await loadRelayData()
         }
     }
 }

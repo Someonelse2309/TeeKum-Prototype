@@ -54,6 +54,13 @@ public protocol CryptoServiceProvider: Actor {
         using key: SymmetricKey
     ) throws -> (ciphertext: Data, authTag: Data)
     
+    /// Seals an inner payload directly to a 56-byte binary datagram ready for radio transmission.
+    func sealToWireBytes(
+        payload: Data,
+        envelope: CleartextEnvelope,
+        using key: SymmetricKey
+    ) throws -> Data
+    
     /// Verifies the 16-byte Poly1305 / AES-GCM tag against the 10-byte envelope AAD and decrypts the 30-byte payload.
     /// Throws `CryptoServiceError.authenticationFailed` if tampered by a third party.
     func open(

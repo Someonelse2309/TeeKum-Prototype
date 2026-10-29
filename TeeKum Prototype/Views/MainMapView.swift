@@ -16,12 +16,15 @@ public struct MainMapView: View {
     @Bindable var sessionViewModel: GroupSessionViewModel
     @Bindable var sosViewModel: SOSViewModel
     @Bindable var meetingPointViewModel: MeetingPointViewModel
+    var relayPolicyManager: RelayPolicyManager?
     
     @State private var isShowingDiagnostics: Bool = false
     @State private var isShowingGroupQR: Bool = false
     @State private var isShowingMeetingPoints: Bool = false
     @State private var isShowingNavigationBeacon: Bool = false
     @State private var isShowingLeaveAlert: Bool = false
+    @State private var isShowingRelaySettings: Bool = false
+    @State private var relayState: RelayPolicyState?
     @State private var mapCameraPosition: MapCameraPosition = .automatic
     
     // Interactive Map-Pointing for Meeting Points
@@ -34,12 +37,14 @@ public struct MainMapView: View {
         mapViewModel: MapViewModel,
         sessionViewModel: GroupSessionViewModel,
         sosViewModel: SOSViewModel,
-        meetingPointViewModel: MeetingPointViewModel
+        meetingPointViewModel: MeetingPointViewModel,
+        relayPolicyManager: RelayPolicyManager? = nil
     ) {
         self.mapViewModel = mapViewModel
         self.sessionViewModel = sessionViewModel
         self.sosViewModel = sosViewModel
         self.meetingPointViewModel = meetingPointViewModel
+        self.relayPolicyManager = relayPolicyManager
     }
     
     public var body: some View {
@@ -66,7 +71,21 @@ public struct MainMapView: View {
         }
         // Sheets
         .sheet(isPresented: $isShowingDiagnostics) {
-            DiagnosticsView(sessionViewModel: sessionViewModel, mapViewModel: mapViewModel)
+            DiagnosticsView(
+                sessionViewModel: sessionViewModel,
+                mapViewModel: mapViewModel,
+                sosViewModel: sosViewModel,
+                relayPolicyManager: relayPolicyManager
+            )
+        }
+        .sheet(isPresented: $isShowingRelaySettings) {
+            if let manager = relayPolicyManager {
+                RelaySettingsSheet(
+                    relayPolicyManager: manager,
+                    currentBatteryLevel: mapViewModel.locationService?.currentBatteryLevel ?? 1.0,
+                    isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+                )
+            }
         }
         .sheet(isPresented: $isShowingGroupQR) {
             groupQRSheet
@@ -140,6 +159,14 @@ public struct MainMapView: View {
             Button("Stay", role: .cancel) {}
         } message: {
             Text("Leaving will wipe ephemeral cryptographic keys and disconnect you from this mesh network.")
+        }
+        .task {
+            if let manager = relayPolicyManager {
+                self.relayState = await manager.currentState()
+                for await state in manager.stateUpdates {
+                    self.relayState = state
+                }
+            }
         }
     }
     
@@ -389,6 +416,21 @@ public struct MainMapView: View {
             }
             .accessibilityLabel("Group QR Code")
             
+            // Communal Relay Button (Agent 5)
+            if relayPolicyManager != nil {
+                Button {
+                    isShowingRelaySettings = true
+                } label: {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.subheadline.bold())
+                        .padding(8)
+                        .background(Color.black.opacity(0.6))
+                        .foregroundStyle(relayButtonColor)
+                        .clipShape(Circle())
+                }
+                .accessibilityLabel("Communal Relay Settings")
+            }
+            
             // Diagnostics HUD Button
             Button {
                 isShowingDiagnostics = true
@@ -488,6 +530,11 @@ public struct MainMapView: View {
             // Live Sharing Master Toggle Card
             liveSharingMasterCard
             
+            // Communal Relay Status Card (Agent 5)
+            if let manager = relayPolicyManager {
+                communalRelayCard(manager)
+            }
+            
             // 1-Handed Quick-Tap Status Picker
             StatusPickerView(selectedCode: mapViewModel.currentStatus.code) { newStatus in
                 mapViewModel.updateUserStatus(UserStatus(code: newStatus))
@@ -542,6 +589,80 @@ public struct MainMapView: View {
         .accessibilityLabel("Live Sharing master toggle")
         .accessibilityValue(mapViewModel.isLiveSharingEnabled ? "On" : "Paused")
         .accessibilityHint("Toggle to start or pause location broadcasting to group members.")
+    }
+    
+    // MARK: - Communal Relay Card (Agent 5)
+    
+    private func communalRelayCard(_ manager: RelayPolicyManager) -> some View {
+        Button {
+            isShowingRelaySettings = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.title3)
+                    .foregroundStyle(relayCardColor)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(relayCardTitle)
+                        .font(.subheadline.bold())
+                        .foregroundStyle(relayCardColor)
+                    
+                    Text(relayCardSubtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.gray)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "slider.horizontal.3")
+                    .font(.caption.bold())
+                    .foregroundStyle(.gray)
+                    .padding(6)
+                    .background(Color(white: 0.18))
+                    .clipShape(Circle())
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color(white: 0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Communal Relay Settings")
+        .accessibilityValue(relayCardTitle)
+        .accessibilityHint("Tap to manage stranger relaying, 30-minute timer, and battery policy.")
+    }
+    
+    private var relayButtonColor: Color {
+        guard let state = relayState else { return .gray }
+        if state.isRelayPermitted {
+            return Color(red: 0.1, green: 0.9, blue: 0.4) // Green
+        } else if state.batteryLevel < 0.20 || state.isLowPowerModeActive {
+            return .yellow
+        } else {
+            return .gray
+        }
+    }
+    
+    private var relayCardColor: Color {
+        relayButtonColor
+    }
+    
+    private var relayCardTitle: String {
+        guard let state = relayState else { return "Relay: OFF" }
+        return "Relay: \(state.statusDescription())"
+    }
+    
+    private var relayCardSubtitle: String {
+        guard let state = relayState else { return "Stranger forwarding disabled" }
+        if state.isRelayPermitted {
+            return "Forwarding packets for festival crowd (≤2 pkts/s)"
+        } else if state.batteryLevel < 0.20 {
+            return "Suspended to preserve battery (<20% cutoff)"
+        } else if state.isLowPowerModeActive {
+            return "Suspended due to Low Power Mode"
+        } else {
+            return "Stranger forwarding disabled • Battery saved"
+        }
     }
     
     // MARK: - Latecomers Group QR Sheet

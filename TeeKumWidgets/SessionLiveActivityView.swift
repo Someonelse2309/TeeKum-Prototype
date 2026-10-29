@@ -120,6 +120,78 @@ public struct SessionLiveActivityView: View {
                     }
                 }
             }
+            
+            Divider().background(Color(white: 0.2))
+            
+            // Communal Relay Status & Interactive Controls
+            HStack(spacing: 8) {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(relayIndicatorColor)
+                        .frame(width: 7, height: 7)
+                    Text(context.state.relayStatusText ?? "RELAY: OFF")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(relayTextColor)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+                
+                // Deep link control surface: Timed 30m, Always, or Stop
+                HStack(spacing: 6) {
+                    Link(destination: URL(string: "teekum://relay?action=timed")!) {
+                        Text("30m")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color(white: 0.2))
+                            .clipShape(Capsule())
+                    }
+                    
+                    Link(destination: URL(string: "teekum://relay?action=always")!) {
+                        Text("Always")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color(white: 0.2))
+                            .clipShape(Capsule())
+                    }
+                    
+                    if context.state.isRelayActive {
+                        Link(destination: URL(string: "teekum://relay?action=stop")!) {
+                            Text("Stop")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.red)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.red.opacity(0.15))
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private var relayIndicatorColor: Color {
+        if context.state.isRelayActive {
+            return Color(red: 0.1, green: 0.9, blue: 0.4)
+        } else if (context.state.relayStatusText ?? "").contains("Paused") || (context.state.relayStatusText ?? "").contains("<20%") {
+            return .yellow
+        } else {
+            return .gray
+        }
+    }
+    
+    private var relayTextColor: Color {
+        if context.state.isRelayActive {
+            return Color(red: 0.1, green: 0.9, blue: 0.4)
+        } else if (context.state.relayStatusText ?? "").contains("Paused") {
+            return .yellow
+        } else {
+            return .gray
         }
     }
     

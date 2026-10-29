@@ -40,11 +40,11 @@ The system is designed to be completely serverless (*100% serverless*). Devices 
 | **D2 — User-Controlled Live Sharing Toggle** | Location broadcasting only occurs when the user enables the *Live Sharing* toggle. When relaxing or watching a show, users turn sharing off to preserve privacy and battery. Emergency SOS alerts broadcast immediately regardless of toggle state. |
 | **D3 — Single Active Meeting Point** | Exactly one active rendezvous spot is permitted per group at a time. Any member can propose a meeting point (venue landmark, custom pin, or current location), and friends respond with 1-tap confirmation (*"I'll be there"* or *"Can't make it"*). |
 | **D4 — Continuous Directional Finding** | Long-range guidance (>8m) displays a 360° compass arrow and estimated meter distance. Once within ~5–8 meters, the interface smoothly transitions to centimeter-accurate Nearby Interaction (UWB) radar, paired with a 1-tap flashing Screen Strobe beacon. |
-| **D5 — Communal Mesh Compact & Background Execution** | **Phase 1 MVP:** Live Activity (`ActivityKit`) displays session status, active meeting point, connected peer count, and emergency SOS alerts across the Dynamic Island and Lock Screen, keeping the app alive in the pocket via Apple's official location status indicator (`showsBackgroundLocationIndicator = true` and `allowsBackgroundLocationUpdates = true`).<br>**Phase 2 Mesh Compact:** Group membership requires an explicit "Join the Mesh" consent agreement during pairing. Once in a group, the device acts as a continuous background relay for fellow group members and blindly forwards stranger festival packets (zero-knowledge, 2 pkts/sec rate cap, 256 LRU deduplication cache). Relaying is an inseparable condition of staying in the group, with an automatic hard shutoff at 20% battery (Festival Survival Mode). |
+| **D5 — Communal Relay Policy, Live Activity & Background Execution** | **Phase 1 MVP:** Live Activity (`ActivityKit`) displays session status, active meeting point, connected peer count, and emergency SOS alerts across Dynamic Island and Lock Screen, keeping background sockets alive via `showsBackgroundLocationIndicator = true`.<br>**Phase 2 Mesh Participation (Approved via /grill-me):** Three user-controlled participation modes: **Always Active** (relays while battery $\ge 20\%$), **Timed 30 Min** (relays for 30 minutes, then auto-pauses), and **Disabled** (relay OFF). Accessible in-app and directly from Lock Screen Live Activity controls. Relaying is strictly zero-knowledge (only 10-byte cleartext header inspected; payloads remain ChaCha20 encrypted), rate-capped at $\le 2$ pkts/sec for ordinary traffic with 1,024-entry LRU deduplication, and automatically terminates at 20% battery or Low Power Mode (Festival Survival Mode). |
 | **D6 — Festival Survival Mode (Hard 20% Cutoff)** | Automatic critical battery detection. When battery reaches 20% (or Low Power Mode), stranger mesh relaying and background sessions are instantly terminated, reducing CoreLocation sampling to once every 1–2 minutes or on-demand, reserving remaining power strictly for SOS and meeting maps. |
-| **D7 — 54-Byte Binary Packet (Protocol v2), 16-Bit Session ID & Coordinate Quantization** | CoreLocation `Double` (`CLLocationDegrees`) coordinates are quantized into big-endian signed 32-bit integers `Int32` (`degrees * 1_000_000`) for ~11 cm resolution. Wire packets are fixed at 54 bytes (8B cleartext envelope + 30B encrypted payload + 16B Poly1305 authentication tag). Group session ID is 16 bits (`UInt16`, `0x0001...0xFFFF`) derived via SHA-256 over timestamp, GPS coordinates, and CSPRNG salt. See [docs/PAYLOAD_GUIDE.md](PAYLOAD_GUIDE.md) for the complete byte-by-byte visual breakdown. |
+| **D7 — 56-Byte Binary Packet Wire Protocol, 24-Bit Session ID & Coordinate Quantization** | CoreLocation `Double` (`CLLocationDegrees`) coordinates are quantized into big-endian signed 32-bit integers `Int32` (`degrees * 1_000_000`) for ~11 cm resolution. Wire packets are fixed at **56 bytes** (10B cleartext envelope + 30B encrypted payload + 16B Poly1305 authentication tag). Group session ID is 24 bits (`UInt24`, 3 bytes, `0x000001...0xFFFFFF`, 16.7M combinations) derived via SHA-256 over timestamp, GPS coordinates, and CSPRNG salt. 96-bit AEAD Nonce: 3B `sessionId` + 4B `sequenceNumber` + 1B `versionAndType` + 4B domain tag `"TKM2"`. |
 | **D8 — 2-Byte Base-27 1-to-3 Letter Sender Initials & Serverless QR Group Formation** | Ephemeral member identification inside the 30-byte encrypted payload is compressed from 4 bytes down to exactly 2 bytes (`UInt16`) using base-27 radix encoding of 1 to 3 uppercase letters ($A \dots Z$, e.g. "D", "AB", "DNA", total $18,278 \le 65,535$). Every packet is self-describing, rendering member avatars instantly on the receiving map/radar and completely eliminating runtime P2P radio handshakes. Group formation and 256-bit key exchange are handled serverless via CoreImage QR barcode generation and AVFoundation camera scanning. |
-| **D9 — Phase 2 Expanded 2-Byte Hop Control (hopLimit & hopCount UInt8)** | In Phase 2 multi-hop mesh development, expand hop control from a single 1-byte nibble split (`hopLimit: 4 bits`, `hopCount: 4 bits`, range 0..15) into two dedicated 8-bit bytes (`hopLimit: UInt8` and `hopCount: UInt8`, range 0..255). To maintain cryptographic integrity and prevent unauthenticated broadcast storm attacks, `hopLimit` is authenticated verbatim in ChaCha20-Poly1305 AEAD Associated Data (AAD), while `hopCount` is masked to `0x00` in AAD and incremented by intermediate relays. The total 54-byte datagram size is preserved by absorbing 1 byte from the inner payload's 8-byte reserved padding. |
+| **D9 — Phase 2 Multi-Hop Mesh Architecture & Protocol Decisions (Approved via /grill-me)** | Formalized consensus across the Phase 2 multi-hop mesh design tree:<br>1. **Dedicated Hop Control:** 1B `hopLimit` (immutable, sealed in AAD, max 8 hops) + 1B `hopCount` (mutable, masked to `0x00` in AAD).<br>2. **Compact 7-Byte Deduplication Key:** `(sessionId: 3B, sequenceNumber: 4B)` stored in a 1,024-entry LRU cache with 5-minute (300s) retention window.<br>3. **Hybrid Routing Strategy:** Immediate bounded flooding (max 8 hops) for emergency SOS and location pings; reverse-route unicast for ACKs; on-demand AODV (RREQ/RREP) for directed queries.<br>4. **Communal Peer Discovery:** Single service `_teekum._tcp` with TXT `relay: 1/0` flag. Group peers always peer; stranger nodes peer only when relaying is enabled.<br>5. **Dual-Lane Rate Limiter:** 2 pkts/sec ordinary relay budget (capacity 4 tokens); dedicated high-priority SOS lane (burst up to 4 pkts/sec) that preempts ordinary pings.<br>6. **5-State Delivery Semantics:** `acceptedLocally` $\rightarrow$ `forwardedToNextHop` $\rightarrow$ `relayedByMeshHop` $\rightarrow$ `deliveredToFriend` $\rightarrow$ `deliveryTimedOut`. Retries exhausting after relay preserve `Relayed by Mesh (Friend Unconfirmed)`.<br>7. **3-Tier Verification Matrix:** Deterministic unit/integration suite with `TestMeshClock` and simulated 3-node in-memory mesh; live Debug HUD; formal 3-device physical test protocol (Alice $\rightarrow$ Relay $\rightarrow$ Bob). |
 | **D10 — Phase 3 Apple Watch Haptic Companion Extension** | Position the Apple Watch strictly as a tethered companion extension (`WatchConnectivity` / `WCSession`) to the host iPhone, explicitly rejecting standalone mesh node execution to preserve watch battery life and respect watchOS ad-hoc networking boundaries. Primary responsibilities: (1) high-intensity Taptic Engine wrist haptic patterns (`WKHapticType.failure` / `.stop`) for emergency SOS alerts in 100+ dB concert environments, (2) discrete 3-second wrist SOS triggers, (3) heads-up compass navigation with bearing haptics and meter distance readouts, (4) 1-tap meeting point attendance confirmations, and (5) watchOS Smart Stack mirroring of active Lock Screen Live Activities. Coordinate streaming over Bluetooth LE is strictly gated to active on-screen watch navigation sessions. |
 | **D11 — Phase 3 Micro-Navigation AR Spotter Lens & UWB Scoping** | MapKit (`MainMapView`) remains the mandatory primary navigation surface for glanceability, full-group orientation, and low power consumption. Scopes ARKit/RealityKit and Apple Nearby Interaction (UWB via U1/U2 chips) strictly as an optional, secondary "Spotter Lens" inside `FinderBeaconView` for close-range finding (<30m) with an aggressive 30-second sleep timeout and automatic fallback to 2D compass bearing under low-light or strobe conditions (`ARCamera.TrackingState.limited`). |
 | **D12 — Phase 3 Multi-Floor Venue Intelligence & Differential Barometry** | Standardizes vertical localization for multi-story venues (arenas, stadiums, exhibition convention centers) without cloud or Apple IMDF dependencies. Carves 3 bytes from inner payload reserved padding (`floorLevel: Int8` at Byte 22 + `barometricPressure: UInt16` at Bytes 23..24, centi-hPa $\approx 8\text{cm}$ resolution) to preserve the fixed 56-byte datagram size. Resolves peer-to-peer vertical separation using peer barometric differentials ($\Delta h \approx 8.43 \times \Delta P$). Powers 2D Map floor switcher filtering, vertical elevation arrows in `FinderBeaconView` to eliminate false 0m arrivals, and true 3D vertical elevation rendering in the AR camera overlay. |
@@ -59,7 +59,7 @@ This project utilizes **100% Native Apple Frameworks (Zero External Packages / Z
 
 | Technology | Type | Why we use it | Used in which component |
 | :--- | :--- | :--- | :--- |
-| **Network.framework** | Apple Framework | Sends and receives 54-byte binary datagrams peer-to-peer offline via AWDL (Wi-Fi Direct & Bluetooth) | `Services/PeerTransportService.swift` |
+| **Network.framework** | Apple Framework | Sends and receives 56-byte binary datagrams peer-to-peer offline via AWDL (Wi-Fi Direct & Bluetooth) | `Services/PeerTransportService.swift` |
 | **CoreLocation** | Apple Framework | Retrieves GPS coordinates (`CLLocationDegrees` as `Double`), magnetic compass heading, and horizontal accuracy | `Services/LocationService.swift` |
 | **CoreMotion** | Apple Framework | Detects physical movement (walking vs stationary) via motion coprocessor to sleep GPS and save ~70% battery | `Services/LocationService.swift` |
 | **CryptoKit** | Apple Framework | Authenticated encryption (ChaCha20-Poly1305 / AES-256-GCM), symmetric key exchange, and tamper verification | `Services/CryptoService.swift` |
@@ -78,7 +78,7 @@ This project utilizes **100% Native Apple Frameworks (Zero External Packages / Z
 > *Reference Documentation:* See [docs/NETWORKING.md](NETWORKING.md) for the complete networking architecture, protocol specifications, flow control pipelines, and connection lifecycle diagrams.
 
 **What it is:**  
-`Network.framework` is Apple's modern low-level networking library. In this application, `NWListener` and `NWConnection` are configured with peer-to-peer Bonjour (`includePeerToPeer: true`) to establish direct datagram connections over Apple Wireless Direct Link (AWDL) and Wi-Fi Direct. This is the exact underlying protocol powering Apple AirDrop, allowing 54-byte binary packets to transmit in single-digit milliseconds without cellular data or Wi-Fi routers.
+`Network.framework` is Apple's modern low-level networking library. In this application, `NWListener` and `NWConnection` are configured with peer-to-peer Bonjour (`includePeerToPeer: true`) to establish direct datagram connections over Apple Wireless Direct Link (AWDL) and Wi-Fi Direct. This is the exact underlying protocol powering Apple AirDrop, allowing 56-byte binary packets to transmit in single-digit milliseconds without cellular data or Wi-Fi routers.
 
 **Setup required:**
 - Add `NSLocalNetworkUsageDescription` to `Info.plist` (e.g., *"This app uses the local network to discover and connect with friends at concerts without internet"*).
@@ -89,10 +89,10 @@ This project utilizes **100% Native Apple Frameworks (Zero External Packages / Z
 | Method / Function / Class | What it does | How we use it in our app | File |
 | :--- | :--- | :--- | :--- |
 | `NWListener` | Listens for inbound connections from nearby devices without a central server. | Operated by `PeerTransportService` to accept incoming peer links over AWDL. | `PeerTransportService.swift` |
-| `NWConnection` | Manages a bi-directional transmission channel to a specific peer. | Sends and receives 54-byte binary datagrams to neighboring devices. | `PeerTransportService.swift` |
+| `NWConnection` | Manages a bi-directional transmission channel to a specific peer. | Sends and receives 56-byte binary datagrams to neighboring devices. | `PeerTransportService.swift` |
 | `NWParameters.peerToPeer` | Enables peer-to-peer radio transport options (AWDL and Wi-Fi Direct). | Configured on listeners and connections to operate offline without Wi-Fi routers. | `PeerTransportService.swift` |
 | `NWBrowser` | Scans for nearby peers advertising the group's Bonjour service. | Discovers friend devices and eligible relays within a 30–50 meter radio range. | `PeerTransportService.swift` |
-| `send(content:contentContext:isComplete:completion:)` | Transmits raw binary data across an active connection. | Enqueues encrypted 54-byte packets into the radio outbox queue. | `PeerTransportService.swift` |
+| `send(content:contentContext:isComplete:completion:)` | Transmits raw binary data across an active connection. | Enqueues encrypted 56-byte packets into the radio outbox queue. | `PeerTransportService.swift` |
 
 **Code example from our project:**
 
@@ -118,7 +118,7 @@ actor PeerTransportService {
     }
     
     func sendPacket(data: Data, to connection: NWConnection) async throws {
-        guard data.count == 54 else { throw TransportError.invalidPacketSize }
+        guard data.count == 56 else { throw TransportError.invalidPacketSize }
         return try await withCheckedThrowingContinuation { continuation in
             connection.send(content: data, completion: .contentProcessed { error in
                 if let error = error { continuation.resume(throwing: error) }
@@ -133,8 +133,8 @@ actor PeerTransportService {
     }
     
     private func receivePacket(from connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 54, maximumLength: 54) { [weak self] content, _, _, error in
-            if let data = content, data.count == 54 {
+        connection.receive(minimumIncompleteLength: 56, maximumLength: 56) { [weak self] content, _, _, error in
+            if let data = content, data.count == 56 {
                 Task { await self?.processInboundPacket(data) }
             }
             if error == nil { self?.receivePacket(from: connection) }
@@ -227,7 +227,7 @@ final class LocationSamplingPolicy {
 #### CryptoKit
 
 **What it is:**  
-`CryptoKit` is Apple's native hardware-accelerated cryptographic framework. In this application, `CryptoKit` provides authenticated symmetric encryption (ChaCha20-Poly1305 / AES-256-GCM) to seal the 30-byte inner payload with a 16-byte authentication tag, while binding the 8-byte cleartext outer envelope as Associated Authenticated Data (AAD).
+`CryptoKit` is Apple's native hardware-accelerated cryptographic framework. In this application, `CryptoKit` provides authenticated symmetric encryption (ChaCha20-Poly1305 / AES-256-GCM) to seal the 30-byte inner payload with a 16-byte authentication tag, while binding the 10-byte cleartext outer envelope as Associated Authenticated Data (AAD) with `hopCount` masked to `0x00`.
 
 **Setup required:**
 - Import `CryptoKit`. No special `Info.plist` entries required.
@@ -237,9 +237,9 @@ final class LocationSamplingPolicy {
 | Method / Function / Class | What it does | How we use it in our app | File |
 | :--- | :--- | :--- | :--- |
 | `SymmetricKey` | Represents a 256-bit symmetric key for a group session. | Generated on group creation and exchanged via URL fragment or QR barcode. | `CryptoService.swift` |
-| `ChaChaPoly.seal(_:using:nonce:authenticating:)` | Encrypts payload and computes a 16-byte Poly1305 authentication tag over ciphertext and AAD. | Encrypts 30 bytes of private coordinates and binds the 8-byte outer envelope as AAD. | `CryptoService.swift` |
+| `ChaChaPoly.seal(_:using:nonce:authenticating:)` | Encrypts payload and computes a 16-byte Poly1305 authentication tag over ciphertext and AAD. | Encrypts 30 bytes of private coordinates and binds the 10-byte outer envelope (hopCount masked to 0x00) as AAD. | `CryptoService.swift` |
 | `ChaChaPoly.open(_:using:authenticating:)` | Decrypts ciphertext and verifies the Poly1305 tag against AAD. | Validates inbound packets; forged packets or altered envelope fields are dropped instantly. | `CryptoService.swift` |
-| `ChaChaPoly.Nonce(data:)` | Creates a unique 96-bit initialization vector per packet. | Derived from 16-bit session ID (2B) + 32-bit sequence number (4B) + version/type (1B) + 5-byte domain tag "TKM02" (5B). | `CryptoService.swift` |
+| `ChaChaPoly.Nonce(data:)` | Creates a unique 96-bit initialization vector per packet. | Derived from 24-bit session ID (3B) + 32-bit sequence number (4B) + version/type (1B) + 4-byte domain tag "TKM2" (4B). | `CryptoService.swift` |
 
 ---
 
@@ -382,8 +382,8 @@ The `Security` framework provides hardware-backed credential and key storage wit
                                │ Serializes / Encrypts
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│      54-Byte Wire Packet (Protocol v2) (AWDL / Wi-Fi)       │
-│  [8B Cleartext Envelope] + [30B Ciphertext] + [16B Tag]     │
+│      56-Byte Wire Packet (Protocol v2) (AWDL / Wi-Fi)       │
+│  [10B Cleartext Envelope] + [30B Ciphertext] + [16B Tag]    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -438,7 +438,8 @@ TeeKum Prototype/
 ├── Services/
 │   ├── PeerTransport.swift               // Authoritative actor protocol, state streams & diagnostics
 │   ├── PeerTransportService.swift        // Network.framework P2P datagram transmission actor (AWDL Bonjour)
-│   ├── StreamMessageFramer.swift         // 54-byte binary stream delimiter, chunk reconstruction, resynchronization
+│   ├── MeshProtocols.swift               // Phase 2 multi-hop mesh protocol interfaces, MeshClock & PacketKey
+│   ├── StreamMessageFramer.swift         // 56-byte binary stream delimiter, chunk reconstruction, resynchronization
 │   ├── PriorityOutboxQueue.swift         // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting) + coalesced Location
 │   ├── CryptoServiceProtocol.swift       // Cryptographic service interface
 │   ├── CryptoService.swift               // ChaChaPoly AEAD, AAD envelope binding & Keychain store (actor)
@@ -452,8 +453,10 @@ TeeKum Prototype/
 │   ├── agent.md                          // Master agent instructions and product principles
 │   ├── DEVELOPMENT_LOG.md                // Chronological development log, agent changes & verification records
 │   ├── PHASE_1_DEVELOPMENT_REPORT.md     // Phase 1 Direct Offline MVP milestone completion report
+│   ├── PHASE2_ARCHITECTURE.md            // Phase 2 Multi-Hop Mesh Architecture Specification
+│   ├── PHASE2_PROTOCOL_DECISIONS.md      // Phase 2 Architectural & Protocol Decisions (Approved via /grill-me)
 │   ├── NETWORKING.md                     // Authoritative networking architecture & protocol guide
-│   ├── PAYLOAD_GUIDE.md                  // 54-byte wire protocol & payload developer guide
+│   ├── PAYLOAD_GUIDE.md                  // 56-byte wire protocol & payload developer guide
 │   ├── PROTOCOL_SPECIFICATION.md         // Cryptographic message protection specification
 │   ├── POC_ACCEPTANCE_REPORT.md          // Final POC integration & verification acceptance report
 │   ├── POC_IMPLEMENTATION_PLAN.md        // Milestone implementation plan & file ownership
@@ -559,22 +562,38 @@ develop → feat/feature-name → PR to develop → PR to main → PR to prod
 
 ---
 
-## 6. Final Check
+## 6. Project Timeline & Phase Status
 
-- [x] Project description, team, platform, and system architecture are aligned with TeeKum.
-- [x] Legacy technologies replaced by the 9 Native Apple Frameworks (Network.framework, CoreLocation, CoreMotion, CryptoKit, NearbyInteraction, MapKit, ActivityKit, Security, libsqlite3).
-- [x] Pure MVVM architecture without Coordinators and with Phase 3 Apple Watch companion architecture scoped.
-- [x] Review decisions D1–D12 from /grill-me sessions and architectural roadmap reviews are recorded in the Approved Decisions table.
-- [x] 54-byte binary packet wire format (Protocol v2) and 56-byte multi-hop wire format (Protocol v3), 2-byte Base-27 initials codec (zero handshake), 16-bit / 24-bit session ID derivation, envelope separation, and CoreLocation `Double` quantization are documented.
-- [x] Phase 2 2-byte expanded hop control architecture (Decision D9: `hopLimit: UInt8` + `hopCount: UInt8`, range 0..255) is scheduled for multi-hop mesh development.
-- [x] Phase 3 Apple Watch Companion (D10), Micro-Navigation AR/UWB (D11), and Multi-Floor Differential Barometry (D12) are formally scoped.
-- [x] Unit Testing Strategy is fully defined and executed across test suites with 100% pass rate.
-- [x] Phase 1 Direct Offline MVP completed and documented in [docs/PHASE_1_DEVELOPMENT_REPORT.md](PHASE_1_DEVELOPMENT_REPORT.md).
-- [x] 4-branch Git workflow (`main`, `develop`, `prod`, `feat/*`) and commit conventions are established.
+### Phase 1 — Direct Offline MVP (Status: Completed & Verified)
+- [x] Architecture & Blind Spot verification via `/grill-me`.
+- [x] Technical stack alignment (Pure MVVM, 0 external dependencies, physical testing).
+- [x] Complete User Story & Screen Journey verification.
+- [x] 54-Byte Binary Packet Wire Protocol (Protocol v2) & Network.framework P2P specification.
+- [x] Serverless Group Creation (Shareable Link & In-Person QR Barcode).
+- [x] Direct Apple Peer-to-Peer transport service (`PeerTransportService`).
+- [x] Live Sharing toggle & smart adaptive location publisher (3–5s moving, 15–30s stationary).
+- [x] MapKit offline preview with friend pins, accuracy rings, and status pills.
+- [x] Horizontal status chips carousel with festival activity codes.
+- [x] Single Active Meeting Point creation & one-tap attendance sync with `PremadeMeetingLocation` dropdown.
+- [x] Directed navigation: 360° Compass Arrow -> Seamless Ultra-Wideband Radar transition.
+- [x] 1-Tap Screen Strobe Beacon for visual crowd finding.
+- [x] 3-Second Hold SOS trigger with immediate delivery feedback.
+- [x] On-Device Debug HUD Sheet (`DiagnosticsView.swift`).
+- [x] Festival Survival Mode (<20% battery throttling).
+- [x] 6 automated unit & end-to-end test suites (67 passing tests, 100% pass rate).
+- [x] Phase 1 Development Report published in [`docs/PHASE_1_DEVELOPMENT_REPORT.md`](PHASE_1_DEVELOPMENT_REPORT.md).
 
-### Open Decisions & Specifications for Future Phases
+### Phase 2 — Multi-Hop Offline Mesh & Communal Relay (Status: Architecture Approved, In Progress)
+- [x] **Pre-Development Architectural Alignment:** Full `/grill-me` review with Product Owner resolving all 8 core decisions (`docs/PHASE2_PROTOCOL_DECISIONS.md`).
+- [x] **Master Architecture Specification:** Published [`docs/PHASE2_ARCHITECTURE.md`](PHASE2_ARCHITECTURE.md).
+- [x] **Shared Swift Protocols:** Implemented and compiled [`Services/MeshProtocols.swift`](../TeeKum%20Prototype/Services/MeshProtocols.swift) (`MeshClock`, `PacketKey`, `NeighborManaging`, `RoutingTableManaging`, `PacketForwarding`, `ForwardingBudgetManaging`, `RelayPolicyManaging`, `SOSForwardingManaging`, `RelayDiagnosticsProviding`).
+- [ ] **Milestone 2.1 (Protocol & Rate Limiting):** 56-byte wire layout codec (10B envelope, 30B payload, 16B MAC), 7-byte `PacketKey`, 1,024-entry LRU duplicate cache (5-minute TTL), and dual-lane `ForwardingRateLimiter` (2 pkts/sec ordinary, 4 pkts/sec SOS).
+- [ ] **Milestone 2.2 (Open Neighbor Peering):** `NeighborTable.swift` actor, RSSI link tracking, and `PeerTransportService` Bonjour discovery over `_teekum._tcp` with TXT `relay: 1/0` flag.
+- [ ] **Milestone 2.3 (AODV Routing Engine & Blind Forwarding):** `RoutingTable.swift` with forward/reverse route setup, `PacketForwarder.swift` blind relaying with `hopCount` increment and 8-hop limit, and bounded flooding fallback.
+- [ ] **Milestone 2.4 (Communal Relay Policy & Live Activity):** `RelayPolicyManager.swift` enforcing 3 modes (`Always Active`, `Timed 30m`, `Disabled`), hard 20% battery cutoff, and interactive Lock Screen Live Activity controls.
+- [ ] **Milestone 2.5 (Multi-Hop SOS & Physical Validation):** Immediate SOS preemption, multi-hop ACK return routing, 5-stage honest delivery state machine (`acceptedLocally` -> `forwardedToNextHop` -> `relayedByMeshHop` -> `deliveredToFriend`), and 3-device physical verification protocol (`docs/PHYSICAL_DEVICE_MESH_VALIDATION.md`).
 
-#### Phase 3 Specifications
+### Phase 3 — Venue Intelligence & Polish (Status: Scoped for Future Development)
 1. **Apple Watch Haptic Companion Extension (`TeeKumWatch`, Decision D10):**
    - Tethered companion communicating over `WatchConnectivity` (`WCSession`).
    - Distinctive Taptic Engine SOS haptic patterns to overcome 100+ dB concert audio masking.

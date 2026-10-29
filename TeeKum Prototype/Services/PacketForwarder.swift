@@ -29,6 +29,7 @@ public actor PacketForwarder: PacketForwarding {
     private let cryptoService: CryptoServiceProvider?
     private let sessionProvider: (@Sendable () -> GroupSession?)?
     private let policyProvider: (@Sendable () -> RelayPolicyState)?
+    private let policyManager: RelayPolicyManaging?
     private weak var transport: MeshTransport?
     
     // Telemetry counters
@@ -39,6 +40,7 @@ public actor PacketForwarder: PacketForwarding {
     private var totalDroppedHopLimitCount: Int = 0
     private var totalDroppedRateLimitCount: Int = 0
     private var totalDroppedPolicyCount: Int = 0
+    private var totalDroppedBatteryCount: Int = 0
     private var totalDroppedMalformedCount: Int = 0
     private var totalDroppedSecurityCount: Int = 0
     
@@ -51,6 +53,7 @@ public actor PacketForwarder: PacketForwarding {
         cryptoService: CryptoServiceProvider? = nil,
         sessionProvider: (@Sendable () -> GroupSession?)? = nil,
         policyProvider: (@Sendable () -> RelayPolicyState)? = nil,
+        policyManager: RelayPolicyManaging? = nil,
         transport: MeshTransport? = nil
     ) {
         self.routingTable = routingTable
@@ -61,6 +64,7 @@ public actor PacketForwarder: PacketForwarding {
         self.cryptoService = cryptoService
         self.sessionProvider = sessionProvider
         self.policyProvider = policyProvider
+        self.policyManager = policyManager
         self.transport = transport
     }
     
@@ -103,11 +107,17 @@ public actor PacketForwarder: PacketForwarding {
         // Hop Bound Enforcement (Max 8 hops for standard mesh)
         guard hopCount < hopLimit else {
             totalDroppedHopLimitCount += 1
+            if let diag = policyManager as? RelayDiagnosticsProviding {
+                await diag.recordDropEvent(reason: .hopLimitExceeded)
+            }
             return .dropHopLimitExceeded
         }
         
         guard hopCount < PacketConstants.defaultHopLimit || packetType == .sos else {
             totalDroppedHopLimitCount += 1
+            if let diag = policyManager as? RelayDiagnosticsProviding {
+                await diag.recordDropEvent(reason: .hopLimitExceeded)
+            }
             return .dropHopLimitExceeded
         }
         
@@ -121,6 +131,9 @@ public actor PacketForwarder: PacketForwarding {
         let isDuplicate = await seenPacketCache.isDuplicateAndRecord(packetKey, now: clock.now())
         if isDuplicate {
             totalDroppedDuplicatesCount += 1
+            if let diag = policyManager as? RelayDiagnosticsProviding {
+                await diag.recordDropEvent(reason: .duplicate)
+            }
             return .dropDuplicate
         }
         
@@ -167,9 +180,28 @@ public actor PacketForwarder: PacketForwarding {
         }
         
         // 4. Stranger Packet Relaying: Opt-In & Battery Policy Gate
-        let policyState = policyProvider?() ?? RelayPolicyState(mode: .communalRelayActive)
-        guard policyState.isRelayPermitted else {
+        let policyState: RelayPolicyState
+        if let pm = policyManager {
+            policyState = await pm.currentState()
+        } else if let provider = policyProvider {
+            policyState = provider()
+        } else {
+            policyState = RelayPolicyState(mode: .communalRelayActive)
+        }
+        
+        let now = clock.now()
+        guard policyState.isPermitted(at: now) else {
             totalDroppedPolicyCount += 1
+            if policyState.batteryLevel < 0.20 || policyState.isLowPowerModeActive {
+                totalDroppedBatteryCount += 1
+                if let diag = policyManager as? RelayDiagnosticsProviding {
+                    await diag.recordDropEvent(reason: .batteryThrottled)
+                }
+            } else {
+                if let diag = policyManager as? RelayDiagnosticsProviding {
+                    await diag.recordDropEvent(reason: .policyDisabled)
+                }
+            }
             return .dropPolicyDisabled
         }
         
@@ -178,12 +210,18 @@ public actor PacketForwarder: PacketForwarding {
             let allowed = await rateLimiter.consumeSOSToken()
             guard allowed else {
                 totalDroppedRateLimitCount += 1
+                if let diag = policyManager as? RelayDiagnosticsProviding {
+                    await diag.recordDropEvent(reason: .rateLimitExceeded)
+                }
                 return .dropRateLimitExceeded
             }
         } else {
             let allowed = await rateLimiter.consumeOrdinaryToken()
             guard allowed else {
                 totalDroppedRateLimitCount += 1
+                if let diag = policyManager as? RelayDiagnosticsProviding {
+                    await diag.recordDropEvent(reason: .rateLimitExceeded)
+                }
                 return .dropRateLimitExceeded
             }
         }
@@ -200,6 +238,25 @@ public actor PacketForwarder: PacketForwarding {
             // Emergency SOS uses immediate bounded flooding
             let targetPeerIds = eligibleNeighbors.map(\.id)
             totalForwardedCount += 1
+            if let diag = policyManager as? RelayDiagnosticsProviding {
+                await diag.recordForwardEvent(type: .sos)
+            }
+            return .forward(mutatedWireData: mutatedData, nextHops: targetPeerIds)
+        }
+        
+        if packetType == .routeReq {
+            // Stranger relay records reverse route for returning RREP
+            await routingTable.recordReverseRoute(
+                discoveryKey: rawPacket.envelope.sequenceNumber,
+                incomingPeerId: fromPeerId,
+                hopCount: hopCount + 1,
+                ttl: 15.0
+            )
+            let targetPeerIds = eligibleNeighbors.map(\.id)
+            totalForwardedCount += 1
+            if let diag = policyManager as? RelayDiagnosticsProviding {
+                await diag.recordForwardEvent(type: .routeReq)
+            }
             return .forward(mutatedWireData: mutatedData, nextHops: targetPeerIds)
         }
         
@@ -207,6 +264,9 @@ public actor PacketForwarder: PacketForwarding {
             // Route response: check for matching reverse route
             if let reverseRoute = await routingTable.popReverseRoute(for: rawPacket.envelope.sequenceNumber) {
                 totalForwardedCount += 1
+                if let diag = policyManager as? RelayDiagnosticsProviding {
+                    await diag.recordForwardEvent(type: .routeResp)
+                }
                 return .forward(mutatedWireData: mutatedData, nextHops: [reverseRoute.incomingPeerId])
             }
         }
@@ -216,12 +276,18 @@ public actor PacketForwarder: PacketForwarding {
         if let route = await routingTable.findRoute(to: destinationId),
            eligibleNeighbors.contains(where: { $0.id == route.nextHopPeerId }) {
             totalForwardedCount += 1
+            if let diag = policyManager as? RelayDiagnosticsProviding {
+                await diag.recordForwardEvent(type: packetType)
+            }
             return .forward(mutatedWireData: mutatedData, nextHops: [route.nextHopPeerId])
         }
         
         // Bounded flooding fallback across remaining connected neighbors
         let targetPeerIds = eligibleNeighbors.map(\.id)
         totalForwardedCount += 1
+        if let diag = policyManager as? RelayDiagnosticsProviding {
+            await diag.recordForwardEvent(type: packetType)
+        }
         return .forward(mutatedWireData: mutatedData, nextHops: targetPeerIds)
     }
     
@@ -234,7 +300,7 @@ public actor PacketForwarder: PacketForwarding {
     ) async throws {
         guard let transport = transport else { return }
         for peerId in toPeerIds {
-            _ = try await transport.forwardFrame(wireData, to: peerId)
+            _ = try await transport.sendFrame(wireData, to: peerId)
         }
     }
     
@@ -257,6 +323,8 @@ public actor PacketForwarder: PacketForwarding {
             packetsDroppedRateLimit: totalDroppedRateLimitCount,
             packetsDroppedHopLimit: totalDroppedHopLimitCount,
             duplicatePacketsSuppressed: totalDroppedDuplicatesCount,
+            packetsDroppedPolicy: totalDroppedPolicyCount,
+            packetsDroppedBattery: totalDroppedBatteryCount,
             activeRoutesCount: 0,
             activeNeighborsCount: 0,
             currentForwardingRatePerSec: 0.0,

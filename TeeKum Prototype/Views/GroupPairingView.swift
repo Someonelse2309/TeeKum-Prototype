@@ -146,6 +146,8 @@ public struct GroupPairingView: View {
                 MeshAgreementView(
                     context: action.context,
                     onAgree: {
+                        // Persist user opt-in to Communal Mesh Compact (Agent 5)
+                        UserDefaults.standard.set(RelayParticipationMode.communalRelayActive.rawValue, forKey: "com.teekum.relay.participationMode")
                         switch action {
                         case .create(let name, let initials):
                             executeCreateGroup(name: name, initials: initials)

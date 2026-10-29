@@ -20,12 +20,16 @@ struct TeeKumApp: App {
     @State private var locationPublisher: LocationPublisher?
     @State private var relayedPacketCache: Set<String> = []
     private let cryptoService = CryptoService()
-    private let peerTransport = PeerTransportService()
+    private let peerTransport: PeerTransportService
+    private let relayPolicyManager: RelayPolicyManager
     
     init() {
         let service = LocationService()
         _locationService = State(initialValue: service)
         _mapViewModel = State(initialValue: MapViewModel(locationService: service))
+        let transport = PeerTransportService()
+        self.peerTransport = transport
+        self.relayPolicyManager = RelayPolicyManager(transport: transport)
     }
     
     var body: some Scene {
@@ -36,7 +40,8 @@ struct TeeKumApp: App {
                         mapViewModel: mapViewModel,
                         sessionViewModel: sessionViewModel,
                         sosViewModel: sosViewModel,
-                        meetingPointViewModel: meetingPointViewModel
+                        meetingPointViewModel: meetingPointViewModel,
+                        relayPolicyManager: relayPolicyManager
                     )
                     .task(id: session.sessionId) {
                         await runSessionLifecycle(session: session)
@@ -54,11 +59,25 @@ struct TeeKumApp: App {
                     locationService.publishCurrentState()
                 }
             }
+            .onChange(of: locationService.currentBatteryLevel) { _, level in
+                Task {
+                    await relayPolicyManager.updatePowerMetrics(
+                        batteryLevel: level,
+                        isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+                    )
+                    await updateLiveActivityTelemetry()
+                }
+            }
             .onChange(of: locationService.isSurvivalModeActive) { _, isSurvival in
-                if isSurvival {
-                    Task {
+                Task {
+                    await relayPolicyManager.updatePowerMetrics(
+                        batteryLevel: locationService.currentBatteryLevel,
+                        isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+                    )
+                    if isSurvival {
                         await LiveActivityManager.shared.endSessionActivity()
                     }
+                    await updateLiveActivityTelemetry()
                 }
             }
             .onChange(of: meetingPointViewModel.activeMeetingPoint) { _, _ in
@@ -91,6 +110,8 @@ struct TeeKumApp: App {
                     fflush(stdout)
                     _ = await RoutingForwardingTests.runAllTests()
                     fflush(stdout)
+                    _ = await RouteDiscoveryTests.runAllTests()
+                    fflush(stdout)
                     _ = await CryptoSecurityTests.runAllTests()
                     fflush(stdout)
                     _ = await LocationPublishingTests.runAllTests()
@@ -99,17 +120,37 @@ struct TeeKumApp: App {
                     fflush(stdout)
                     _ = await SOSEndToEndTests.runAllTests()
                     fflush(stdout)
+                    _ = await MultiHopSOSTests.runAllTests()
+                    fflush(stdout)
                     _ = await LiveActivityTests.runAllTests()
+                    fflush(stdout)
+                    _ = await RelayPolicyTests.runAllTests()
+                    fflush(stdout)
+                    _ = await MeshFailureIntegrationTests.runAllTests()
                     fflush(stdout)
                     print(">>> ALL AUTOMATED TEST RUNS FINISHED <<<")
                     fflush(stdout)
                 } else {
+                    if ProcessInfo.processInfo.arguments.contains("-runMeshFailureTests") {
+                        _ = await MeshFailureIntegrationTests.runAllTests()
+                        fflush(stdout)
+                    }
                     if ProcessInfo.processInfo.arguments.contains("-runUITests") {
                         _ = await UIStateTests.runAllTests()
                         fflush(stdout)
                     }
                     if ProcessInfo.processInfo.arguments.contains("-runSOSTests") {
                         _ = await SOSEndToEndTests.runAllTests()
+                        fflush(stdout)
+                        _ = await MultiHopSOSTests.runAllTests()
+                        fflush(stdout)
+                    }
+                    if ProcessInfo.processInfo.arguments.contains("-runMultiHopSOSTests") {
+                        _ = await MultiHopSOSTests.runAllTests()
+                        fflush(stdout)
+                    }
+                    if ProcessInfo.processInfo.arguments.contains("-runRelayPolicyTests") {
+                        _ = await RelayPolicyTests.runAllTests()
                         fflush(stdout)
                     }
                     if ProcessInfo.processInfo.arguments.contains("-simulateSession") {
@@ -158,6 +199,8 @@ struct TeeKumApp: App {
         // 4. Start Radio Transport
         do {
             try await peerTransport.start(serviceType: "_teekum._tcp", session: session)
+            let policyState = await relayPolicyManager.currentState()
+            await peerTransport.setRelayParticipation(enabled: policyState.isRelayPermitted)
         } catch {
             print("[TeeKumApp] Radio transport failed to start: \(error)")
         }
@@ -219,7 +262,11 @@ struct TeeKumApp: App {
         let raw = inbound.rawPacket
         let envelope = raw.envelope
         
-        guard envelope.sessionId == session.sessionId else { return }
+        guard envelope.sessionId == session.sessionId else {
+            // Stranger Packet Relaying (Agent 5: Governed by RelayPolicyManager)
+            await handleStrangerRelayPacket(inbound)
+            return
+        }
         
         // 1. Process ACK packets through SOSViewModel and relay if multi-hop
         if envelope.type == .ack {
@@ -353,6 +400,48 @@ struct TeeKumApp: App {
         }
     }
     
+    // MARK: - Stranger Mesh Packet Relay (Agent 5)
+    
+    @MainActor
+    private func handleStrangerRelayPacket(_ inbound: InboundPacket) async {
+        let envelope = inbound.rawPacket.envelope
+        
+        // 1. Verify policy permits stranger relaying (Opt-in & Battery cut-off)
+        let policyState = await relayPolicyManager.currentState()
+        guard policyState.isRelayPermitted else {
+            await relayPolicyManager.recordDropEvent(reason: .policyDisabled)
+            return
+        }
+        
+        // 2. Hop limit bound enforcement (max 8 hops)
+        guard envelope.hopCount < envelope.hopLimit else {
+            await relayPolicyManager.recordDropEvent(reason: .hopLimitExceeded)
+            return
+        }
+        
+        // 3. Deduplicate (5-minute LRU window)
+        let cacheKey = "\(envelope.sessionId)-\(envelope.sequenceNumber)"
+        if relayedPacketCache.contains(cacheKey) {
+            await relayPolicyManager.recordDropEvent(reason: .duplicate)
+            return
+        }
+        relayedPacketCache.insert(cacheKey)
+        if relayedPacketCache.count > 1000 { relayedPacketCache.removeAll() }
+        
+        // 4. Rate-limited blind forwarding via PeerTransportService
+        do {
+            let wireData = try inbound.rawPacket.toWireData()
+            let directPeers = await peerTransport.neighborTable.activeNeighbors()
+            let eligible = directPeers.filter { $0.id != inbound.sourcePeerId }
+            for peer in eligible {
+                _ = try await peerTransport.forwardFrame(wireData, to: peer.id)
+            }
+            await relayPolicyManager.recordForwardEvent(type: envelope.type)
+        } catch {
+            print("[TeeKumApp] Stranger relay dropped: \(error)")
+        }
+    }
+    
     @MainActor
     private func handlePeerUpdates(_ peers: [PeerInfo], for session: GroupSession) {
         for peer in peers {
@@ -386,12 +475,25 @@ struct TeeKumApp: App {
         let directCount = sessionViewModel.members.filter { $0.isDirectPeer }.count
         let isSOS = sosViewModel.activeIncomingAlert != nil || (sosViewModel.deliveryState != .idle && sosViewModel.deliveryState != .searchingPeers)
         let sosSender = sosViewModel.activeIncomingAlert?.senderInitials
+        let policyState = await relayPolicyManager.currentState()
+        
+        let remainingSeconds: Int?
+        if let expiry = policyState.timedExpiryDate {
+            remainingSeconds = max(0, Int(expiry.timeIntervalSince(Date())))
+        } else {
+            remainingSeconds = nil
+        }
+        
         await LiveActivityManager.shared.updateSessionActivity(
             peerCount: directCount,
             meetingPoint: meetingPointViewModel.activeMeetingPoint,
             currentLocation: locationService.currentLocation?.coordinate,
             isSOSActive: isSOS,
-            sosSenderInitials: sosSender
+            sosSenderInitials: sosSender,
+            relayStatusText: policyState.statusDescription(),
+            relayModeText: policyState.mode.rawValue,
+            timedRelayRemainingSeconds: remainingSeconds,
+            isRelayActive: policyState.isRelayPermitted
         )
     }
     
@@ -402,6 +504,21 @@ struct TeeKumApp: App {
                 return
             } else if url.host == "sos" {
                 // Focused via deep link from Live Activity
+                return
+            } else if url.host == "relay" {
+                // Lock screen deep-link: teekum://relay?action=always / timed / stop
+                guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+                let action = components.queryItems?.first(where: { $0.name == "action" })?.value
+                Task { @MainActor in
+                    if action == "always" {
+                        await relayPolicyManager.setParticipationMode(.communalRelayActive)
+                    } else if action == "timed" {
+                        await relayPolicyManager.setTimedParticipation(durationSeconds: 1800)
+                    } else if action == "stop" {
+                        await relayPolicyManager.stopRelaying()
+                    }
+                    await updateLiveActivityTelemetry()
+                }
                 return
             }
         }

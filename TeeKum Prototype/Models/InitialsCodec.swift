@@ -15,7 +15,7 @@ import Foundation
 /// - 2 letters: 26 * 26 = 676 combinations
 /// - 3 letters: 26 * 26 * 26 = 17,576 combinations
 /// - Total: 18,278 combinations < 65,536 (2^16), fitting cleanly into exactly 2 bytes (UInt16).
-public enum InitialsCodec {
+nonisolated public enum InitialsCodec {
     
     // MARK: - Encode
     

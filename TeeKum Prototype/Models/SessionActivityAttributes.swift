@@ -34,13 +34,29 @@ public nonisolated struct SessionActivityAttributes: ActivityAttributes, Sendabl
         /// Timestamp of the latest telemetry snapshot.
         public var lastUpdated: Date
         
+        /// Current communal relay status text for Lock Screen & Dynamic Island display.
+        public var relayStatusText: String?
+        
+        /// Mode descriptor ("Always", "30 Min", "Paused", "Off").
+        public var relayModeText: String?
+        
+        /// Remaining seconds if timed relay is active.
+        public var timedRelayRemainingSeconds: Int?
+        
+        /// True if communal relaying is permitted and active.
+        public var isRelayActive: Bool
+        
         public init(
             directPeerCount: Int = 0,
             meetingPointName: String? = nil,
             meetingPointDistanceMeters: Double? = nil,
             isSOSActive: Bool = false,
             sosSenderInitials: String? = nil,
-            lastUpdated: Date = Date()
+            lastUpdated: Date = Date(),
+            relayStatusText: String? = nil,
+            relayModeText: String? = nil,
+            timedRelayRemainingSeconds: Int? = nil,
+            isRelayActive: Bool = false
         ) {
             self.directPeerCount = directPeerCount
             self.meetingPointName = meetingPointName
@@ -48,6 +64,10 @@ public nonisolated struct SessionActivityAttributes: ActivityAttributes, Sendabl
             self.isSOSActive = isSOSActive
             self.sosSenderInitials = sosSenderInitials
             self.lastUpdated = lastUpdated
+            self.relayStatusText = relayStatusText
+            self.relayModeText = relayModeText
+            self.timedRelayRemainingSeconds = timedRelayRemainingSeconds
+            self.isRelayActive = isRelayActive
         }
     }
     

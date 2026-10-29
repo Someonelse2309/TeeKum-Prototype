@@ -71,6 +71,14 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Counter tracking stranger relay packets dropped due to ring buffer overflow.
     public private(set) var relayPacketsDroppedOverflow: Int = 0
     
+    /// Counter tracking urgent packets dropped due to urgent lane capacity overflow.
+    public private(set) var urgentPacketsDroppedOverflow: Int = 0
+    
+    /// Total packets dropped across all lanes due to queue saturation.
+    public var totalQueueSaturationDrops: Int {
+        relayPacketsDroppedOverflow + urgentPacketsDroppedOverflow
+    }
+    
     public init(maxUrgentCapacity: Int = 16, maxRelayCapacity: Int = 32) {
         self.maxUrgentCapacity = maxUrgentCapacity
         self.maxRelayCapacity = maxRelayCapacity
@@ -154,6 +162,7 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
         
         if isUrgent {
             guard urgentLane.count < maxUrgentCapacity else {
+                urgentPacketsDroppedOverflow += 1
                 throw TransportError.queueFull("Urgent outbox queue is full (\(urgentLane.count)/\(maxUrgentCapacity) items).")
             }
             

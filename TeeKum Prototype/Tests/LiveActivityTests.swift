@@ -24,6 +24,7 @@ public final class LiveActivityTests: Sendable {
             ("testAttributesInitialization", testAttributesInitialization),
             ("testContentStateCodableRoundtrip", testContentStateCodableRoundtrip),
             ("testSOSContentStateEncoding", testSOSContentStateEncoding),
+            ("testRelayContentStateEncoding", testRelayContentStateEncoding),
             ("testLiveActivityManagerSafeLifecycle", testLiveActivityManagerSafeLifecycle),
             ("testDistanceFormattingCalculations", testDistanceFormattingCalculations)
         ]
@@ -119,6 +120,35 @@ public final class LiveActivityTests: Sendable {
         }
         guard decoded.sosSenderInitials == "SAM" else {
             throw TestError.assertionFailed("SOS sender must match 'SAM'")
+        }
+    }
+    
+    @MainActor
+    public static func testRelayContentStateEncoding() throws {
+        let state = SessionActivityAttributes.ContentState(
+            directPeerCount: 3,
+            meetingPointName: "Sound Stage",
+            meetingPointDistanceMeters: 45.0,
+            isSOSActive: false,
+            sosSenderInitials: nil,
+            lastUpdated: Date(),
+            relayStatusText: "Active (Timed: 25m left)",
+            relayModeText: "Timed 30m",
+            timedRelayRemainingSeconds: 1500,
+            isRelayActive: true
+        )
+        
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(SessionActivityAttributes.ContentState.self, from: data)
+        
+        guard decoded.isRelayActive == true else {
+            throw TestError.assertionFailed("isRelayActive mismatch")
+        }
+        guard decoded.relayStatusText == "Active (Timed: 25m left)" else {
+            throw TestError.assertionFailed("relayStatusText mismatch")
+        }
+        guard decoded.timedRelayRemainingSeconds == 1500 else {
+            throw TestError.assertionFailed("timedRelayRemainingSeconds mismatch")
         }
     }
     

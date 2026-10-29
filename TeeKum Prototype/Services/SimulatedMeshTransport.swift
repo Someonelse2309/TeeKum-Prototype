@@ -33,6 +33,8 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         weak var transport: SimulatedMeshTransport?
         var rssi: Int8
         var packetLossRatio: Double
+        var latency: TimeInterval
+        var duplicationRatio: Double
         var isConnected: Bool
         var isGroupMember: Bool
     }
@@ -51,6 +53,20 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
     public private(set) var packetsReceivedCount: Int = 0
     public private(set) var packetsForwardedCount: Int = 0
     public private(set) var sendErrorsCount: Int = 0
+    public private(set) var forwardingAttemptsCount: Int = 0
+    public private(set) var packetsDuplicatedCount: Int = 0
+    public private(set) var duplicatesSuppressedCount: Int = 0
+    public private(set) var packetsDroppedRateLimitCount: Int = 0
+    public private(set) var packetsDroppedHopLimitCount: Int = 0
+    public private(set) var packetsDroppedPolicyCount: Int = 0
+    public private(set) var packetsDroppedBatteryCount: Int = 0
+    public private(set) var packetsDroppedMalformedCount: Int = 0
+    public private(set) var packetsDroppedSecurityCount: Int = 0
+    public private(set) var packetsDroppedSimulatedLossCount: Int = 0
+    public private(set) var maxHopCountObserved: UInt8 = 0
+    public private(set) var hopCountHistogram: [UInt8: Int] = [:]
+    public private(set) var totalHopsSum: Int = 0
+    public private(set) var totalHopsSamples: Int = 0
     
     // MARK: - Streams & Continuations
     
@@ -128,6 +144,8 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         to other: SimulatedMeshTransport,
         rssi: Int8 = -60,
         packetLossRatio: Double = 0.0,
+        latency: TimeInterval = 0.0,
+        duplicationRatio: Double = 0.0,
         isGroupMember: Bool = true,
         bidirectional: Bool = true
     ) async {
@@ -136,6 +154,8 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
             transport: other,
             rssi: rssi,
             packetLossRatio: packetLossRatio,
+            latency: latency,
+            duplicationRatio: duplicationRatio,
             isConnected: true,
             isGroupMember: isGroupMember
         )
@@ -160,7 +180,15 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         emitPeerUpdates()
         
         if bidirectional {
-            await other.link(to: self, rssi: rssi, packetLossRatio: packetLossRatio, isGroupMember: isGroupMember, bidirectional: false)
+            await other.link(
+                to: self,
+                rssi: rssi,
+                packetLossRatio: packetLossRatio,
+                latency: latency,
+                duplicationRatio: duplicationRatio,
+                isGroupMember: isGroupMember,
+                bidirectional: false
+            )
         }
     }
     
@@ -228,6 +256,22 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         }
     }
     
+    /// Updates artificial transmission latency / delay on a link.
+    public func setSimulatedLatency(peerId: String, latency: TimeInterval) {
+        if var link = links[peerId] {
+            link.latency = latency
+            links[peerId] = link
+        }
+    }
+    
+    /// Updates artificial link-level packet duplication probability.
+    public func setSimulatedDuplication(peerId: String, ratio: Double) {
+        if var link = links[peerId] {
+            link.duplicationRatio = ratio
+            links[peerId] = link
+        }
+    }
+    
     // MARK: - MeshTransport Protocol Implementation
     
     public func start(serviceType: String, session: GroupSession) async throws {
@@ -253,7 +297,10 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
     /// Submits a complete 56-byte protocol frame to a specific connected peer.
     public func sendFrame(_ data: Data, to peerId: String) async throws -> SendOutcome {
         guard currentState != .stopped else { throw TransportError.notStarted }
-        guard data.count == PacketConstants.wirePacketSize else { throw TransportError.invalidPacketSize }
+        guard data.count == PacketConstants.wirePacketSize else {
+            packetsDroppedMalformedCount += 1
+            throw TransportError.invalidPacketSize
+        }
         
         let byte0 = data[data.startIndex]
         let packetType = PacketType(rawValue: byte0 & 0x0F) ?? .locationPing
@@ -274,6 +321,7 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         
         // Check artificial packet loss
         if link.packetLossRatio > 0.0 && Double.random(in: 0.0...1.0) < link.packetLossRatio {
+            packetsDroppedSimulatedLossCount += 1
             let error = TransportError.sendFailed("Simulated transmission loss")
             await neighborTable.recordTransmissionOutcome(peerId: peerId, success: false)
             let failedOutcome = SendOutcome(destinationPeerId: peerId, packetType: packetType, isSuccess: false, error: error)
@@ -286,8 +334,30 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         packetsSentCount += 1
         await neighborTable.recordTransmissionOutcome(peerId: peerId, success: true)
         
-        // Deliver to destination node
-        await remote.deliverSimulatedFrame(data, fromPeerId: localPeerId, rssi: link.rssi)
+        // Deliver to destination node (respecting simulated latency)
+        if link.latency > 0 {
+            let lat = link.latency
+            let senderId = localPeerId
+            let rssiVal = link.rssi
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(lat * 1_000_000_000))
+                await remote.deliverSimulatedFrame(data, fromPeerId: senderId, rssi: rssiVal)
+            }
+        } else {
+            await remote.deliverSimulatedFrame(data, fromPeerId: localPeerId, rssi: link.rssi)
+        }
+        
+        // Check link-level packet duplication
+        if link.duplicationRatio > 0.0 && (link.duplicationRatio >= 1.0 || Double.random(in: 0.0...1.0) < link.duplicationRatio) {
+            packetsDuplicatedCount += 1
+            let senderId = localPeerId
+            let rssiVal = link.rssi
+            let dupLatency = max(0.005, link.latency)
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(dupLatency * 1_000_000_000))
+                await remote.deliverSimulatedFrame(data, fromPeerId: senderId, rssi: rssiVal)
+            }
+        }
         
         let outcome = SendOutcome(destinationPeerId: peerId, packetType: packetType, isSuccess: true)
         sendOutcomeContinuation?.yield(outcome)
@@ -308,12 +378,20 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
     /// Blindly forwards an opaque 56-byte protocol frame to a designated next hop.
     /// Does not decrypt the payload. Mutates only hopCount (+1) and enforces hopLimit.
     public func forwardFrame(_ data: Data, to nextHopPeerId: String) async throws -> SendOutcome {
+        forwardingAttemptsCount += 1
         guard currentState != .stopped else { throw TransportError.notStarted }
-        guard isRelayEnabled else { throw TransportError.relayDisabled }
-        guard data.count == PacketConstants.wirePacketSize else { throw TransportError.invalidPacketSize }
+        guard isRelayEnabled else {
+            packetsDroppedPolicyCount += 1
+            throw TransportError.relayDisabled
+        }
+        guard data.count == PacketConstants.wirePacketSize else {
+            packetsDroppedMalformedCount += 1
+            throw TransportError.invalidPacketSize
+        }
         
         let byte0 = data[data.startIndex]
         guard (byte0 >> 4) == PacketConstants.protocolVersion else {
+            packetsDroppedMalformedCount += 1
             throw PacketCodecError.unsupportedVersion(byte0 >> 4)
         }
         
@@ -321,9 +399,11 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         let hopCount = data[data.startIndex + 2]
         
         guard hopLimit >= 1 && hopLimit <= PacketConstants.sosHopLimit else {
+            packetsDroppedMalformedCount += 1
             throw PacketCodecError.invalidHopLimit(hopLimit)
         }
         guard hopCount < hopLimit else {
+            packetsDroppedHopLimitCount += 1
             throw PacketCodecError.hopCountExceededLimit(count: hopCount, limit: hopLimit)
         }
         
@@ -333,11 +413,13 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         if packetType == .sos {
             let allowed = await rateLimiter.consumeSOSToken()
             guard allowed else {
+                packetsDroppedRateLimitCount += 1
                 throw TransportError.rateLimitExceeded("Urgent SOS forwarding budget exceeded")
             }
         } else {
             let allowed = await rateLimiter.consumeOrdinaryToken()
             guard allowed else {
+                packetsDroppedRateLimitCount += 1
                 throw TransportError.rateLimitExceeded("Ordinary relay budget exceeded (2 pkts/sec)")
             }
         }
@@ -365,7 +447,30 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         packetsForwardedCount += 1
         await neighborTable.recordTransmissionOutcome(peerId: nextHopPeerId, success: true)
         
-        await remote.deliverSimulatedFrame(mutatedData, fromPeerId: localPeerId, rssi: link.rssi)
+        // Deliver respecting latency
+        if link.latency > 0 {
+            let lat = link.latency
+            let senderId = localPeerId
+            let rssiVal = link.rssi
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(lat * 1_000_000_000))
+                await remote.deliverSimulatedFrame(mutatedData, fromPeerId: senderId, rssi: rssiVal)
+            }
+        } else {
+            await remote.deliverSimulatedFrame(mutatedData, fromPeerId: localPeerId, rssi: link.rssi)
+        }
+        
+        // Check link-level packet duplication
+        if link.duplicationRatio > 0.0 && (link.duplicationRatio >= 1.0 || Double.random(in: 0.0...1.0) < link.duplicationRatio) {
+            packetsDuplicatedCount += 1
+            let senderId = localPeerId
+            let rssiVal = link.rssi
+            let dupLatency = max(0.005, link.latency)
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(dupLatency * 1_000_000_000))
+                await remote.deliverSimulatedFrame(mutatedData, fromPeerId: senderId, rssi: rssiVal)
+            }
+        }
         
         let outcome = SendOutcome(destinationPeerId: nextHopPeerId, packetType: packetType, isSuccess: true)
         sendOutcomeContinuation?.yield(outcome)
@@ -401,6 +506,16 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
     /// Ingests a frame transmitted over a simulated virtual link.
     public func deliverSimulatedFrame(_ data: Data, fromPeerId: String, rssi: Int8?) async {
         packetsReceivedCount += 1
+        if data.count >= 3 {
+            let hopCount = data[data.startIndex + 2]
+            if hopCount > maxHopCountObserved {
+                maxHopCountObserved = hopCount
+            }
+            hopCountHistogram[hopCount, default: 0] += 1
+            totalHopsSum += Int(hopCount)
+            totalHopsSamples += 1
+        }
+        
         let isGroup = links[fromPeerId]?.isGroupMember ?? false
         await neighborTable.recordNeighborActivity(peerId: fromPeerId, rssi: rssi, isGroupMember: isGroup)
         
@@ -425,6 +540,65 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
             )
             inboundPacketContinuation?.yield(inboundPacket)
         }
+    }
+    
+    // MARK: - Operational Diagnostics & Metrics
+    
+    public func recordDuplicateSuppression() {
+        duplicatesSuppressedCount += 1
+    }
+    
+    public func recordPacketDrop(reason: DropReason) {
+        switch reason {
+        case .rateLimitExceeded:
+            packetsDroppedRateLimitCount += 1
+        case .hopLimitExceeded:
+            packetsDroppedHopLimitCount += 1
+        case .duplicate:
+            duplicatesSuppressedCount += 1
+        case .batteryThrottled:
+            packetsDroppedBatteryCount += 1
+            packetsDroppedPolicyCount += 1
+        case .policyDisabled:
+            packetsDroppedPolicyCount += 1
+        case .queueSaturation:
+            break
+        case .malformed:
+            packetsDroppedMalformedCount += 1
+        case .securityVerificationFailed:
+            packetsDroppedSecurityCount += 1
+        case .simulatedLoss:
+            packetsDroppedSimulatedLossCount += 1
+        }
+    }
+    
+    public func meshDiagnosticsSnapshot() -> MeshDiagnosticsSnapshot {
+        MeshDiagnosticsSnapshot(
+            forwardingAttempts: forwardingAttemptsCount,
+            forwardingSuccesses: packetsForwardedCount,
+            forwardingFailures: sendErrorsCount,
+            droppedRateLimit: packetsDroppedRateLimitCount,
+            droppedHopLimit: packetsDroppedHopLimitCount,
+            droppedQueueSaturation: outbox.totalQueueSaturationDrops,
+            droppedPolicyDisabled: packetsDroppedPolicyCount,
+            droppedBatterySurvival: packetsDroppedBatteryCount,
+            droppedMalformed: packetsDroppedMalformedCount,
+            droppedSecurityFailed: packetsDroppedSecurityCount,
+            droppedSimulatedLoss: packetsDroppedSimulatedLossCount,
+            duplicatesSuppressed: duplicatesSuppressedCount,
+            routeDiscoveriesInitiated: 0,
+            routeDiscoveriesSucceeded: 0,
+            routeDiscoveriesFailed: 0,
+            routeFailuresOrInvalidations: 0,
+            maxHopCountObserved: maxHopCountObserved,
+            hopCountHistogram: hopCountHistogram,
+            totalHopsSum: totalHopsSum,
+            totalHopsSamples: totalHopsSamples,
+            queueSaturationDrops: outbox.totalQueueSaturationDrops,
+            urgentQueueDepth: outbox.urgentCount,
+            relayQueueDepth: outbox.relayCount,
+            normalQueueDepth: max(0, outbox.totalQueuedCount - outbox.urgentCount - outbox.relayCount)
+        )
     }
     
     // MARK: - Legacy PeerTransport Protocol Conformance

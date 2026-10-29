@@ -65,6 +65,10 @@ public enum TransportError: Error, LocalizedError, Equatable {
     case hopLimitExceeded(count: UInt8, limit: UInt8)
     case rateLimitExceeded(String)
     case loopDetected(String)
+    case sessionInvalid
+    case sessionMismatch
+    case securityVerificationFailed
+    case malformedPacket
     
     public var errorDescription: String? {
         switch self {
@@ -94,6 +98,14 @@ public enum TransportError: Error, LocalizedError, Equatable {
             return "Forwarding rate limit exceeded: \(reason)"
         case let .loopDetected(reason):
             return "Forwarding loop prevented: \(reason)"
+        case .sessionInvalid:
+            return "Active cryptographic session is invalid or missing."
+        case .sessionMismatch:
+            return "Packet session ID does not match the active group session."
+        case .securityVerificationFailed:
+            return "Cryptographic authentication failed: invalid Poly1305 MAC tag or expired replay timestamp."
+        case .malformedPacket:
+            return "Packet payload is malformed or corrupted."
         }
     }
 }

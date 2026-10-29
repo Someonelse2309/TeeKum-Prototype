@@ -17,9 +17,35 @@ public protocol LiveActivityManaging: AnyObject, Sendable {
         meetingPoint: MeetingPoint?,
         currentLocation: CLLocationCoordinate2D?,
         isSOSActive: Bool,
-        sosSenderInitials: String?
+        sosSenderInitials: String?,
+        relayStatusText: String?,
+        relayModeText: String?,
+        timedRelayRemainingSeconds: Int?,
+        isRelayActive: Bool
     ) async
     func endSessionActivity() async
+}
+
+extension LiveActivityManaging {
+    public func updateSessionActivity(
+        peerCount: Int,
+        meetingPoint: MeetingPoint?,
+        currentLocation: CLLocationCoordinate2D?,
+        isSOSActive: Bool,
+        sosSenderInitials: String?
+    ) async {
+        await updateSessionActivity(
+            peerCount: peerCount,
+            meetingPoint: meetingPoint,
+            currentLocation: currentLocation,
+            isSOSActive: isSOSActive,
+            sosSenderInitials: sosSenderInitials,
+            relayStatusText: nil,
+            relayModeText: nil,
+            timedRelayRemainingSeconds: nil,
+            isRelayActive: false
+        )
+    }
 }
 
 /// Actor/MainActor service orchestrating ActivityKit Live Activity presentations across
@@ -84,7 +110,11 @@ public final class LiveActivityManager: LiveActivityManaging {
         meetingPoint: MeetingPoint?,
         currentLocation: CLLocationCoordinate2D?,
         isSOSActive: Bool,
-        sosSenderInitials: String?
+        sosSenderInitials: String?,
+        relayStatusText: String? = nil,
+        relayModeText: String? = nil,
+        timedRelayRemainingSeconds: Int? = nil,
+        isRelayActive: Bool = false
     ) async {
         guard let activity = currentActivity else { return }
         
@@ -101,7 +131,11 @@ public final class LiveActivityManager: LiveActivityManaging {
             meetingPointDistanceMeters: distance,
             isSOSActive: isSOSActive,
             sosSenderInitials: sosSenderInitials,
-            lastUpdated: Date()
+            lastUpdated: Date(),
+            relayStatusText: relayStatusText,
+            relayModeText: relayModeText,
+            timedRelayRemainingSeconds: timedRelayRemainingSeconds,
+            isRelayActive: isRelayActive
         )
         
         let content = ActivityContent(state: updatedState, staleDate: nil)
