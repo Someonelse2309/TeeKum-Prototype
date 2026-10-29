@@ -402,48 +402,105 @@ To eliminate out-of-band P2P connection handshakes, each transmitting member's 3
 ### 3.5 Folder Structure
 
 ```text
-TeeKum/
+TeeKum Prototype/
 ├── App/
-│   └── TeeKumApp.swift              // Entry point & root state view switcher
+│   └── TeeKumApp.swift                   // Entry point, root state switcher & URL deep-link router
 ├── Models/
-│   ├── Member.swift                   // Member model (id, name, lastSeen)
-│   ├── LocationPin.swift              // CoreLocation Coordinate (Double), accuracy, timestamp
-│   ├── Status.swift                   // Festival activity status enum & target references
-│   ├── MeetingPoint.swift             // Single active rendezvous point model & attendance
-│   └── Packet.swift                   // 54-byte binary packet layout (Protocol v2), encoding & decoding
+│   ├── Member.swift                      // Member identity, initials, lastSeen, status, battery, heading
+│   ├── LocationPin.swift                 // CoreLocation Coordinate (Double), accuracy, ~11cm Int32 quantization
+│   ├── Status.swift                      // 1-byte compact festival activity status hash enum & target references
+│   ├── MeetingPoint.swift                // Single active rendezvous point model & PremadeMeetingLocation options
+│   ├── GroupSession.swift                // Ephemeral session model, QR / URL fragment link encoder
+│   ├── Packet.swift                      // 54-byte binary packet layout (Protocol v2), InitialsCodec, codecs
+│   └── SOSDeliveryState.swift            // Honest UX delivery state machine
 ├── Views/
-│   ├── MainMapView.swift              // MapKit view, friend pins, status pills, Live Sharing toggle
-│   ├── GroupPairingView.swift         // QR barcode display & camera scanner / Link share sheet
-│   ├── StatusPickerView.swift         // One-handed horizontal status chips carousel
-│   ├── SOSButtonView.swift            // 3-second hold emergency button & visual progress ring
-│   ├── FinderBeaconView.swift         // 360° Compass arrow -> UWB precision radar & strobe torch
-│   ├── MeetingPointsView.swift        // Meeting point proposal sheet & attendance cards
-│   └── DiagnosticsView.swift          // Debug HUD sheet (live RSSI dBm, peer count, packet counters)
+│   ├── MainMapView.swift                 // MapKit view, friend pins, long-press rendezvous drop, Live Sharing toggle
+│   ├── GroupPairingView.swift            // QR barcode display/scanner, URL share, clipboard paste, mesh compact gate
+│   ├── StatusPickerView.swift            // One-handed horizontal status chips carousel
+│   ├── SOSButtonView.swift               // 3-second hold emergency button & visual circular progress ring
+│   ├── FinderBeaconView.swift            // 360° Compass arrow -> UWB precision radar & neon strobe torch
+│   ├── MeetingPointsView.swift           // Meeting point proposal sheet, attendance cards, dropdown menu
+│   ├── FriendDetailView.swift            // Friend inspection sheet (battery, distance, bearing, directed navigation)
+│   ├── DiagnosticsView.swift             // On-device Debug HUD sheet (live RSSI dBm, peer count, packet counters)
+│   └── Components/
+│       ├── QRCodeView.swift              // CoreImage CIFilter QR generator with ShareLink template
+│       ├── QRScannerView.swift           // AVFoundation camera scanner with viewport overlay
+│       ├── SetMeetingPointSheet.swift    // Compact bottom sheet with curated location dropdown menu
+│       └── MeshAgreementView.swift       // Communal Mesh Compact agreement consent modal
 ├── ViewModels/
-│   ├── MapViewModel.swift             // Map viewport state, friend pins, offline filtering
-│   ├── GroupSessionViewModel.swift    // Group session lifecycle, QR/Link pairing, member roster
-│   ├── MeetingPointViewModel.swift    // Single active meeting point state & attendance sync
-│   └── SOSViewModel.swift             // 3-second hold countdown & honest delivery status
+│   ├── MapViewModel.swift                // Map viewport state, friend pins, offline filtering, Live Sharing
+│   ├── GroupSessionViewModel.swift       // Group session lifecycle, QR/Link pairing, pendingInvite agreement
+│   ├── MeetingPointViewModel.swift       // Single active meeting point state & attendance sync
+│   └── SOSViewModel.swift                // 3-second hold countdown & honest delivery status
 ├── Services/
-│   ├── LocationService.swift          // CoreLocation wrapper & adaptive battery sampling
-│   ├── PeerTransportService.swift     // Network.framework P2P datagram transmission (actor)
-│   ├── CryptoService.swift            // ChaChaPoly/AES-GCM encryption & Keychain store (actor)
-│   └── SessionStorage.swift           // SQLite ephemeral crash-recovery snapshot (actor)
+│   ├── PeerTransport.swift               // Authoritative actor protocol, state streams & diagnostics
+│   ├── PeerTransportService.swift        // Network.framework P2P datagram transmission actor (AWDL Bonjour)
+│   ├── StreamMessageFramer.swift         // 54-byte binary stream delimiter, chunk reconstruction, resynchronization
+│   ├── PriorityOutboxQueue.swift         // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting) + coalesced Location
+│   ├── CryptoServiceProtocol.swift       // Cryptographic service interface
+│   ├── CryptoService.swift               // ChaChaPoly AEAD, AAD envelope binding & Keychain store (actor)
+│   ├── SessionStorageProtocol.swift      // Ephemeral SQLite crash recovery storage interface
+│   ├── LocationServiceProtocol.swift     // Location service contract
+│   ├── LocationService.swift             // CoreLocation wrapper & CoreMotion adaptive battery sampling
+│   ├── LocationPublisher.swift           // Periodic publishing scheduler & SOS immediate preemption
+│   └── SOSAudioAlert.swift               // Emergency siren & haptic notification generator
 ├── docs/
-│   ├── TechnicalRequirements.md       // Technical system requirements specification
-│   ├── Architecture.md
-│   └── AGENT_PROMPT.md                // AI coding agent onboarding & task playbook
+│   ├── TechnicalRequirements.md          // Technical system requirements specification
+│   ├── agent.md                          // Master agent instructions and product principles
+│   ├── DEVELOPMENT_LOG.md                // Chronological development log, agent changes & verification records
+│   ├── PHASE_1_DEVELOPMENT_REPORT.md     // Phase 1 Direct Offline MVP milestone completion report
+│   ├── NETWORKING.md                     // Authoritative networking architecture & protocol guide
+│   ├── PAYLOAD_GUIDE.md                  // 54-byte wire protocol & payload developer guide
+│   ├── PROTOCOL_SPECIFICATION.md         // Cryptographic message protection specification
+│   ├── POC_ACCEPTANCE_REPORT.md          // Final POC integration & verification acceptance report
+│   ├── POC_IMPLEMENTATION_PLAN.md        // Milestone implementation plan & file ownership
+│   ├── PHYSICAL_DEVICE_SOS_VALIDATION.md // Two-device offline physical test checklist for SOS
+│   └── PHYSICAL_DEVICE_TEST_CHECKLIST.md // Two-device offline physical test checklist for location/status
 └── Tests/
-    └── UnitTests/
-        ├── PacketCodecTests.swift     // 54-byte packet codec roundtrip & quantization tests
-        └── CryptoSecurityTests.swift  // Tamper rejection & replay attack defense tests
+    ├── PacketCodecTests.swift            // 13 automated tests: 54-byte codec, InitialsCodec, Int32 quantization
+    ├── CryptoSecurityTests.swift         // 13 automated tests: ChaChaPoly, AAD tamper, replays, Keychain
+    ├── PeerTransportTests.swift          // 12 automated tests: framer chunks, outbox priority, tie-breaking
+    ├── LocationPublishingTests.swift     // 11 automated tests: Live Sharing, cadence, piggybacking, monotonic GPS
+    ├── SOSEndToEndTests.swift            // 10 automated tests: 3s hold, preemption, ACKs, duplicate sirens
+    └── UIStateTests.swift                // 8 automated tests: pairing, freshness, distance/bearing, dropdown
 ```
 
 ---
 
 ## 4. Unit Testing Strategy
 
-[Placeholder — Will be discussed and populated when test implementation begins.]
+TeeKum employs a comprehensive, multi-layer testing strategy designed for offline-first, peer-to-peer radio resilience. Because physical radio attenuation cannot be fully emulated in unit tests, testing is partitioned into **Automated Unit & Integration Test Suites** (100% executable on simulator/CI) and **Physical Two-Device Field Protocols** (on real iPhones).
+
+### 4.1 Automated Test Suites (67 Passing Tests)
+
+The automated test harness comprises 6 suites in `TeeKum Prototype/Tests/`, providing 100% pass rate verification across all core subsystems:
+
+| Suite | File | Test Cases | Scope & Verification Coverage |
+| :--- | :--- | :---: | :--- |
+| **Packet Codec Tests** | `PacketCodecTests.swift` | 13 | 54-byte wire layout enforcement, 8-byte cleartext envelope big-endian serialization/deserialization, 2-byte Base-27 Initials Codec ($A \dots Z$, $18,278 \le 65,535$), Int32 coordinate quantization error (<11 cm), boundary coordinates ($-90^\circ, +90^\circ, -180^\circ, +180^\circ$), payload codecs (`LocationPing`, `SOS`, `MeetingUpdate`, `ACK`, Phase 2 `RouteReq`/`RouteResp`), and serverless URL fragment invite generation/parsing. |
+| **Cryptographic Security Tests** | `CryptoSecurityTests.swift` | 13 | ChaCha20-Poly1305 AEAD sealing and opening, tampered ciphertext rejection (zero plaintext leakage), tampered authentication tag rejection, cleartext envelope AAD tampering rejection (version, type, hopLimit, sessionId, sequenceNumber), mutable hopCount invariance (intermediary relays increment hopCount without tag invalidation), wrong key rejection, nonce uniqueness across members via sequence number partitioning, 5-minute sliding LRU duplicate packet rejection, anti-replay monotonic sequence enforcement, stale location state replacement prevention, future timestamp clock skew guard (>300s), and iOS Keychain storage lifecycle & permanent teardown purge. |
+| **Peer Transport Tests** | `PeerTransportTests.swift` | 12 | `StreamMessageFramer` 54-byte frame delimiter, chunk fragmentation and partial read assembly, back-to-back datagram batching, corruption resynchronization over corrupted bytes, 64 KB buffer capacity protection, `PriorityOutboxQueue` urgent FIFO preemption (SOS cuts ahead of pings), single-slot location ping coalescing, bounded retry budgets with exponential backoff, hex peer ID tie-breaking, and `TransportDiagnostics` telemetry integrity. |
+| **Location & Publishing Tests** | `LocationPublishingTests.swift` | 11 | Live Sharing master switch (ON permits pings, OFF completely halts broadcasting), status changes piggybacked strictly inside next normal update without standalone packets, monotonic coordinate integrity (delayed GPS fixes cannot overwrite newer fixes), UI exposure of location age and accuracy, SOS immediate location acquisition without waiting for interval, denied and authorized location permission handling, adaptive cadence selection (3–5s moving, 15–30s stationary, 60s Survival Mode), cancellable scheduler tasks, zero dummy coordinate manufacturing, and end-to-end `LocationPublisher` packet dispatch. |
+| **SOS End-to-End Tests** | `SOSEndToEndTests.swift` | 10 | 3-second continuous hold gesture state machine and early release cancellation, immediate dispatch independent of Live Sharing toggle and normal ping intervals, true hardware timestamp preservation (no false freshness), urgent queue preemption, honest delivery state machine progression (`LOCAL_SENDING` $\rightarrow$ `RELAY_ACK` $\rightarrow$ `DELIVERED_TO_FRIEND`), bounded retries (3 attempts), unauthorized stranger and rogue packet rejection, duplicate suppression (no repeated audible sirens or duplicate alert banners), simulated two-device roundtrip, and empty peer list handling (`SEARCHING_PEERS`). |
+| **UI & State Tests** | `UIStateTests.swift` | 8 | Group pairing lifecycle (creation, invite parsing, Communal Mesh Compact agreement gating, teardown), location freshness badges (*"Last seen Xm ago"*), status picker selection, Live Sharing toggle transitions, SOS countdown progress and cancellation, honest delivery state presentation, friend straight-line distance and magnetic forward bearing calculations, and single active meeting point proposal with `PremadeMeetingLocation` dropdown menu selection. |
+
+### 4.2 Test Execution Command & Verification
+
+Automated tests are verified via `xcodebuild`:
+
+```bash
+# Full project compilation & build verification
+xcodebuild -scheme "TeeKum Prototype" \
+  -destination "generic/platform=iOS Simulator" \
+  -derivedDataPath .derivedData build \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+### 4.3 Physical Two-Device Testing Protocol
+
+Physical testing procedures are executed on two iPhones disconnected from Wi-Fi routers and cellular data, detailed in:
+- [`docs/PHYSICAL_DEVICE_TEST_CHECKLIST.md`](PHYSICAL_DEVICE_TEST_CHECKLIST.md) — 7-step location, status, and battery field verification.
+- [`docs/PHYSICAL_DEVICE_SOS_VALIDATION.md`](PHYSICAL_DEVICE_SOS_VALIDATION.md) — 7-step Emergency SOS, siren audio, and rogue datagram rejection field verification.
 
 ---
 
@@ -507,7 +564,8 @@ develop → feat/feature-name → PR to develop → PR to main → PR to prod
 - [x] Review decisions D1–D9 from /grill-me sessions and roadmap reviews are recorded in the Approved Decisions table.
 - [x] 54-byte binary packet wire format (Protocol v2), 2-byte Base-27 initials codec (zero handshake), 16-bit session ID derivation, envelope separation, and CoreLocation `Double` quantization are documented.
 - [x] Phase 2 2-byte expanded hop control architecture (Decision D9: `hopLimit: UInt8` + `hopCount: UInt8`, range 0..255) is scheduled for multi-hop mesh development.
-- [x] Unit Testing Strategy is maintained as a placeholder as agreed.
+- [x] Unit Testing Strategy is fully defined and executed across 6 test suites (67 passing tests, 100% pass rate).
+- [x] Phase 1 Direct Offline MVP completed and documented in [docs/PHASE_1_DEVELOPMENT_REPORT.md](PHASE_1_DEVELOPMENT_REPORT.md).
 - [x] 4-branch Git workflow (`main`, `develop`, `prod`, `feat/*`) and commit conventions are established.
 
 ### Open Decisions for Future Phases

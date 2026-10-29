@@ -9,6 +9,7 @@
 > *Companion Documents:*
 > - [AI Coding Agent System Prompt & Task Playbook (docs/AGENT_PROMPT.md)](docs/AGENT_PROMPT.md)
 > - [Technical Requirements Document (docs/TechnicalRequirements.md)](docs/TechnicalRequirements.md)
+> - [Phase 1 Development Report (docs/PHASE_1_DEVELOPMENT_REPORT.md)](docs/PHASE_1_DEVELOPMENT_REPORT.md)
 > - [Networking Architecture & Wire Protocol (docs/NETWORKING.md)](docs/NETWORKING.md)
 > - [54-Byte Wire Protocol & Payload Developer Guide (docs/PAYLOAD_GUIDE.md)](docs/PAYLOAD_GUIDE.md)
 > - [Development Log (docs/DEVELOPMENT_LOG.md)](docs/DEVELOPMENT_LOG.md)
@@ -179,8 +180,10 @@ graph TD
 #### User Story 4: Single Active Meeting Point & One-Tap Acceptance
 - **Goal:** Synchronize a group rendezvous spot without confusing duplicates.
 - **Single Active Rule:** Only **ONE** active meeting point exists for the group at any given time.
-- **Creation:** Any member can propose a meeting point by picking an official venue landmark (Gate 3, Stage 2), dropping a custom pin, or tapping "Meet where I am now", with an optional time (e.g., "10:15 PM").
-- **Acceptance:** Friends receive a non-intrusive banner notification and tap **"I'll be there"** or **"Can't make it"**, syncing attendance status to everyone's map.
+- **Creation & Map Interaction:** Any member can propose a meeting point via two streamlined methods:
+  1. **Interactive Map Long-Press:** A 0.5-second long-press on the `MapReader`-enabled MapKit view drops a temporary visual pin at the exact touch coordinate and opens the proposal sheet.
+  2. **Curated Dropdown Menu:** The `SetMeetingPointSheet` provides a pre-populated dropdown picker (`PremadeMeetingLocation`) containing 16 popular festival landmarks (*"Main Stage"*, *"Sound Booth"*, *"Medical Tent"*, *"Water Station"*, *"Food Court"*, *"Merch Tent"*, etc.) with a sensible default of `"Meeting Point"`. This eliminates the need for frustrating freeform text typing on high-glare festival grounds.
+- **Acceptance:** Friends receive a non-intrusive banner notification and tap **"I'll be there"** or **"Can't make it"**, syncing attendance status to everyone's map in real time.
 
 #### User Story 5: Status Updates via Coded Hashes
 - **Goal:** Quickly inform friends of current activity with one hand without typing text.
@@ -191,10 +194,11 @@ graph TD
 - **Goal:** Navigate venue geography offline.
 - **Implementation:** Uses Apple MapKit's offline cached map system. Custom vector venue floorplans are planned for future development.
 
-#### User Story 7: Live Activity Companion & Communal Mesh Compact
-- **Goal:** Monitor group status from the Lock Screen / Dynamic Island and maintain background pocket execution while participating in the festival mesh compact.
+#### User Story 7: Live Activity Companion & Communal Mesh Compact Agreement Gating
+- **Goal:** Monitor group status from the Lock Screen / Dynamic Island, maintain background pocket execution, and enforce ethical mesh participation.
+- **Communal Mesh Compact Gating (`MeshAgreementView`):** Group creation, QR scanning, URL invite joining, and deep link launches are strictly gated behind an explicit agreement modal (*"Join the Mesh: Relay for others while others relay for you. Battery-protected; shuts off at 20%"*). The session key is never imported and peer discovery/advertising never starts until the user explicitly accepts the compact.
 - **Phase 1 Companion:** Active Session Live Activity (`ActivityKit`) displays session name, connected direct peers, active meeting point distance, and emergency SOS alerts on the Dynamic Island and Lock Screen, keeping background sockets (`NWListener`) alive via Apple's official location status indicator (`showsBackgroundLocationIndicator = true`).
-- **Phase 2 Communal Mesh Compact:** Group membership requires explicit consent to the festival mesh compact upon QR pairing/creation (*"Join the Mesh: Relay for others while others relay for you. Battery-protected; shuts off at 20%"*). Once joined, member devices automatically forward multi-hop packets for their own group and blindly relay encrypted packets for nearby festival attendees. Relaying is strictly zero-knowledge, rate-limited to 2 pkts/sec, and automatically suspended at 20% battery (Festival Survival Mode).
+- **Phase 2 Communal Mesh Compact Relay:** Once joined, member devices automatically forward multi-hop packets for their own group and blindly relay encrypted packets for nearby festival attendees. Relaying is strictly zero-knowledge, rate-limited to 2 pkts/sec, and automatically suspended at 20% battery (Festival Survival Mode).
 
 #### User Story 8: Emergency SOS
 - **Goal:** Instantly summon friends during an emergency.
@@ -239,42 +243,67 @@ Keep the architecture dead-simple and approachable. Avoid complex multi-tier coo
 redundant abstraction layers, or over-engineered design patterns.
 
 ```text
-TeeKum/
+TeeKum Prototype/
 ├── App/
-│   └── TeeKumApp.swift                // App entry point & root state switch
-├── Models/                            // Plain Swift data structures & packets
-│   ├── Member.swift                   // Member model (id, name, lastSeen)
-│   ├── LocationPin.swift              // CoreLocation Coordinate (Double), accuracy, timestamp
-│   ├── Status.swift                   // Status enum & smart target
-│   ├── MeetingPoint.swift             // Venue rendezvous landmark & time
-│   └── Packet.swift                   // 54-byte binary packet representation & codec (Protocol v2: 8B envelope, 30B payload, 16B tag)
-├── Views/                             // SwiftUI Views (Pure visual layer)
-│   ├── MainMapView.swift              // Map, friend pins, accuracy rings, status pills
-│   ├── GroupPairingView.swift         // QR code generator & camera scanner / Link share
-│   ├── StatusPickerView.swift         // Quick-tap status chips carousel
-│   ├── SOSButtonView.swift            // 3-second hold SOS emergency button
-│   ├── FinderBeaconView.swift         // Compass arrow -> UWB radar + screen strobe flasher
-│   ├── MeetingPointsView.swift        // Meeting point selector & attendance cards
-│   └── DiagnosticsView.swift          // On-device Debug HUD (RSSI dBm, peer list, packet logs)
-├── ViewModels/                        // Pure MVVM: @Observable ViewModels
-│   ├── MapViewModel.swift             // Map viewport, friend locations, Live Sharing toggle
-│   ├── GroupSessionViewModel.swift    // Session lifecycle, QR/Link pairing, member management
-│   ├── MeetingPointViewModel.swift    // Single active meeting point & attendance sync
-│   └── SOSViewModel.swift             // 3-second countdown hold, delivery state feedback
-├── Services/                          // Pure Native Apple Services (Swift Actors)
-│   ├── LocationService.swift          // CoreLocation wrapper & adaptive cadence
-│   ├── PeerTransportService.swift     // Network.framework P2P (NWListener / NWConnection)
-│   ├── CryptoService.swift            // CryptoKit encryption/decryption & keygen
-│   └── SessionStorage.swift           // In-memory actor + ephemeral SQLite crash recovery
+│   └── TeeKumApp.swift                   // Entry point, root state switcher & URL deep-link router
+├── Models/
+│   ├── Member.swift                      // Member identity, initials, lastSeen, status, battery, heading
+│   ├── LocationPin.swift                 // CoreLocation Coordinate (Double), accuracy, ~11cm Int32 quantization
+│   ├── Status.swift                      // 1-byte compact festival activity status hash enum & target references
+│   ├── MeetingPoint.swift                // Single active rendezvous point model & PremadeMeetingLocation options
+│   ├── GroupSession.swift                // Ephemeral session model, QR / URL fragment link encoder
+│   ├── Packet.swift                      // 54-byte binary packet layout (Protocol v2), InitialsCodec, codecs
+│   └── SOSDeliveryState.swift            // Honest UX delivery state machine
+├── Views/
+│   ├── MainMapView.swift                 // MapKit view, friend pins, long-press rendezvous drop, Live Sharing toggle
+│   ├── GroupPairingView.swift            // QR barcode display/scanner, URL share, clipboard paste, mesh compact gate
+│   ├── StatusPickerView.swift            // One-handed horizontal status chips carousel
+│   ├── SOSButtonView.swift               // 3-second hold emergency button & visual circular progress ring
+│   ├── FinderBeaconView.swift            // 360° Compass arrow -> UWB precision radar & neon strobe torch
+│   ├── MeetingPointsView.swift           // Meeting point proposal sheet, attendance cards, dropdown menu
+│   ├── FriendDetailView.swift            // Friend inspection sheet (battery, distance, bearing, directed navigation)
+│   ├── DiagnosticsView.swift             // On-device Debug HUD sheet (live RSSI dBm, peer count, packet counters)
+│   └── Components/
+│       ├── QRCodeView.swift              // CoreImage CIFilter QR generator with ShareLink template
+│       ├── QRScannerView.swift           // AVFoundation camera scanner with viewport overlay
+│       ├── SetMeetingPointSheet.swift    // Compact bottom sheet with curated location dropdown menu
+│       └── MeshAgreementView.swift       // Communal Mesh Compact agreement consent modal
+├── ViewModels/
+│   ├── MapViewModel.swift                // Map viewport state, friend pins, offline filtering, Live Sharing
+│   ├── GroupSessionViewModel.swift       // Group session lifecycle, QR/Link pairing, pendingInvite agreement
+│   ├── MeetingPointViewModel.swift       // Single active meeting point state & attendance sync
+│   └── SOSViewModel.swift                // 3-second hold countdown & honest delivery status
+├── Services/
+│   ├── PeerTransport.swift               // Authoritative actor protocol, state streams & diagnostics
+│   ├── PeerTransportService.swift        // Network.framework P2P datagram transmission actor (AWDL Bonjour)
+│   ├── StreamMessageFramer.swift         // 54-byte binary stream delimiter, chunk reconstruction, resynchronization
+│   ├── PriorityOutboxQueue.swift         // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting) + coalesced Location
+│   ├── CryptoServiceProtocol.swift       // Cryptographic service interface
+│   ├── CryptoService.swift               // ChaChaPoly AEAD, AAD envelope binding & Keychain store (actor)
+│   ├── SessionStorageProtocol.swift      // Ephemeral SQLite crash recovery storage interface
+│   ├── LocationServiceProtocol.swift     // Location service contract
+│   ├── LocationService.swift             // CoreLocation wrapper & CoreMotion adaptive battery sampling
+│   ├── LocationPublisher.swift           // Periodic publishing scheduler & SOS immediate preemption
+│   └── SOSAudioAlert.swift               // Emergency siren & haptic notification generator
 ├── docs/
-│   ├── TechnicalRequirements.md       // Technical system requirements specification
-│   ├── Architecture.md
-│   ├── DEVELOPMENT_LOG.md             // Chronological development log, agent changes & verification records
-│   └── AGENT_PROMPT.md                // AI coding agent onboarding & task playbook
+│   ├── TechnicalRequirements.md          // Technical system requirements specification
+│   ├── agent.md                          // Master agent instructions and product principles
+│   ├── DEVELOPMENT_LOG.md                // Chronological development log, agent changes & verification records
+│   ├── PHASE_1_DEVELOPMENT_REPORT.md     // Phase 1 Direct Offline MVP milestone completion report
+│   ├── NETWORKING.md                     // Authoritative networking architecture & protocol guide
+│   ├── PAYLOAD_GUIDE.md                  // 54-byte wire protocol & payload developer guide
+│   ├── PROTOCOL_SPECIFICATION.md         // Cryptographic message protection specification
+│   ├── POC_ACCEPTANCE_REPORT.md          // Final POC integration & verification acceptance report
+│   ├── POC_IMPLEMENTATION_PLAN.md        // Milestone implementation plan & file ownership
+│   ├── PHYSICAL_DEVICE_SOS_VALIDATION.md // Two-device offline physical test checklist for SOS
+│   └── PHYSICAL_DEVICE_TEST_CHECKLIST.md // Two-device offline physical test checklist for location/status
 └── Tests/
-    └── UnitTests/
-        ├── PacketCodecTests.swift
-        └── CryptoSecurityTests.swift
+    ├── PacketCodecTests.swift            // 13 automated tests: 54-byte codec, InitialsCodec, Int32 quantization
+    ├── CryptoSecurityTests.swift         // 13 automated tests: ChaChaPoly, AAD tamper, replays, Keychain
+    ├── PeerTransportTests.swift          // 12 automated tests: framer chunks, outbox priority, tie-breaking
+    ├── LocationPublishingTests.swift     // 11 automated tests: Live Sharing, cadence, piggybacking, monotonic GPS
+    ├── SOSEndToEndTests.swift            // 10 automated tests: 3s hold, preemption, ACKs, duplicate sirens
+    └── UIStateTests.swift                // 8 automated tests: pairing, freshness, distance/bearing, dropdown
 ```
 
 ### Architectural Rules
@@ -631,18 +660,18 @@ Use an **AODV-inspired on-demand routing approach** with bounded flooding fallba
 -   [x] Technical stack alignment (Pure MVVM, 0 external dependencies, physical testing).
 -   [x] Complete User Story & Screen Journey verification.
 -   [x] 54-Byte Binary Packet Wire Protocol (Protocol v2) & Network.framework P2P specification.
--   [ ] Initialize clean Xcode project with simple MVVM structure (`Views`, `ViewModels`, `Models`, `Services`).
--   [ ] Serverless Group Creation (Shareable Link & In-Person QR Barcode).
--   [ ] Direct Apple Peer-to-Peer transport service (`PeerTransportService`).
--   [ ] Live Sharing toggle & smart adaptive location publisher.
--   [ ] MapKit offline preview with friend pins, accuracy rings, and status pills.
--   [ ] Horizontal status chips carousel with festival activity codes (`Drinks`, `Restroom`, `Lost`, etc.).
--   [ ] Single Active Meeting Point creation & one-tap attendance sync.
--   [ ] Directed navigation: 360° Compass Arrow -> Seamless Ultra-Wideband Radar transition.
--   [ ] 1-Tap Screen Strobe Beacon for visual crowd finding.
--   [ ] 3-Second Hold SOS trigger with immediate delivery feedback.
--   [ ] On-Device Debug HUD Sheet (`DiagnosticsView.swift`).
--   [ ] Festival Survival Mode (<20% battery throttling).
+-   [x] Initialize clean Xcode project with simple MVVM structure (`Views`, `ViewModels`, `Models`, `Services`).
+-   [x] Serverless Group Creation (Shareable Link & In-Person QR Barcode).
+-   [x] Direct Apple Peer-to-Peer transport service (`PeerTransportService`).
+-   [x] Live Sharing toggle & smart adaptive location publisher.
+-   [x] MapKit offline preview with friend pins, accuracy rings, and status pills.
+-   [x] Horizontal status chips carousel with festival activity codes (`Drinks`, `Restroom`, `Lost`, etc.).
+-   [x] Single Active Meeting Point creation & one-tap attendance sync.
+-   [x] Directed navigation: 360° Compass Arrow -> Seamless Ultra-Wideband Radar transition.
+-   [x] 1-Tap Screen Strobe Beacon for visual crowd finding.
+-   [x] 3-Second Hold SOS trigger with immediate delivery feedback.
+-   [x] On-Device Debug HUD Sheet (`DiagnosticsView.swift`).
+-   [x] Festival Survival Mode (<20% battery throttling).
 
 ### Phase 2 --- Multi-Hop Mesh & Communal Relay
 -   [ ] Neighbor and routing tables (AODV-style on-demand).
