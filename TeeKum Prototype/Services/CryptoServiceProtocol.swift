@@ -43,6 +43,9 @@ public enum CryptoServiceError: Error, LocalizedError {
 /// Authoritative contract for cryptographic operations and secure key storage.
 /// Implemented as a Swift `actor` to safeguard key material in memory.
 public protocol CryptoServiceProvider: Actor {
+    /// Active replay and deduplication protection filter.
+    var replayFilter: ReplayProtectionFilter { get }
+    
     /// Seals 30 bytes of private inner payload using authenticated symmetric encryption,
     /// binding the 10-byte cleartext envelope as Associated Authenticated Data (AAD).
     func seal(

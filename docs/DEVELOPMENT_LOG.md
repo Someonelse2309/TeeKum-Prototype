@@ -5,6 +5,90 @@
 
 ---
 
+### [2026-10-29 14:36] — Phase 2 Milestone 2.3: Blind Relay Security Boundaries, Routing & Forwarding Engine
+- **Contributor / Agent:** Agent 2 — TeeKum Blind Relay Security Specialist
+- **Status:** Completed & Verified (103/103 Automated Tests Passing, 100% Success, 12/12 Security Threat Tests Passing)
+- **Target Phase / Milestone:** Phase 2 Milestone 2.3 — Blind Relay Security Boundaries, AODV Routing & Forwarding Engine
+
+#### 1. Objective & Scope
+- Deliver authoritative security boundaries, blind relay forwarding, duplicate suppression, and AODV routing engine for Phase 2 multi-hop offline mesh networking.
+- Enable unrelated phones to forward encrypted group messages without reading contents or forging trusted messages.
+- Maintain strict zero-knowledge privacy: intermediate stranger relays inspect only cleartext routing headers; inner location coordinates, status codes, and member initials remain sealed inside 30-byte ChaCha20-Poly1305 ciphertext.
+- Protect packet authenticity: intermediate relays increment `hopCount` (masked to `0x00` in recipient AAD calculation) while `hopLimit` remains authenticated in AAD to prevent budget tampering.
+- Eliminate unauthorized route injection, broadcast storms, and replay attacks via 1,024-entry 5-minute sliding LRU duplicate cache, per-sender sequence monotonicity, and AODV route sequence monotonicity.
+- Ensure unauthenticated stranger packets can never trigger emergency SOS audio sirens or mutate local application state.
+- Strictly avoid logging keys, coordinates, or sensitive payloads in logs.
+
+#### 2. Architectural Implementations & Components Delivered
+1. **Duplicate Packet Suppression Cache (`SeenPacketCache.swift`):**
+   - Thread-safe actor implementing Decision 2 bounded LRU cache (1,024 entries, fixed 300-second / 5-minute sliding retention window).
+   - Injected `MeshClock` dependency for 100% deterministic unit testing.
+   - Keyed by canonical 7-byte `PacketKey(sessionId: UInt32, sequenceNumber: UInt32)` strictly excluding mutating `hopCount`.
+   - Atomic `isDuplicateAndRecord(_:now:)` check-and-insert with deterministic LRU eviction on capacity saturation.
+2. **AODV Routing Engine (`RoutingTable.swift` conforming to `RoutingTableManaging`):**
+   - Maintains forward routes (`RouteEntry`, max 64 entries) and ephemeral reverse routes (`ReverseRouteEntry`, max 128 entries).
+   - Enforces AODV sequence number monotonicity: fresher sequence number always supersedes older; lower cost / lower hopCount breaks ties.
+   - Enforces maximum hop limit bound: routes claiming `hopCount > 8` are rejected immediately.
+   - Ephemeral reverse route lifecycle: `popReverseRoute(for:)` retrieves and consumes association once, preventing replay.
+   - Route invalidation by destination identifier or disconnected next-hop neighbor link.
+3. **Multi-Hop Packet Forwarder (`PacketForwarder.swift` conforming to `PacketForwarding`):**
+   - Complete 7-stage inbound evaluation pipeline:
+     1. Strict 54-byte size, version `0x02`, valid packet type, and hop bound checks (`.dropMalformed`, `.dropHopLimitExceeded`).
+     2. Zero-knowledge deduplication via `SeenPacketCache` (`.dropDuplicate`).
+     3. Local session matching & cryptographic Poly1305 MAC tag verification via `CryptoService` (`.deliverLocally` or `.dropSecurityVerificationFailed`).
+     4. Stranger relay policy check: opt-in participation and battery $\ge 20\%$ (`.dropPolicyDisabled`).
+     5. Token bucket rate limit check: 2 pkts/sec ordinary, 4 pkts/sec SOS reserve (`.dropRateLimitExceeded`).
+     6. Mutable relay metadata mutation: increments `hopCount &+= 1` at Byte 1 while preserving ciphertext and MAC tag.
+     7. Route resolution & next-hop determination: reverse route unicast for RREP, bounded flooding for SOS, forward route lookup for directed pings.
+4. **Protocol Enhancements & Security Types (`MeshProtocols.swift`, `CryptoServiceProtocol.swift`, `Packet.swift`):**
+   - Added `PacketKey(wireData: Data)` for 0-allocation direct extraction from raw wire bytes.
+   - Added `ForwardingDecision.dropSecurityVerificationFailed` and `DropReason.securityVerificationFailed`.
+   - Added `var replayFilter: ReplayProtectionFilter { get }` to `CryptoServiceProvider`.
+   - Added nonisolated thread-safety attributes to `MeshClock`, `SystemMeshClock`, `TestMeshClock`, `RouteEntry`, `ReverseRouteEntry`, and `RelayPolicyState`.
+5. **Comprehensive Automated Security Test Suite (`RoutingForwardingTests.swift`):**
+   - 12 comprehensive automated tests covering all 8 threat scenarios:
+     1. Outsider forged SOS rejection (`testOutsiderForgedSOSRejection`).
+     2. Relay ciphertext, sequence number, and auth tag tampering detection (`testRelayCiphertextAndIdentityTamperDetection`).
+     3. Relay hopCount mutation vs hopLimit tampering (`testRelayHopMetadataMutationAndHopLimitTampering`).
+     4. Replay attack suppression & sequence monotonicity (`testReplayAttackSuppressionAndSequenceMonotonicity`).
+     5. Malicious route request flooding & rate limiter throttling (`testRouteRequestFloodingAndRateLimiting`).
+     6. Expired packet clock skew & terminated session key purge (`testExpiredPacketAndTerminatedSessionHandling`).
+     7. Unauthorized route response rejection & reverse route lookup (`testUnauthorizedRouteResponseRejection`).
+     8. Untrusted relay group member impersonation prevention (`testUntrustedRelayMemberImpersonationPrevention`).
+     9. LRU duplicate cache 5-minute sliding TTL & capacity eviction (`testSeenPacketCacheLRUAndFiveMinuteSlidingTTL`).
+     10. Routing table sequence number monotonicity & reverse route pop lifecycle (`testRoutingTableMonotonicityAndReverseRouteLifecycle`).
+     11. Multi-hop blind relaying chain (Alice -> Relay 1 -> Relay 2 -> Bob, verifying 3-hop MAC survival) (`testMultiHopBlindRelayingEndToEndChain`).
+     12. Confidentiality & zero-knowledge payload protection (`testConfidentialityZeroKnowledgePayloadProtection`).
+6. **Authoritative Security Specification & Threat Model (`docs/PHASE2_SECURITY_SPECIFICATION.md`):**
+   - Detailed threat model, mathematical AAD masking proofs, privacy anti-logging policy, security assumptions, and residual risk catalog.
+
+#### 3. Changes Made & Files Touched
+- [`TeeKum Prototype/Services/SeenPacketCache.swift`](../TeeKum%20Prototype/Services/SeenPacketCache.swift): Created 1,024-entry 5-minute LRU duplicate suppression cache actor.
+- [`TeeKum Prototype/Services/RoutingTable.swift`](../TeeKum%20Prototype/Services/RoutingTable.swift): Created AODV routing table actor conforming to `RoutingTableManaging`.
+- [`TeeKum Prototype/Services/PacketForwarder.swift`](../TeeKum%20Prototype/Services/PacketForwarder.swift): Created packet forwarder actor conforming to `PacketForwarding`.
+- [`TeeKum Prototype/Services/MeshProtocols.swift`](../TeeKum%20Prototype/Services/MeshProtocols.swift): Added `.dropSecurityVerificationFailed`, wire key extraction, and concurrency nonisolated attributes.
+- [`TeeKum Prototype/Services/CryptoServiceProtocol.swift`](../TeeKum%20Prototype/Services/CryptoServiceProtocol.swift): Exposed `replayFilter` on `CryptoServiceProvider`.
+- [`TeeKum Prototype/Models/Packet.swift`](../TeeKum%20Prototype/Models/Packet.swift): Made `PacketConstants` nonisolated for cross-actor access.
+- [`TeeKum Prototype/Tests/RoutingForwardingTests.swift`](../TeeKum%20Prototype/Tests/RoutingForwardingTests.swift): Created 12 automated verification suites covering all threat scenarios.
+- [`TeeKum Prototype/App/TeeKumApp.swift`](../TeeKum%20Prototype/App/TeeKumApp.swift): Integrated `RoutingForwardingTests.runAllTests()` into in-app test runner.
+- [`docs/PHASE2_SECURITY_SPECIFICATION.md`](PHASE2_SECURITY_SPECIFICATION.md): Created authoritative security specification and threat model.
+
+#### 4. Verification & Testing Performed
+- **Xcode Compilation:** Clean compilation via `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -destination "id=C80ECE14-94DC-40AF-B9F4-403F9CE40ACC" build` -> **BUILD SUCCEEDED** (0 errors).
+- **Automated Regression & Security Suite:** Ran all automated test suites on booted iOS Simulator (`iPhone 17`, `C80ECE14-94DC-40AF-B9F4-403F9CE40ACC`) via `xcrun simctl launch ... -runAllTests`:
+  - `PacketCodecTests`: 13/13 passed.
+  - `PeerTransportTests`: 13/13 passed.
+  - `NeighborDiscoveryTests`: 13/13 passed.
+  - `RoutingForwardingTests`: 12/12 passed (NEW).
+  - `CryptoSecurityTests`: 13/13 passed.
+  - `LocationPublishingTests`: 11/11 passed.
+  - `UIStateTests`: 12/12 passed.
+  - `SOSEndToEndTests`: 11/11 passed.
+  - `LiveActivityTests`: 5/5 passed.
+  - **Total:** 103/103 automated tests passed (100% success rate).
+
+---
+
 ### [2026-10-29 14:18] — Phase 2 Milestone 2.1: Mesh Transport Foundation, Neighbor Registry & Blind Forwarding
 - **Contributor / Agent:** Agent 1 — TeeKum Mesh Transport and Neighbor Management Specialist
 - **Status:** Completed & Verified (91/91 Automated Tests Passing, 100% Success)

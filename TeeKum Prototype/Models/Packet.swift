@@ -10,7 +10,7 @@ import CoreLocation
 
 // MARK: - Constants
 
-public enum PacketConstants {
+nonisolated public enum PacketConstants {
     public static let wirePacketSize: Int = 54
     public static let cleartextEnvelopeSize: Int = 8
     public static let encryptedPayloadSize: Int = 30

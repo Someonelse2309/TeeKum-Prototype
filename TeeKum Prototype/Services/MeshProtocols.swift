@@ -12,13 +12,13 @@ import CryptoKit
 
 /// Testable clock protocol allowing deterministic advancement of time in unit and integration tests.
 public protocol MeshClock: Sendable {
-    func now() -> Date
+    nonisolated func now() -> Date
 }
 
 /// Standard system clock returning the current hardware date.
 public struct SystemMeshClock: MeshClock {
-    public init() {}
-    public func now() -> Date { Date() }
+    nonisolated public init() {}
+    nonisolated public func now() -> Date { Date() }
 }
 
 /// Injected mock clock supporting instant, deterministic time advancement.
@@ -30,13 +30,13 @@ public final class TestMeshClock: MeshClock, @unchecked Sendable {
         self.currentDate = initialDate
     }
     
-    public func now() -> Date {
+    nonisolated public func now() -> Date {
         lock.lock()
         defer { lock.unlock() }
         return currentDate
     }
     
-    public func advance(by seconds: TimeInterval) {
+    nonisolated public func advance(by seconds: TimeInterval) {
         lock.lock()
         defer { lock.unlock() }
         currentDate = currentDate.addingTimeInterval(seconds)
@@ -65,6 +65,18 @@ public struct PacketKey: Hashable, Sendable, CustomStringConvertible {
     public init(wirePacket: RawWirePacket) {
         self.sessionId = UInt32(wirePacket.envelope.sessionId)
         self.sequenceNumber = wirePacket.envelope.sequenceNumber
+    }
+    
+    public init?(wireData: Data) {
+        guard wireData.count >= 8 else { return nil }
+        let sid = wireData.subdata(in: (wireData.startIndex + 2)..<(wireData.startIndex + 4)).withUnsafeBytes {
+            $0.load(as: UInt16.self).bigEndian
+        }
+        let seq = wireData.subdata(in: (wireData.startIndex + 4)..<(wireData.startIndex + 8)).withUnsafeBytes {
+            $0.load(as: UInt32.self).bigEndian
+        }
+        self.sessionId = UInt32(sid)
+        self.sequenceNumber = seq
     }
     
     public var description: String {
@@ -264,7 +276,7 @@ public protocol MeshTransport: Actor {
 
 // MARK: - Subsystem 2: Routing Table & Route Discovery
 
-public struct RouteEntry: Sendable, Equatable {
+nonisolated public struct RouteEntry: Sendable, Equatable {
     public let destinationId: String          // Destination member initials or session target
     public let nextHopPeerId: String         // Immediate 1-hop neighbor to transmit to
     public let hopCount: UInt8               // Path metric (1..8)
@@ -274,7 +286,7 @@ public struct RouteEntry: Sendable, Equatable {
     
     public var isFresh: Bool { Date() < expiresAt }
     
-    public init(
+    public nonisolated init(
         destinationId: String,
         nextHopPeerId: String,
         hopCount: UInt8,
@@ -291,13 +303,13 @@ public struct RouteEntry: Sendable, Equatable {
     }
 }
 
-public struct ReverseRouteEntry: Sendable, Equatable {
+nonisolated public struct ReverseRouteEntry: Sendable, Equatable {
     public let discoveryKey: UInt32          // Discovery nonce or sequenceNumber
     public let incomingPeerId: String        // Node that forwarded the RREQ
     public let hopCount: UInt8               // Traversal hops observed
     public let expiresAt: Date               // Ephemeral TTL (typically 15s)
     
-    public init(
+    public nonisolated init(
         discoveryKey: UInt32,
         incomingPeerId: String,
         hopCount: UInt8,
@@ -352,6 +364,7 @@ public enum ForwardingDecision: Sendable, Equatable {
     case dropRateLimitExceeded                      // Exceeded 2 pkts/sec budget
     case dropPolicyDisabled                         // Relay participation is OFF or battery < 20%
     case dropMalformed                              // Size != 54B or invalid version
+    case dropSecurityVerificationFailed             // Authenticated tag mismatch, replay rejected, or forged packet
 }
 
 public protocol ForwardingBudgetManaging: Actor {
@@ -394,13 +407,13 @@ public enum RelayParticipationMode: String, Sendable, Codable, CaseIterable {
     case timed30Minutes      // Relay for 30 minutes, then automatically pause
 }
 
-public struct RelayPolicyState: Sendable, Equatable {
+nonisolated public struct RelayPolicyState: Sendable, Equatable {
     public let mode: RelayParticipationMode
     public let batteryLevel: Float           // 0.0 to 1.0
     public let isLowPowerModeActive: Bool
     public let timedExpiryDate: Date?
     
-    public init(
+    public nonisolated init(
         mode: RelayParticipationMode = .communalRelayActive,
         batteryLevel: Float = 1.0,
         isLowPowerModeActive: Bool = false,
@@ -474,6 +487,7 @@ public enum DropReason: Sendable, Equatable {
     case batteryThrottled
     case policyDisabled
     case malformed
+    case securityVerificationFailed
 }
 
 public struct RelayTelemetry: Sendable, Equatable {
