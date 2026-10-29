@@ -90,11 +90,28 @@ public struct UIStateTests {
             return false
         }
         
-        // Participant joins host group with 2-letter initials (e.g. "AB")
+        // Pending invite agreement gating
         let participantVM = GroupSessionViewModel()
+        participantVM.resetSessionState()
+        participantVM.pendingInvite = parsedInvite
+        guard participantVM.pendingInvite?.sessionId == parsedInvite.sessionId else {
+            print("FAILED: pendingInvite not held prior to user agreement")
+            return false
+        }
+        guard !participantVM.hasActiveSession else {
+            print("FAILED: participant should not have active session before agreeing to compact")
+            return false
+        }
+        
+        // User accepts mesh agreement and joins host group with 2-letter initials (e.g. "AB")
         participantVM.joinGroup(invite: parsedInvite, localName: "AB")
+        participantVM.pendingInvite = nil
         guard let participantSession = participantVM.activeSession else {
-            print("FAILED: participant should have activeSession")
+            print("FAILED: participant should have activeSession after agreement")
+            return false
+        }
+        guard participantVM.pendingInvite == nil else {
+            print("FAILED: pendingInvite should be cleared after join")
             return false
         }
         guard !participantSession.isHost, participantSession.localInitials == "AB" else {

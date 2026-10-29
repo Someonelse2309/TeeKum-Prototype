@@ -5,6 +5,36 @@
 
 ---
 
+### [2026-10-29 12:09] — Feature: Communal Mesh Compact Agreement Screen Prior to Creating/Joining Groups
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed
+- **Target Phase / Milestone:** Phase 1 / Phase 2 — Communal Mesh Compact & Pairing Consent UX (Decision D5, User Story 7)
+
+#### 1. Objective & Scope
+- Enforce mandatory user agreement to the **Communal Mesh Compact** before creating or joining any group in TeeKum.
+- Educate users on the four pillars of the mesh compact: All-in Community Mesh relaying, 100% Zero-Knowledge privacy (ChaCha20-Poly1305), 20% Battery Survival Mode auto-cutoff, and continuous pocket execution via Live Activity and background location indicator.
+- Gate group creation, camera QR joining, link pasting, open-mesh joining, and deep-link invite ingestion behind this explicit agreement modal.
+
+#### 2. Changes Made & Files Touched
+- [`TeeKum Prototype/Views/Components/MeshAgreementView.swift`](../TeeKum%20Prototype/Views/Components/MeshAgreementView.swift):
+  - Created dedicated agreement screen presenting the Communal Mesh Compact badge, tagline (*"Relay for others while others relay for you"*), contextual target banner (group name & user initials), 4 core feature cards, and explicit primary/secondary actions (`"Agree & Create"`, `"Agree & Join"`, or `"Decline & Cancel"`).
+- [`TeeKum Prototype/ViewModels/GroupSessionViewModel.swift`](../TeeKum%20Prototype/ViewModels/GroupSessionViewModel.swift):
+  - Added `pendingInvite: GroupSessionInvite?` to support asynchronous deep-link invite agreement gating.
+- [`TeeKum Prototype/Views/GroupPairingView.swift`](../TeeKum%20Prototype/Views/GroupPairingView.swift):
+  - Added `PendingAgreementAction` (`.create`, `.join`, `.autoMesh`) and state `pendingAgreement`.
+  - Updated `handleCreateGroup`, `handleScannedCode`, and `handleEnterAutoMesh` to prompt the agreement sheet before finalizing session creation or connection.
+  - Added `.onChange(of: sessionViewModel.pendingInvite)` to intercept external deep-links and display the agreement sheet before joining.
+- [`TeeKum Prototype/App/TeeKumApp.swift`](../TeeKum%20Prototype/App/TeeKumApp.swift):
+  - Updated `handleIncomingURL` to assign `sessionViewModel.pendingInvite = invite` instead of bypassing agreement consent.
+- [`TeeKum Prototype/Tests/UIStateTests.swift`](../TeeKum%20Prototype/Tests/UIStateTests.swift):
+  - Extended `testGroupPairingLifecycle` verifying that `pendingInvite` holds the parsed invite prior to agreement and cleanly transitions to active session upon acceptance.
+
+#### 3. Verification & Testing Performed
+- **Xcode Build:** Compiled cleanly with `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -destination "id=C80ECE14-94DC-40AF-B9F4-403F9CE40ACC" build` -> **BUILD SUCCEEDED**.
+- **Automated Test Run:** All 12 UI state test suites, all 11 SOS end-to-end suites, Live Activity companion tests, crypto security tests, packet codec tests, and peer transport tests passed with 100% success on the iOS simulator.
+
+---
+
 ### [2026-10-29 12:03] — UI Refinement: Hide Hardcoded Preset Coordinates & Streamline "Landmark Name"
 - **Contributor / Agent:** Antigravity (Pair Programming Agent)
 - **Status:** Completed

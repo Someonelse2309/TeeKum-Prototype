@@ -28,6 +28,9 @@ public final class GroupSessionViewModel {
     /// State banner / error message displayed in UI.
     public var errorMessage: String?
     
+    /// Pending group invite awaiting user agreement to the mesh compact before joining.
+    public var pendingInvite: GroupSessionInvite? = nil
+    
     /// True when currently advertising or establishing radio connections.
     public var isConnecting: Bool = false
     

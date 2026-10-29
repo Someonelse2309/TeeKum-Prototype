@@ -19,7 +19,36 @@ public struct GroupPairingView: View {
     @State private var initialsInput: String = ""
     @State private var groupNameInput: String = "Festival Crew"
     @State private var createdSession: GroupSession?
+    @State private var pendingAgreement: PendingAgreementAction? = nil
     @FocusState private var isFieldFocused: Bool
+    
+    enum PendingAgreementAction: Identifiable {
+        case create(name: String, initials: String)
+        case join(invite: GroupSessionInvite, initials: String)
+        case autoMesh(initials: String)
+        
+        var id: String {
+            switch self {
+            case .create(let name, let initials):
+                return "create-\(name)-\(initials)"
+            case .join(let invite, let initials):
+                return "join-\(invite.sessionId)-\(initials)"
+            case .autoMesh(let initials):
+                return "automesh-\(initials)"
+            }
+        }
+        
+        var context: MeshAgreementView.AgreementContext {
+            switch self {
+            case .create(let name, let initials):
+                return .create(groupName: name, initials: initials)
+            case .join(let invite, let initials):
+                return .join(groupName: invite.sessionName, initials: initials)
+            case .autoMesh(let initials):
+                return .autoMesh(initials: initials)
+            }
+        }
+    }
     
     enum PairingTab: String, CaseIterable {
         case create = "Create Group"
@@ -112,6 +141,34 @@ public struct GroupPairingView: View {
                 if !sessionViewModel.localUserName.isEmpty && initialsInput.isEmpty {
                     initialsInput = sessionViewModel.localUserName
                 }
+            }
+            .sheet(item: $pendingAgreement) { action in
+                MeshAgreementView(
+                    context: action.context,
+                    onAgree: {
+                        switch action {
+                        case .create(let name, let initials):
+                            executeCreateGroup(name: name, initials: initials)
+                        case .join(let invite, let initials):
+                            sessionViewModel.joinGroup(invite: invite, localName: initials)
+                            sessionViewModel.pendingInvite = nil
+                        case .autoMesh(let initials):
+                            sessionViewModel.enterAutoMesh(initials: initials)
+                        }
+                        pendingAgreement = nil
+                    },
+                    onDecline: {
+                        if case .join = action {
+                            sessionViewModel.pendingInvite = nil
+                        }
+                        pendingAgreement = nil
+                    }
+                )
+            }
+            .onChange(of: sessionViewModel.pendingInvite) { _, newInvite in
+                guard let invite = newInvite else { return }
+                let initials = isInitialsValid ? cleanInitials : (sessionViewModel.localUserName.isEmpty ? "ME" : sessionViewModel.localUserName)
+                pendingAgreement = .join(invite: invite, initials: initials)
             }
         }
         .preferredColorScheme(.dark)
@@ -262,15 +319,20 @@ public struct GroupPairingView: View {
         let trimmedGroup = groupNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, !trimmedGroup.isEmpty else { return }
         
+        // Present Agreement Page before creating group
+        pendingAgreement = .create(name: trimmedGroup, initials: clean)
+    }
+    
+    private func executeCreateGroup(name: String, initials: String) {
         var keyBytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, keyBytes.count, &keyBytes)
         let keyData = Data(keyBytes)
         
         let session = GroupSession(
             sessionId: UInt16.random(in: 1...UInt16.max),
-            sessionName: trimmedGroup,
+            sessionName: name,
             symmetricKeyData: keyData,
-            localInitials: clean,
+            localInitials: initials,
             isHost: true
         )
         self.createdSession = session
@@ -323,7 +385,8 @@ public struct GroupPairingView: View {
         
         let clean = InitialsCodec.sanitize(cleanInitials)
         sessionViewModel.clearError()
-        sessionViewModel.joinGroup(invite: invite, localName: clean)
+        // Present Agreement Page before joining group
+        pendingAgreement = .join(invite: invite, initials: clean)
     }
     
     // MARK: - Open Mesh Section (Instant Auto-Mesh)
@@ -365,6 +428,8 @@ public struct GroupPairingView: View {
     
     private func handleEnterAutoMesh() {
         guard isInitialsValid else { return }
-        sessionViewModel.enterAutoMesh(initials: cleanInitials)
+        let clean = InitialsCodec.sanitize(cleanInitials)
+        // Present Agreement Page before entering open mesh
+        pendingAgreement = .autoMesh(initials: clean)
     }
 }

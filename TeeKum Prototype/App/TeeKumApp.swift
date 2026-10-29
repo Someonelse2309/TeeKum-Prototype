@@ -402,7 +402,6 @@ struct TeeKumApp: App {
             }
         }
         guard let invite = GroupSession.parseInvite(from: url) else { return }
-        let initials = !sessionViewModel.localUserName.isEmpty ? sessionViewModel.localUserName : "ME"
-        sessionViewModel.joinGroup(invite: invite, localName: initials)
+        sessionViewModel.pendingInvite = invite
     }
 }
