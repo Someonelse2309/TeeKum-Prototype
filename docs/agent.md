@@ -9,6 +9,7 @@
 > *Companion Documents:*
 > - [AI Coding Agent System Prompt & Task Playbook (docs/AGENT_PROMPT.md)](docs/AGENT_PROMPT.md)
 > - [Technical Requirements Document (docs/TechnicalRequirements.md)](docs/TechnicalRequirements.md)
+> - [54-Byte Wire Protocol & Payload Developer Guide (docs/PAYLOAD_GUIDE.md)](docs/PAYLOAD_GUIDE.md)
 > - [Development Log (docs/DEVELOPMENT_LOG.md)](docs/DEVELOPMENT_LOG.md)
 > 
 > *Last Verified via /grill-me:* 2026-10-28 (Architecture, Tech Stack, 8 Blind Spots, Full User Story, 16-Bit Session ID & 54-Byte Binary Protocol v2 Confirmed)

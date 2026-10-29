@@ -5,6 +5,47 @@
 
 ---
 
+### [2026-10-29 10:45] — Documentation: 54-Byte Wire Protocol & Payload Developer Guide (`docs/PAYLOAD_GUIDE.md`)
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed
+- **Target Phase / Milestone:** Protocol Architecture & Developer Documentation (Protocol v2 & Phase 2 Roadmap)
+
+#### 1. Objective & Scope
+- Deliver a crystal-clear, comprehensive visual developer guide for the fixed 54-byte binary wire protocol, payload layouts, field quantization codecs, and zero-knowledge cryptographic boundaries following alignment via `/grill-me`.
+
+#### 2. Changes Made & Files Touched
+- [`docs/PAYLOAD_GUIDE.md`](PAYLOAD_GUIDE.md):
+  - Created master developer guide with ASCII wire diagrams, Mermaid cryptographic layering charts, and endianness rules.
+  - Detailed the 8-byte cleartext outer envelope and Associated Authenticated Data (AAD) Byte 1 masking mechanism.
+  - Documented core mathematical field codecs: CoreLocation `Double` $\to$ `Int32` micro-degree quantization ($\sim 11\text{ cm}$ resolution), 2-byte Base-27 1-to-3 letter initials codec ($18,278 \le 65,535$), and 1-byte festival activity status codes.
+  - Provided byte-by-byte wire specifications for all message types (`LOCATION_PING`, `SOS`, `MEETING_UPDATE`, `ACK`, `ROUTE_REQ`, `ROUTE_RESP`).
+  - Added four worked end-to-end festival scenarios with real attendee values, field-by-field calculations, and fully decoded 54-byte hex dumps:
+    - *Scenario 1:* Alice sharing Location Ping with "DRINKS" and initial "ALI".
+    - *Scenario 2:* Bob triggering Urgent Medical SOS with 15-hop limit and initial "BOB".
+    - *Scenario 3:* Charlie proposing Meeting Point at Landmark Gate 1 with initial "CHL".
+    - *Scenario 4:* Dave sending Delivery ACK confirming Bob's SOS with initial "DAV".
+  - Documented zero-knowledge relaying boundaries (what stranger relays see vs. what group members decrypt) and 12-byte AEAD nonce construction.
+  - Explained Phase 2 Protocol v3 evolution (expanding to 2-byte hops by absorbing 1 byte from reserved payload padding).
+  - Included a developer implementation checklist to guard against endianness, quantization, and AAD masking regressions.
+- Documentation Cross-Links:
+  - [`docs/agent.md`](agent.md): Added `docs/PAYLOAD_GUIDE.md` to Companion Documents.
+  - [`docs/TechnicalRequirements.md`](TechnicalRequirements.md): Cross-linked `docs/PAYLOAD_GUIDE.md` under Decision D7.
+
+#### 3. Key Decisions & Rationale
+- **Decisions Aligned via `/grill-me`:**
+  - *Audience & Visual Depth:* Comprehensive visual developer guide with diagrams, ASCII maps, and worked hex dumps.
+  - *Permanent Location:* Preserved as a dedicated markdown guide at `docs/PAYLOAD_GUIDE.md` for permanent team reference.
+  - *Concrete Scenarios:* Used real festival attendee scenarios (Alice, Bob, Charlie, Dave) rather than abstract synthetic vectors.
+  - *Phase Isolation:* Focused on active Phase 1 (Protocol v2) wire layout, concluding with a dedicated Phase 2 migration section.
+
+#### 4. Verification & Testing Performed
+- **Mathematical & Hex Verification:** Independently verified all Base-27 initials formulas, coordinate quantization math, and hex offsets in Scenarios 1–4.
+- **Cross-Link Integrity:** Verified valid relative links between `agent.md`, `TechnicalRequirements.md`, and `PAYLOAD_GUIDE.md`.
+- **Active Code Health:** All 73 simulator test assertions pass without modification.
+
+#### 5. Open Items & Next Steps
+- Share `docs/PAYLOAD_GUIDE.md` with iOS developers (Adiat, Daffa, Hasan, Nicho) and UI designers (Ayu, Ivanna) for team onboarding and reference.
+
 ### [2026-10-29 10:35] — Feature / Protocol Update: Increase SOS Hop Limit to 15 (Max Protocol v2 TTL)
 - **Contributor / Agent:** Antigravity (Pair Programming Agent)
 - **Status:** Completed
