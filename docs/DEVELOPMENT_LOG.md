@@ -5,7 +5,117 @@
 
 ---
 
-### [2026-10-29 15:05] — Protocol Evolution: Protocol v3 Migration & Phase 2 Payload Developer Guide
+### [2026-10-29 15:35] — Architectural Specification: Phase 3 Apple Watch Companion & Micro-Navigation Standardization (Decisions D10 & D11)
+- **Contributor / Role:** Senior App Development Consultant & Technical Product Advisor
+- **Status:** Scoped, Specified & Documented in `agent.md` and `TechnicalRequirements.md`
+- **Target Phase / Milestone:** Phase 3 — Venue Intelligence & Polish
+
+#### 1. Objective & Scope
+- Formulate and record the system architecture for the Phase 3 Apple Watch integration and micro-navigation enhancements.
+- Eliminate technical risks of standalone watch execution (battery depletion, platform limits) by strictly defining a tethered companion architecture over `WatchConnectivity` (`WCSession`).
+- Formalize Decisions D10 (Apple Watch Haptic Companion Extension) and D11 (Micro-Navigation AR Spotter Lens & UWB Scoping) into the core technical specifications and agent instructions.
+
+#### 2. Key Decisions & Technical Specifications
+1. **Decision D10 (Apple Watch Haptic Companion Extension):**
+   - **Tethered Companion Boundary:** Explicitly rejected standalone mesh node execution on watchOS due to $\approx 300\text{ mAh}$ battery limits and OS-level ad-hoc networking restrictions. iPhone remains the sole RF mesh forwarder and GPS publisher.
+   - **Auditory Masking Solution:** High-intensity Taptic Engine wrist haptic patterns (`WKHapticType.failure` / `.stop`) deliver emergency SOS alerts reliably in 100+ dB concert environments.
+   - **Heads-Up Navigation:** Directional compass bearing on wrist with facing haptic alignment pulses and meter distance badges.
+   - **Discrete Wrist SOS:** 3-second hold trigger transmitting through iPhone host outbox.
+   - **Low-Overhead State Sync:** Meeting point RSVPs and roster updates via `WCSession.updateApplicationContext(_:)`. Live coordinate streaming strictly gated to active on-screen watch navigation.
+   - **Smart Stack Live Activity:** Inherits existing `TeeKumWidgets` Live Activity attributes automatically in watchOS 10+.
+2. **Decision D11 (Micro-Navigation AR Spotter Lens & UWB Scoping):**
+   - Retains 2D MapKit (`MainMapView`) as the authoritative primary interface for glanceability, macro-orientation, and power efficiency.
+   - Scopes RealityKit/ARKit as an opt-in close-range helper (<30m) inside `FinderBeaconView` with a mandatory 30-second sleep timeout and graceful fallback to 2D compass bearing during VIO degradation in dark/strobe venue conditions.
+   - Prioritizes Nearby Interaction (UWB via Apple U1/U2) for sub-meter directional radar without camera/GPU power penalties.
+
+#### 3. Changes Made & Files Touched
+- [`docs/agent.md`](agent.md): Updated Section 12 Phase 3 checklist detailing Apple Watch Companion (`TeeKumWatch`) sub-items and AR/UWB micro-navigation requirements.
+- [`docs/TechnicalRequirements.md`](TechnicalRequirements.md): Added approved decisions **D10** and **D11** to Section 1, updated technical checklist, and authored comprehensive Phase 3 specifications.
+
+### [2026-10-29 15:30] — Phase 2 AODV-Inspired Multi-Hop Mesh Routing Implementation
+- **Contributor / Agent:** Agent 3 — TeeKum AODV-Inspired Routing Specialist
+- **Status:** Completed & Verified (All 106 Automated Tests Passing, 100% Success, Protocol v3 Conformance)
+- **Target Phase / Milestone:** Phase 2 Multi-Hop Mesh Routing Architecture
+
+#### 1. Objective & Scope
+- Implement the Phase 2 AODV-inspired on-demand routing engine adhering to [`docs/Phase 2/PHASE2_ARCHITECTURE.md`](Phase%202/PHASE2_ARCHITECTURE.md) and [`docs/Phase 2/PAYLOAD_GUIDE.md`](Phase%202/PAYLOAD_GUIDE.md).
+- Discover and maintain usable multi-hop paths between group members while minimizing unnecessary broadcasts.
+- Support zero-knowledge opaque relaying (no payload decryption at intermediate stranger hops).
+- Maintain an absolute maximum limit of 8 hops (`PacketConstants.maxHopLimit`).
+- Implement token bucket rate limiting (2.0 pkts/sec for ordinary traffic, 4.0 pkts/sec for emergency SOS) with bounded burst capacity.
+- Prevent routing loops through destination sequence monotonicity, hop limit boundaries, and duplicate suppression.
+- Provide cross-group isolation ensuring routing tables for distinct `sessionId`s do not leak destinations or state.
+- Create a deterministic multi-node topology simulator and a complete verification suite covering all 12 required test scenarios.
+
+#### 2. Implementations & Deliverables
+1. **Routing Table & Cross-Group Session Partitioning (`RoutingTable.swift`, `MeshProtocols.swift`):**
+   - Partitioned all forward and reverse routing lookups using compound keys `routeKey(destinationId:sessionId:)`.
+   - Implemented `findRoute(to:inSession:)`, `recordForwardRoute(..., sessionId:)`, `recordReverseRoute(...)`, `invalidateRoutes(forSessionId:)`, `invalidateRoutesUsingNextHop(_:)`.
+   - Enforced maximum 8-hop constraint on all route insertions.
+   - Added `type: PacketType?` discriminator to `PacketKey` in `MeshProtocols.swift` to resolve a critical race condition where identical sequence numbers between `ROUTE_REQ` and returning `ROUTE_RESP` caused stranger relays to drop legitimate responses.
+2. **On-Demand Route Discovery Engine (`RouteDiscoveryService.swift`):**
+   - Built actor-isolated `RouteDiscoveryService` implementing `RouteDiscoveryManaging`.
+   - Implemented in-flight request coalescing using `AsyncStream` listeners to prevent parallel broadcast storms.
+   - Integrated token bucket rate limiter with configurable capacity (4 tokens) and refill rate (2.0 tokens/sec), fully controllable via injected `MeshClock`.
+   - Enforced 3.0-second discovery timeout, returning structured `RouteDiscoveryFailure.timeout`.
+   - Prevented self-targeted discovery loops and loopback floods.
+   - Handled session teardown via `teardown()`, cleanly aborting in-flight discoveries with `.sessionTerminated`.
+3. **Deterministic Multi-Node Topology Simulator (`MeshTopologySimulator.swift`):**
+   - Developed `SimulatedMeshNode` and `MeshTopologySimulator` actors to emulate complex ad-hoc mesh topologies in software with microsecond-level clock determinism.
+   - Supports dynamic link connection, disconnection, packet propagation, and link degradation across arbitrary node graphs (e.g., Alice $\to$ Relay 1 $\to$ Relay 2 $\to$ Bob).
+4. **Comprehensive AODV Verification Test Suite (`RouteDiscoveryTests.swift`):**
+   - Authored and verified all 12 required test cases:
+     - Test 1: Direct route discovery (1 hop).
+     - Test 2: Multi-hop route discovery with 2 relays (Alice $\to$ R1 $\to$ R2 $\to$ Bob).
+     - Test 3: Missing destination detection & timeout handling.
+     - Test 4: Broken intermediate link invalidation and re-discovery.
+     - Test 5: Duplicate route requests suppression & shorter-path reverse update.
+     - Test 6: Route loop detection & rejection.
+     - Test 7: Stale route response rejection.
+     - Test 8: Competing candidate routes preference (shorter path preferred).
+     - Test 9: Hop-limit exhaustion (maximum 8 hops bound).
+     - Test 10: Flooding budget exhaustion & token bucket rate limiting.
+     - Test 11: Simultaneous discovery attempts to multiple destinations.
+     - Test 12: Session teardown during active in-flight discovery.
+5. **Technical Documentation (`docs/Phase 2/ROUTING_DESIGN_AND_LIMITATIONS.md`):**
+   - Documented protocol mechanics, AODV packet flows, loop prevention rules, group partitioning, zero-knowledge privacy guarantees, and iOS runtime limitations (AWDL churn, background execution tiers, battery cutoff at 20%).
+
+#### 3. Verification & Testing Performed
+- **Xcode Compilation:** Clean compilation with 0 errors via `xcodebuild` targeting `iPhoneSimulator27.1` (`arm64-apple-ios26.0-simulator`).
+- **Simulator Automated Test Run:** Executed full in-app verification runner on booted `iPhone 17` (`C80ECE14-94DC-40AF-B9F4-403F9CE40ACC`):
+  - `PacketCodecTests` (Protocol v3): 13/13 passed.
+  - `PeerTransportTests`: 13/13 passed.
+  - `NeighborDiscoveryTests`: 13/13 passed.
+  - `BlindRelaySecurityTests`: 12/12 passed.
+  - `RouteDiscoveryTests` (AODV Engine): 12/12 passed.
+  - `CryptoSecurityTests`: 13/13 passed.
+  - `LocationPublishingTests`: 12/12 passed.
+  - `UIStateTests`: 12/12 passed.
+  - `SOSEndToEndTests`: 11/11 passed.
+  - `LiveActivityTests`: 5/5 passed.
+  - Total: **106/106 automated tests passed (100% success rate)**.
+
+---
+
+### [2026-10-29 15:20] — Architectural Decision (ADR): Phase 3 Close-Range Navigation Scoping (ARKit & UWB vs MapKit)
+- **Contributor / Role:** Senior App Development Consultant & Technical Product Advisor
+- **Status:** Scoped & Logged (Recorded for Phase 3 Roadmap)
+- **Target Phase / Milestone:** Phase 3 — Venue Intelligence & Polish
+
+#### 1. Context & Proposal
+- Proposal raised to replace MapKit with an ARKit camera overlay to point directly toward friends.
+
+#### 2. Evaluation & Architectural Decision
+- **Decision:** **Do NOT replace MapKit.** Retain `MainMapView` as the primary macro-navigation interface (essential for glanceability, 360° situational awareness, low-light robustness, and battery conservation).
+- **Phase 3 Roadmap Addition:** Scope ARKit/RealityKit and Apple Nearby Interaction (UWB via U1/U2 chips) strictly as an optional, secondary **"Spotter Lens"** inside `FinderBeaconView` for close-range micro-navigation (<30 meters).
+- **Constraints & Invariants Established:**
+  1. Primary navigation remains 2D MapKit + motion-adaptive GPS sleeping.
+  2. AR/Camera mode must enforce an aggressive inactivity timeout (30s) to prevent camera sensor, Neural Engine, and GPU battery drain.
+  3. AR mode must gracefully fall back to 2D compass/heading when VIO tracking degrades under low ambient lighting or concert strobe conditions (`ARCamera.TrackingState.limited`).
+  4. UWB precision radar (`NearbyInteraction`) prioritized over camera AR where hardware allows (centimeter accuracy, light-agnostic, zero camera battery drain).
+
+#### 3. Changes Made & Files Touched
+- [`docs/agent.md`](agent.md): Updated Section 12 Phase 3 checklist to include close-range AR "Spotter Lens" and UWB precision finding as an opt-in micro-navigation feature inside `FinderBeaconView`.
 - **Contributor / Agent:** Agent 2 — TeeKum Blind Relay Security Specialist
 - **Status:** Completed & Verified (All 104 Automated Tests Passing, 100% Success, Protocol v3 Active)
 - **Target Phase / Milestone:** Phase 2 Multi-Hop Mesh Architecture & Wire Protocol v3

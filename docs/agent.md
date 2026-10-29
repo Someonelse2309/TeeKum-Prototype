@@ -684,8 +684,18 @@ Use an **AODV-inspired on-demand routing approach** with bounded flooding fallba
 
 ### Phase 3 --- Venue Intelligence & Polish
 -   [ ] Custom venue event vector overlays (stages, medical, water stations).
--   [ ] Apple Watch companion extension for haptic notifications.
--   [ ] Close-range AR "Spotter Lens" (RealityKit/ARKit) & UWB precision finding (Nearby Interaction) as an optional micro-navigation HUD inside `FinderBeaconView` (<30m range with auto-timeout; non-primary to preserve battery and glanceability).
+-   [ ] **Apple Watch Companion Extension (`TeeKumWatch`):**
+    -   [ ] Tethered companion architecture via `WatchConnectivity` (`WCSession`), strictly rejecting standalone mesh node execution to protect watch battery and adhere to watchOS ad-hoc networking restrictions.
+    -   [ ] High-intensity Taptic Engine wrist haptic patterns for incoming emergency SOS alerts to penetrate 100+ dB concert/festival noise.
+    -   [ ] Discrete 3-second wrist SOS trigger transmitting through host iPhone outbox queue.
+    -   [ ] Heads-up wrist compass navigation with facing haptic alignment and distance badges to selected friend.
+    -   [ ] 1-tap meeting point RSVP cards ("On my way" / "Can't make it") synchronized via `updateApplicationContext`.
+    -   [ ] watchOS Smart Stack integration leveraging existing `TeeKumWidgets` Live Activity attributes.
+-   [ ] **Close-Range Micro-Navigation ("Spotter Lens" & UWB Radar):**
+    -   [ ] Preserve 2D MapKit (`MainMapView`) as primary macro-view; evaluate RealityKit/ARKit as an opt-in HUD inside `FinderBeaconView` (<30m range).
+    -   [ ] Enforce 30-second camera/GPU auto-timeout to prevent battery drain and thermal throttling.
+    -   [ ] Graceful fallback to 2D compass/heading when VIO tracking degrades under strobe or dark venue conditions (`ARCamera.TrackingState.limited`).
+    -   [ ] Nearby Interaction (UWB via U1/U2) precision radar prioritized where hardware supports.
 
 ---
 

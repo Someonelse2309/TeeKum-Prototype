@@ -45,6 +45,8 @@ The system is designed to be completely serverless (*100% serverless*). Devices 
 | **D7 — 54-Byte Binary Packet (Protocol v2), 16-Bit Session ID & Coordinate Quantization** | CoreLocation `Double` (`CLLocationDegrees`) coordinates are quantized into big-endian signed 32-bit integers `Int32` (`degrees * 1_000_000`) for ~11 cm resolution. Wire packets are fixed at 54 bytes (8B cleartext envelope + 30B encrypted payload + 16B Poly1305 authentication tag). Group session ID is 16 bits (`UInt16`, `0x0001...0xFFFF`) derived via SHA-256 over timestamp, GPS coordinates, and CSPRNG salt. See [docs/PAYLOAD_GUIDE.md](PAYLOAD_GUIDE.md) for the complete byte-by-byte visual breakdown. |
 | **D8 — 2-Byte Base-27 1-to-3 Letter Sender Initials & Serverless QR Group Formation** | Ephemeral member identification inside the 30-byte encrypted payload is compressed from 4 bytes down to exactly 2 bytes (`UInt16`) using base-27 radix encoding of 1 to 3 uppercase letters ($A \dots Z$, e.g. "D", "AB", "DNA", total $18,278 \le 65,535$). Every packet is self-describing, rendering member avatars instantly on the receiving map/radar and completely eliminating runtime P2P radio handshakes. Group formation and 256-bit key exchange are handled serverless via CoreImage QR barcode generation and AVFoundation camera scanning. |
 | **D9 — Phase 2 Expanded 2-Byte Hop Control (hopLimit & hopCount UInt8)** | In Phase 2 multi-hop mesh development, expand hop control from a single 1-byte nibble split (`hopLimit: 4 bits`, `hopCount: 4 bits`, range 0..15) into two dedicated 8-bit bytes (`hopLimit: UInt8` and `hopCount: UInt8`, range 0..255). To maintain cryptographic integrity and prevent unauthenticated broadcast storm attacks, `hopLimit` is authenticated verbatim in ChaCha20-Poly1305 AEAD Associated Data (AAD), while `hopCount` is masked to `0x00` in AAD and incremented by intermediate relays. The total 54-byte datagram size is preserved by absorbing 1 byte from the inner payload's 8-byte reserved padding. |
+| **D10 — Phase 3 Apple Watch Haptic Companion Extension** | Position the Apple Watch strictly as a tethered companion extension (`WatchConnectivity` / `WCSession`) to the host iPhone, explicitly rejecting standalone mesh node execution to preserve watch battery life and respect watchOS ad-hoc networking boundaries. Primary responsibilities: (1) high-intensity Taptic Engine wrist haptic patterns (`WKHapticType.failure` / `.stop`) for emergency SOS alerts in 100+ dB concert environments, (2) discrete 3-second wrist SOS triggers, (3) heads-up compass navigation with bearing haptics and meter distance readouts, (4) 1-tap meeting point attendance confirmations, and (5) watchOS Smart Stack mirroring of active Lock Screen Live Activities. Coordinate streaming over Bluetooth LE is strictly gated to active on-screen watch navigation sessions. |
+| **D11 — Phase 3 Micro-Navigation AR Spotter Lens & UWB Scoping** | MapKit (`MainMapView`) remains the mandatory primary navigation surface for glanceability, full-group orientation, and low power consumption. Scopes ARKit/RealityKit and Apple Nearby Interaction (UWB via U1/U2 chips) strictly as an optional, secondary "Spotter Lens" inside `FinderBeaconView` for close-range finding (<30m) with an aggressive 30-second sleep timeout and automatic fallback to 2D compass bearing under low-light or strobe conditions (`ARCamera.TrackingState.limited`). |
 
 ---
 
@@ -560,14 +562,27 @@ develop → feat/feature-name → PR to develop → PR to main → PR to prod
 
 - [x] Project description, team, platform, and system architecture are aligned with TeeKum.
 - [x] Legacy technologies replaced by the 9 Native Apple Frameworks (Network.framework, CoreLocation, CoreMotion, CryptoKit, NearbyInteraction, MapKit, ActivityKit, Security, libsqlite3).
-- [x] Pure MVVM architecture without Coordinators and without dual-target watchOS complexity is defined.
-- [x] Review decisions D1–D9 from /grill-me sessions and roadmap reviews are recorded in the Approved Decisions table.
-- [x] 54-byte binary packet wire format (Protocol v2), 2-byte Base-27 initials codec (zero handshake), 16-bit session ID derivation, envelope separation, and CoreLocation `Double` quantization are documented.
+- [x] Pure MVVM architecture without Coordinators and with Phase 3 Apple Watch companion architecture scoped.
+- [x] Review decisions D1–D11 from /grill-me sessions and architectural roadmap reviews are recorded in the Approved Decisions table.
+- [x] 54-byte binary packet wire format (Protocol v2) and 56-byte multi-hop wire format (Protocol v3), 2-byte Base-27 initials codec (zero handshake), 16-bit / 24-bit session ID derivation, envelope separation, and CoreLocation `Double` quantization are documented.
 - [x] Phase 2 2-byte expanded hop control architecture (Decision D9: `hopLimit: UInt8` + `hopCount: UInt8`, range 0..255) is scheduled for multi-hop mesh development.
-- [x] Unit Testing Strategy is fully defined and executed across 6 test suites (67 passing tests, 100% pass rate).
+- [x] Phase 3 Apple Watch Haptic Companion Extension (Decision D10) and Micro-Navigation AR Spotter Lens / UWB Radar (Decision D11) are formally scoped.
+- [x] Unit Testing Strategy is fully defined and executed across test suites with 100% pass rate.
 - [x] Phase 1 Direct Offline MVP completed and documented in [docs/PHASE_1_DEVELOPMENT_REPORT.md](PHASE_1_DEVELOPMENT_REPORT.md).
 - [x] 4-branch Git workflow (`main`, `develop`, `prod`, `feat/*`) and commit conventions are established.
 
-### Open Decisions for Future Phases
+### Open Decisions & Specifications for Future Phases
 
-Implementation of custom vector venue floorplans (Phase 3), Apple Watch haptic companion extension (Phase 3), and large stadium-scale multi-hop mesh routing with expanded 2-byte hop control (Phase 2, Decision D9). These topics are scheduled for development in subsequent phases once the Phase 1 direct offline MVP is fully verified on physical iPhones.
+#### Phase 3 Specifications
+1. **Apple Watch Haptic Companion Extension (`TeeKumWatch`, Decision D10):**
+   - Tethered companion communicating over `WatchConnectivity` (`WCSession`).
+   - Distinctive Taptic Engine SOS haptic patterns to overcome 100+ dB concert audio masking.
+   - Wrist-based SOS emergency trigger with 3-second hold.
+   - Compass-style bearing arrow with directional facing haptic pulses and meter distance badge.
+   - 1-tap meeting point confirmations ("On my way" / "Can't make it") via `updateApplicationContext`.
+   - Native integration with existing `TeeKumWidgets` Live Activity attributes in watchOS Smart Stack.
+2. **Micro-Navigation AR Spotter Lens & UWB Precision Radar (Decision D11):**
+   - Retains 2D MapKit (`MainMapView`) as the authoritative macro-view (30m to 1000m+).
+   - AR camera overlay scoped strictly as an opt-in close-range helper inside `FinderBeaconView` (<30m) with 30s auto-timeout and low-light fallback.
+   - Nearby Interaction (U1/U2 UWB) prioritized for sub-meter precision in dark/crowded venues without camera power drain.
+3. **Venue Vector Floorplans:** Custom offline vector overlays for stages, emergency medical tents, water stations, and restrooms.
