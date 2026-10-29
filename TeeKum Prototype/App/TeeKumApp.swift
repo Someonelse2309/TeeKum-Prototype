@@ -108,6 +108,16 @@ struct TeeKumApp: App {
                         _ = await SOSEndToEndTests.runAllTests()
                         fflush(stdout)
                     }
+                    if ProcessInfo.processInfo.arguments.contains("-simulateSession") {
+                        let dummyKey = Data(repeating: 0x55, count: 32)
+                        let session = GroupSession(
+                            sessionId: 0x4321,
+                            sessionName: "Festival Crew",
+                            symmetricKeyData: dummyKey,
+                            localInitials: "NIC"
+                        )
+                        sessionViewModel.setActiveSession(session)
+                    }
                 }
             }
         }

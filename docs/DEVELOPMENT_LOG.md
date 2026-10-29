@@ -5,6 +5,52 @@
 
 ---
 
+### [2026-10-29 10:15] — Fix: Live Activity Out-of-Process Rendering Target (`TeeKumWidgets.appex`)
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed
+- **Target Phase / Milestone:** Phase 1 — Live Activity (ActivityKit & WidgetKit Extension)
+
+#### 1. Objective & Scope
+- Diagnose and resolve the issue where the Live Activity does not render on the Lock Screen or Dynamic Island when running the app in the background.
+- Root Cause Identified: `ActivityKit` in iOS allows starting/updating dynamic data in the main application process, but visual rendering on SpringBoard, Dynamic Island, and Lock Screen is strictly delegated to an out-of-process **Widget Extension (`.appex`)** registered under `com.apple.widgetkit-extension` in `PlugIns/`. Because `TeeKum Prototype` lacked a widget extension target, SpringBoard had no renderer to load.
+
+#### 2. Changes Made & Files Touched
+- [`TeeKumWidgets/TeeKumWidgetBundle.swift`](../TeeKumWidgets/TeeKumWidgetBundle.swift):
+  - Created WidgetKit entry point `@main struct TeeKumWidgetBundle: WidgetBundle` containing `SessionActivityWidget`.
+- [`TeeKumWidgets/SessionActivityWidget.swift`](../TeeKumWidgets/SessionActivityWidget.swift):
+  - Moved `SessionActivityWidget` into the extension target bundle.
+- [`TeeKumWidgets/SessionLiveActivityView.swift`](../TeeKumWidgets/SessionLiveActivityView.swift):
+  - Moved Live Activity UI presentation into the widget extension.
+- [`TeeKumWidgets/SessionActivityAttributes.swift`](../TeeKumWidgets/SessionActivityAttributes.swift):
+  - Provided shared `ActivityAttributes` definition for the widget extension.
+- [`Config/Widgets-Info.plist`](../Config/Widgets-Info.plist):
+  - Added Widget Extension configuration with `CFBundleIdentifier = com.academy.teekum.TeeKum-Prototype.TeeKumWidgets` and `NSExtensionPointIdentifier = com.apple.widgetkit-extension`.
+- [`TeeKum Prototype.xcodeproj/project.pbxproj`](../TeeKum%20Prototype.xcodeproj/project.pbxproj):
+  - Added `PBXNativeTarget` for `TeeKumWidgets` (`com.apple.product-type.app-extension`).
+  - Added `PBXFileSystemSynchronizedRootGroup` for `TeeKumWidgets`.
+  - Added `PBXCopyFilesBuildPhase` (Embed Foundation Extensions) with `dstSubfolderSpec = 13` (PlugIns) to the main `TeeKum Prototype` target.
+  - Added `PBXTargetDependency` ensuring `TeeKumWidgets` is built prior to the host app and embedded into `TeeKum Prototype.app/PlugIns/TeeKumWidgets.appex`.
+  - Configured `SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; IPHONEOS_DEPLOYMENT_TARGET = 26.0;` on Debug and Release configurations.
+- Deleted redundant files from main target:
+  - Removed `TeeKum Prototype/Views/SessionActivityWidget.swift` and `TeeKum Prototype/Views/SessionLiveActivityView.swift` (now built strictly in `TeeKumWidgets`).
+
+#### 3. Key Decisions & Rationale
+- **Decoupled Out-of-Process Rendering:** Follows Apple's WidgetKit architectural requirements. The main app only retains `LiveActivityManager` and `SessionActivityAttributes` to push lifecycle states via `Activity.request` and `activity.update`, while SpringBoard independently hosts `TeeKumWidgets.appex` to render the Dynamic Island and Lock Screen views.
+
+#### 4. Verification & Testing Performed
+- **Xcode Build:** `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -destination "id=C80ECE14-94DC-40AF-B9F4-403F9CE40ACC" build` -> **BUILD SUCCEEDED**.
+- **Bundle Layout Verification:** Inspected `TeeKum Prototype.app/PlugIns/TeeKumWidgets.appex` verifying valid `Info.plist`, `NSExtensionPointIdentifier = com.apple.widgetkit-extension`, and `CFBundleIdentifier = com.academy.teekum.TeeKum-Prototype.TeeKumWidgets`.
+- **Test Suite Verification:** Ran complete automated suite via `xcrun simctl launch ... -runAllTests`:
+  - PacketCodecTests: PASSED
+  - PeerTransportTests: PASSED
+  - CryptoSecurityTests: PASSED
+  - LocationPublishingTests: PASSED
+  - UIStateTests: PASSED
+  - SOSEndToEndTests: PASSED
+  - LiveActivityTests: PASSED (100% pass across all 79 assertions).
+
+---
+
 ### [2026-10-28 17:42] — Implementation: Phase 1 Live Activity Companion, Background Location Execution & Phase 2 Mesh Spec
 - **Contributor / Agent:** Antigravity (Pair Programming Agent)
 - **Status:** Completed
