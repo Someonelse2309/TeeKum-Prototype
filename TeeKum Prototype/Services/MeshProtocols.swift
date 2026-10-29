@@ -72,13 +72,34 @@ public struct PacketKey: Hashable, Sendable, CustomStringConvertible {
     }
 }
 
-// MARK: - Subsystem 1: Neighbor Management
+// MARK: - Subsystem 1: Neighbor Management & Transport Capabilities
+
+/// Supported physical and radio transport capabilities advertised or discovered per neighbor.
+public struct TransportCapabilities: OptionSet, Sendable, Equatable, Hashable {
+    public let rawValue: UInt8
+    public init(rawValue: UInt8) { self.rawValue = rawValue }
+    
+    public static let awdlDirect  = TransportCapabilities(rawValue: 1 << 0)
+    public static let bleDirect   = TransportCapabilities(rawValue: 1 << 1)
+    public static let relayOpaque = TransportCapabilities(rawValue: 1 << 2)
+    public static let urgentSOS   = TransportCapabilities(rawValue: 1 << 3)
+    
+    public static let standardMesh: TransportCapabilities = [.awdlDirect, .relayOpaque, .urgentSOS]
+}
 
 public enum NeighborState: Sendable, Equatable {
     case connecting
     case connected
     case degraded(packetLossRatio: Double)
     case stale
+}
+
+public enum NeighborEvent: Sendable, Equatable {
+    case discovered(NeighborInfo)
+    case connected(NeighborInfo)
+    case disconnected(peerId: String)
+    case stateChanged(peerId: String, oldState: NeighborState, newState: NeighborState)
+    case evicted(peerId: String)
 }
 
 public struct NeighborInfo: Sendable, Equatable, Identifiable {
@@ -89,6 +110,7 @@ public struct NeighborInfo: Sendable, Equatable, Identifiable {
     public let lastSeen: Date                // Last packet reception timestamp
     public let roundTripTimeMs: Double?      // Estimated latency over link
     public let isGroupMember: Bool           // True if matches local session ID
+    public let capabilities: TransportCapabilities
     
     public init(
         id: String,
@@ -97,7 +119,8 @@ public struct NeighborInfo: Sendable, Equatable, Identifiable {
         rssi: Int8? = nil,
         lastSeen: Date = Date(),
         roundTripTimeMs: Double? = nil,
-        isGroupMember: Bool = false
+        isGroupMember: Bool = false,
+        capabilities: TransportCapabilities = .standardMesh
     ) {
         self.id = id
         self.displayName = displayName
@@ -106,6 +129,7 @@ public struct NeighborInfo: Sendable, Equatable, Identifiable {
         self.lastSeen = lastSeen
         self.roundTripTimeMs = roundTripTimeMs
         self.isGroupMember = isGroupMember
+        self.capabilities = capabilities
     }
 }
 
@@ -127,6 +151,115 @@ public protocol NeighborManaging: Actor {
     
     /// Evicts neighbors whose keep-alive has lapsed beyond the timeout threshold.
     func evictStaleNeighbors(thresholdSeconds: TimeInterval) async
+}
+
+// MARK: - Mesh Transport Foundation & Frame Interfaces
+
+/// Complete received protocol frame carrying raw wire bytes and optional decoded packet.
+nonisolated public struct InboundFrame: Sendable {
+    public let rawData: Data
+    public let rawPacket: RawWirePacket?
+    public let sourcePeerId: String
+    public let receivedRssi: Int8?
+    public let receivedAt: Date
+    
+    public nonisolated init(
+        rawData: Data,
+        rawPacket: RawWirePacket? = nil,
+        sourcePeerId: String,
+        receivedRssi: Int8? = nil,
+        receivedAt: Date = Date()
+    ) {
+        self.rawData = rawData
+        self.rawPacket = rawPacket
+        self.sourcePeerId = sourcePeerId
+        self.receivedRssi = receivedRssi
+        self.receivedAt = receivedAt
+    }
+}
+
+/// Outcome of a local frame submission or next-hop forwarding attempt.
+nonisolated public struct SendOutcome: Sendable, Equatable {
+    public let id: UUID
+    public let destinationPeerId: String
+    public let packetType: PacketType
+    public let isSuccess: Bool
+    public let error: TransportError?
+    public let timestamp: Date
+    
+    public nonisolated init(
+        id: UUID = UUID(),
+        destinationPeerId: String,
+        packetType: PacketType,
+        isSuccess: Bool,
+        error: TransportError? = nil,
+        timestamp: Date = Date()
+    ) {
+        self.id = id
+        self.destinationPeerId = destinationPeerId
+        self.packetType = packetType
+        self.isSuccess = isSuccess
+        self.error = error
+        self.timestamp = timestamp
+    }
+}
+
+/// Instantaneous queue depth across priority lanes.
+nonisolated public struct QueueDepth: Sendable, Equatable {
+    public let urgentCount: Int
+    public let normalCount: Int
+    public let relayCount: Int
+    
+    public var total: Int { urgentCount + normalCount + relayCount }
+    
+    public nonisolated init(urgentCount: Int = 0, normalCount: Int = 0, relayCount: Int = 0) {
+        self.urgentCount = urgentCount
+        self.normalCount = normalCount
+        self.relayCount = relayCount
+    }
+}
+
+/// Authoritative transport-independent abstraction for Phase 2 multi-hop mesh networking.
+public protocol MeshTransport: Actor {
+    /// Inbound stream of complete received wire frames.
+    var inboundFrames: AsyncStream<InboundFrame> { get }
+    
+    /// Stream of transmission outcomes for each submitted or forwarded packet.
+    var sendOutcomes: AsyncStream<SendOutcome> { get }
+    
+    /// Stream of neighbor connection and state change events.
+    var neighborEvents: AsyncStream<NeighborEvent> { get }
+    
+    /// Stream of transport errors.
+    var transportErrors: AsyncStream<TransportError> { get }
+    
+    /// Starts the transport for an active session.
+    func start(serviceType: String, session: GroupSession) async throws
+    
+    /// Stops the transport and cleans up all radio/socket resources.
+    func stop() async
+    
+    /// Submits a complete 54-byte protocol frame to a specific connected peer.
+    func sendFrame(_ data: Data, to peerId: String) async throws -> SendOutcome
+    
+    /// Submits a complete 54-byte protocol frame for broadcast to all connected direct peers.
+    func broadcastFrame(_ data: Data) async throws
+    
+    /// Blindly forwards an opaque 54-byte protocol frame to a designated next hop.
+    /// Does not decrypt the payload. Mutates only hopCount (+1) and enforces hopLimit.
+    func forwardFrame(_ data: Data, to nextHopPeerId: String) async throws -> SendOutcome
+    
+    /// Current view of directly reachable neighbors.
+    func activeNeighbors() async -> [NeighborInfo]
+    
+    /// Current queue depth across urgent, normal, and relay queues.
+    func queueDepth() async -> QueueDepth
+    
+    /// Updates relay participation status.
+    func setRelayParticipation(enabled: Bool) async
+    
+    /// Checks if relaying is currently permitted.
+    func isRelayPermitted() async -> Bool
 }
 
 // MARK: - Subsystem 2: Routing Table & Route Discovery

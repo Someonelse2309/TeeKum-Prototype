@@ -61,6 +61,10 @@ public enum TransportError: Error, LocalizedError, Equatable {
     case peerNotFound(String)
     case queueFull(String)
     case handshakeFailed(String)
+    case relayDisabled
+    case hopLimitExceeded(count: UInt8, limit: UInt8)
+    case rateLimitExceeded(String)
+    case loopDetected(String)
     
     public var errorDescription: String? {
         switch self {
@@ -75,13 +79,21 @@ public enum TransportError: Error, LocalizedError, Equatable {
         case let .sendFailed(reason):
             return "Packet transmission failed: \(reason)"
         case .invalidPacketSize:
-            return "Wire packet size must be exactly 56 bytes."
+            return "Wire packet size must be exactly \(PacketConstants.wirePacketSize) bytes."
         case let .peerNotFound(id):
             return "Target peer '\(id)' is not currently reachable."
         case let .queueFull(reason):
             return "Outbox queue capacity exceeded: \(reason)"
         case let .handshakeFailed(reason):
             return "Peer handshake negotiation failed: \(reason)"
+        case .relayDisabled:
+            return "Mesh relaying is disabled by user policy or battery constraints."
+        case let .hopLimitExceeded(count, limit):
+            return "Packet hop count (\(count)) reached or exceeded limit (\(limit))."
+        case let .rateLimitExceeded(reason):
+            return "Forwarding rate limit exceeded: \(reason)"
+        case let .loopDetected(reason):
+            return "Forwarding loop prevented: \(reason)"
         }
     }
 }

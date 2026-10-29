@@ -87,6 +87,8 @@ struct TeeKumApp: App {
                     fflush(stdout)
                     _ = PeerTransportTests.runAllTests()
                     fflush(stdout)
+                    _ = await NeighborDiscoveryTests.runAllTests()
+                    fflush(stdout)
                     _ = await CryptoSecurityTests.runAllTests()
                     fflush(stdout)
                     _ = await LocationPublishingTests.runAllTests()

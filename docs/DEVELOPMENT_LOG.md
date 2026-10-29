@@ -5,6 +5,83 @@
 
 ---
 
+### [2026-10-29 14:18] — Phase 2 Milestone 2.1: Mesh Transport Foundation, Neighbor Registry & Blind Forwarding
+- **Contributor / Agent:** Agent 1 — TeeKum Mesh Transport and Neighbor Management Specialist
+- **Status:** Completed & Verified (91/91 Automated Tests Passing, 100% Success)
+- **Target Phase / Milestone:** Phase 2 Milestone 2.1 — Transport-Level Mesh Foundation & Neighbor Management
+
+#### 1. Objective & Scope
+- Implement the transport-level foundation for Phase 2 using the approved architecture and the existing Phase 1 networking implementation.
+- Maintain a reliable view of directly reachable peers and provide bounded, observable message forwarding between them.
+- Preserve Phase 1 baseline without regressions (direct AWDL peer communication, group authentication, Live Sharing, meeting points, SOS semantics).
+- Ensure transport does not assume connected peers belong to the same group (open Bonjour communal discovery).
+- Support blind forwarding of opaque frames without decrypting group payloads.
+- Enforce strict resource boundaries: 16-packet urgent queue, 32-packet stranger relay ring buffer, 64-entry neighbor table, 2 pkts/sec ordinary relay budget, and 4 pkts/sec urgent SOS budget.
+- Report next-hop delivery failures explicitly to caller/routing layer rather than hiding them.
+
+#### 2. Architectural Implementations & Components Delivered
+1. **Neighbor Registry (`NeighborTable.swift` conforming to `NeighborManaging`):**
+   - Implemented thread-safe actor tracking peer identity, `NeighborState` (`connecting`, `connected`, `degraded(packetLossRatio)`, `stale`), last-seen timestamp, RSSI, and `TransportCapabilities` (`.awdlDirect`, `.bleDirect`, `.relayOpaque`, `.urgentSOS`).
+   - Injected `MeshClock` abstraction enabling deterministic automated tests.
+   - Two-stage stale neighbor eviction: transitions to `.stale` after threshold, purges after 2x threshold.
+   - Link degradation detection: calculates transmission loss ratio; transitions to `.degraded` when packet loss $\ge 20\%$, automatically recovers to `.connected` when loss drops $< 10\%$.
+   - Candidate selection engine (`selectBestNextHop(excluding:)`): ranks connected over degraded, prefers lower loss ratio, stronger RSSI (-45 dBm > -85 dBm), and fresher lastSeen.
+   - Real-time `AsyncStream<NeighborEvent>` broadcasting discovered, connected, disconnected, stateChanged, and evicted events.
+2. **Forwarding Rate Limiter (`ForwardingRateLimiter.swift` conforming to `ForwardingBudgetManaging`):**
+   - Enforces Decision 7 token bucket budgets: Ordinary relay traffic capped at 2 pkts/sec (capacity 4 tokens, refill 2.0/s); urgent SOS priority traffic capped at 4 pkts/sec (capacity 8 tokens, refill 4.0/s).
+   - Injected `MeshClock` for deterministic time advancement in tests.
+3. **Prioritized Multi-Lane Outbox (`PriorityOutboxQueue.swift`):**
+   - Added stranger relay ring buffer lane bounded at 32 packets (drop-head on overflow, tracking `relayPacketsDroppedOverflow`).
+   - Urgent lane bounded at 16 packets (enforcing backpressure with `TransportError.queueFull`).
+   - Dequeue priority: 1) Urgent lane (SOS, ACK, meeting updates), 2) Normal coalesced lane (location pings), 3) Stranger relay lane.
+   - `clearRelayQueue()` method to immediately purge pending stranger traffic when relay participation is disabled.
+   - `queueDepth` snapshot property reporting instantaneous counts across all three lanes.
+4. **Transport-Independent Interface (`MeshTransport` in `MeshProtocols.swift`):**
+   - Authoritative contract for frame submission (`sendFrame`), broadcast (`broadcastFrame`), and blind forwarding (`forwardFrame`).
+   - Exposes `inboundFrames: AsyncStream<InboundFrame>`, `sendOutcomes: AsyncStream<SendOutcome>`, `neighborEvents: AsyncStream<NeighborEvent>`, and `queueDepth()`.
+   - `SendOutcome` records packet ID, destination, packet type, success/failure status, and error details.
+5. **Open Bonjour Peering & Transport Service (`PeerTransportService.swift`):**
+   - Conforms to both `PeerTransport` (Phase 1 backward-compatible) and `MeshTransport` (Phase 2 foundation).
+   - Modified Bonjour discovery: devices advertising `_teekum._tcp` with different session IDs establish AWDL connections when communal relay is enabled, tracking `isGroupMember = false` while maintaining strict cryptographic payload isolation.
+   - Implemented `forwardFrame(_:to:)`: validates 54-byte frame, checks version `0x02`, enforces hopLimit and hopCount bounds, consumes rate limit tokens, mutates Byte 1 (`hopCount &+= 1`), and forwards opaque bytes without decrypting.
+   - Immediate next-hop failure reporting: throws `TransportError.peerNotFound` and emits failed `SendOutcome` when target peer is unavailable or write fails.
+   - Relay participation toggle (`setRelayParticipation(enabled:)`): immediately cancels relaying, purges relay queue, and rejects forwarding requests.
+6. **In-Memory Multi-Peer Test Harness (`SimulatedMeshTransport.swift`):**
+   - Conforms to `MeshTransport` and `PeerTransport`.
+   - Supports creating arbitrary virtual topologies (linear chains, stars, meshes) in memory.
+   - Simulates RSSI, configurable packet loss ratios, and sudden disconnects/reconnects.
+7. **Comprehensive Automated Test Suite (`NeighborDiscoveryTests.swift`):**
+   - 13 automated tests covering neighbor lifecycle, eviction, degradation, candidate selection, event streaming, outbox bounds, rate limits, hopCount mutation, relay cancellation, next-hop failure reporting, 3-node linear mesh forwarding, and stranger peering.
+8. **Physical-Device Validation Protocol (`docs/PHYSICAL_DEVICE_MESH_TRANSPORT_TEST.md`):**
+   - Detailed field testing protocol for 2-device and 3-device physical validation.
+
+#### 3. Changes Made & Files Touched
+- [`TeeKum Prototype/Services/NeighborTable.swift`](../TeeKum%20Prototype/Services/NeighborTable.swift): Created neighbor registry actor conforming to `NeighborManaging`.
+- [`TeeKum Prototype/Services/ForwardingRateLimiter.swift`](../TeeKum%20Prototype/Services/ForwardingRateLimiter.swift): Created token bucket rate limiter conforming to `ForwardingBudgetManaging`.
+- [`TeeKum Prototype/Services/SimulatedMeshTransport.swift`](../TeeKum%20Prototype/Services/SimulatedMeshTransport.swift): Created in-memory multi-peer test harness.
+- [`TeeKum Prototype/Services/PriorityOutboxQueue.swift`](../TeeKum%20Prototype/Services/PriorityOutboxQueue.swift): Enhanced with 32-packet relay ring buffer, queue depth, and relay purge.
+- [`TeeKum Prototype/Services/MeshProtocols.swift`](../TeeKum%20Prototype/Services/MeshProtocols.swift): Added `TransportCapabilities`, `NeighborEvent`, `InboundFrame`, `SendOutcome`, `QueueDepth`, and `MeshTransport`.
+- [`TeeKum Prototype/Services/PeerTransport.swift`](../TeeKum%20Prototype/Services/PeerTransport.swift): Added `.relayDisabled`, `.hopLimitExceeded`, `.rateLimitExceeded`, and `.loopDetected` to `TransportError`.
+- [`TeeKum Prototype/Services/PeerTransportService.swift`](../TeeKum%20Prototype/Services/PeerTransportService.swift): Extended with `MeshTransport` conformance, open Bonjour discovery, blind forwarding, and next-hop failure reporting.
+- [`TeeKum Prototype/Tests/NeighborDiscoveryTests.swift`](../TeeKum%20Prototype/Tests/NeighborDiscoveryTests.swift): Created 13 automated verification tests.
+- [`TeeKum Prototype/App/TeeKumApp.swift`](../TeeKum%20Prototype/App/TeeKumApp.swift): Wired `NeighborDiscoveryTests.runAllTests()` into in-app test runner.
+- [`docs/PHYSICAL_DEVICE_MESH_TRANSPORT_TEST.md`](PHYSICAL_DEVICE_MESH_TRANSPORT_TEST.md): Created physical test guide.
+
+#### 4. Verification & Testing Performed
+- **Xcode Compilation:** Clean compilation via `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -destination "generic/platform=iOS Simulator" build` -> **BUILD SUCCEEDED** (0 errors).
+- **Automated Regression & New Feature Suite:** Ran all automated test suites on booted iOS Simulator (`iPhone 17`, `C80ECE14-94DC-40AF-B9F4-403F9CE40ACC`) via `xcrun simctl launch ... -runAllTests`:
+  - `PacketCodecTests`: 13/13 passed.
+  - `PeerTransportTests`: 13/13 passed.
+  - `NeighborDiscoveryTests`: 13/13 passed (NEW).
+  - `CryptoSecurityTests`: 13/13 passed.
+  - `LocationPublishingTests`: 11/11 passed.
+  - `UIStateTests`: 12/12 passed.
+  - `SOSEndToEndTests`: 11/11 passed.
+  - `LiveActivityTests`: 5/5 passed.
+  - **Total:** 91/91 automated tests passed (100% success rate).
+
+---
+
 ### [2026-10-29 13:20] — Design Alignment: /grill-me Comprehensive Architectural Review & Finalization
 - **Contributor / Agent:** Agent 0 — Phase 2 Mesh Technical Lead (with Product Owner via /grill-me)
 - **Status:** Completed & Approved

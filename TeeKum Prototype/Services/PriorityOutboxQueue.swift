@@ -8,7 +8,7 @@
 import Foundation
 
 /// An item queued in the radio transmission outbox.
-public struct OutboxItem: Identifiable, Sendable {
+nonisolated public struct OutboxItem: Identifiable, Sendable {
     public let id: UUID
     public let packetData: Data
     public let packetType: PacketType
@@ -17,8 +17,9 @@ public struct OutboxItem: Identifiable, Sendable {
     public var attemptCount: Int
     public let maxRetries: Int
     public let isUrgent: Bool
+    public let isRelay: Bool
     
-    public init(
+    public nonisolated init(
         id: UUID = UUID(),
         packetData: Data,
         packetType: PacketType,
@@ -26,7 +27,8 @@ public struct OutboxItem: Identifiable, Sendable {
         createdAt: Date = Date(),
         attemptCount: Int = 0,
         maxRetries: Int = 2,
-        isUrgent: Bool
+        isUrgent: Bool,
+        isRelay: Bool = false
     ) {
         self.id = id
         self.packetData = packetData
@@ -36,17 +38,22 @@ public struct OutboxItem: Identifiable, Sendable {
         self.attemptCount = attemptCount
         self.maxRetries = maxRetries
         self.isUrgent = isUrgent
+        self.isRelay = isRelay
     }
 }
 
-/// A dual-lane transmission queue that:
+/// A prioritized multi-lane transmission queue that:
 /// 1. Prioritizes urgent packets (SOS emergency sirens, delivery ACKs, meeting point changes).
 /// 2. Coalesces normal periodic location pings so that newer GPS fixes immediately overwrite
 ///    older, unsent fixes, preventing radio saturation and obsolete coordinate flooding.
-/// 3. Enforces bounded capacity limits to prevent out-of-memory under network congestion.
-public final class PriorityOutboxQueue: @unchecked Sendable {
-    /// Bounded capacity for the high-priority urgent lane.
+/// 3. Manages a bounded ring buffer FIFO lane for stranger mesh relay packets (Decision 7: 32 pkts max).
+/// 4. Enforces bounded capacity limits to prevent out-of-memory under network congestion.
+nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
+    /// Bounded capacity for the high-priority urgent lane (Decision 7: 16 packets).
     public let maxUrgentCapacity: Int
+    
+    /// Bounded capacity for stranger blind relaying (Decision 7: 32 packets ring buffer).
+    public let maxRelayCapacity: Int
     
     /// High-priority FIFO queue (SOS, ACK, Meeting updates).
     private var urgentLane: [OutboxItem] = []
@@ -55,21 +62,28 @@ public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Holds strictly the freshest single location ping per destination.
     private var normalCoalescedLane: [String: OutboxItem] = [:]
     
+    /// Stranger relay ring buffer queue (Decision 7: 32 packets, drop-head on overflow).
+    private var strangerRelayLane: [OutboxItem] = []
+    
     /// Counter tracking obsolete location pings coalesced and discarded before transmission.
     public private(set) var obsoletePingsCoalesced: Int = 0
     
-    public init(maxUrgentCapacity: Int = 50) {
+    /// Counter tracking stranger relay packets dropped due to ring buffer overflow.
+    public private(set) var relayPacketsDroppedOverflow: Int = 0
+    
+    public init(maxUrgentCapacity: Int = 16, maxRelayCapacity: Int = 32) {
         self.maxUrgentCapacity = maxUrgentCapacity
+        self.maxRelayCapacity = maxRelayCapacity
     }
     
-    /// Total count of items currently waiting in the outbox.
+    /// Total count of items currently waiting in the outbox across all lanes.
     public var totalQueuedCount: Int {
-        urgentLane.count + normalCoalescedLane.count
+        urgentLane.count + normalCoalescedLane.count + strangerRelayLane.count
     }
     
-    /// True when there are no items waiting to be sent.
+    /// True when there are no items waiting to be sent across any lane.
     public var isEmpty: Bool {
-        urgentLane.isEmpty && normalCoalescedLane.isEmpty
+        urgentLane.isEmpty && normalCoalescedLane.isEmpty && strangerRelayLane.isEmpty
     }
     
     /// Current count of pending urgent packets.
@@ -77,15 +91,34 @@ public final class PriorityOutboxQueue: @unchecked Sendable {
         urgentLane.count
     }
     
+    /// Current count of pending stranger relay packets.
+    public var relayCount: Int {
+        strangerRelayLane.count
+    }
+    
+    /// Snapshot of current queue depth across all lanes.
+    public var queueDepth: QueueDepth {
+        QueueDepth(
+            urgentCount: urgentLane.count,
+            normalCount: normalCoalescedLane.count,
+            relayCount: strangerRelayLane.count
+        )
+    }
+    
     /// Enqueues a packet for transmission.
     ///
     /// - Parameters:
-    ///   - data: Exactly 56 bytes of binary wire data.
+    ///   - data: Exactly 54 bytes of binary wire data.
     ///   - destinationPeerId: Destination peer ID or nil for broadcast.
+    ///   - isRelay: True if forwarding a stranger's opaque packet on the communal mesh.
     /// - Returns: The created `OutboxItem`.
     /// - Throws: `TransportError.invalidPacketSize` or `TransportError.queueFull`.
     @discardableResult
-    public func enqueue(data: Data, destinationPeerId: String? = nil) throws -> OutboxItem {
+    public func enqueue(
+        data: Data,
+        destinationPeerId: String? = nil,
+        isRelay: Bool = false
+    ) throws -> OutboxItem {
         guard data.count == PacketConstants.wirePacketSize else {
             throw TransportError.invalidPacketSize
         }
@@ -94,6 +127,27 @@ public final class PriorityOutboxQueue: @unchecked Sendable {
         let typeRaw = byte0 & 0x0F
         guard let packetType = PacketType(rawValue: typeRaw) else {
             throw TransportError.sendFailed("Unrecognized packet type in Byte 0: \(typeRaw)")
+        }
+        
+        if isRelay {
+            // Communal Stranger Relay Lane (Ring buffer FIFO: 32 max)
+            if strangerRelayLane.count >= maxRelayCapacity {
+                // Drop oldest unforwarded packet (drop-head)
+                strangerRelayLane.removeFirst()
+                relayPacketsDroppedOverflow += 1
+            }
+            
+            let item = OutboxItem(
+                packetData: data,
+                packetType: packetType,
+                destinationPeerId: destinationPeerId,
+                attemptCount: 0,
+                maxRetries: 0, // Relayed stranger packets are not retried locally
+                isUrgent: false,
+                isRelay: true
+            )
+            strangerRelayLane.append(item)
+            return item
         }
         
         let isUrgent = (packetType == .sos || packetType == .ack || packetType == .meetingUpdate)
@@ -109,7 +163,8 @@ public final class PriorityOutboxQueue: @unchecked Sendable {
                 destinationPeerId: destinationPeerId,
                 attemptCount: 0,
                 maxRetries: 2,
-                isUrgent: true
+                isUrgent: true,
+                isRelay: false
             )
             urgentLane.append(item)
             return item
@@ -126,7 +181,8 @@ public final class PriorityOutboxQueue: @unchecked Sendable {
                 destinationPeerId: destinationPeerId,
                 attemptCount: 0,
                 maxRetries: 0, // Stale location pings are not retried on failure
-                isUrgent: false
+                isUrgent: false,
+                isRelay: false
             )
             normalCoalescedLane[destKey] = item
             return item
@@ -134,7 +190,10 @@ public final class PriorityOutboxQueue: @unchecked Sendable {
     }
     
     /// Pops the next highest-priority item for transmission.
-    /// Urgent lane takes absolute precedence over normal location pings.
+    /// Priority order:
+    /// 1. Urgent lane (SOS, ACK, Meeting updates).
+    /// 2. Normal coalesced lane (local location pings).
+    /// 3. Stranger relay lane (communal mesh packets).
     public func dequeue() -> OutboxItem? {
         if !urgentLane.isEmpty {
             return urgentLane.removeFirst()
@@ -143,6 +202,10 @@ public final class PriorityOutboxQueue: @unchecked Sendable {
         if let (key, item) = normalCoalescedLane.first {
             normalCoalescedLane.removeValue(forKey: key)
             return item
+        }
+        
+        if !strangerRelayLane.isEmpty {
+            return strangerRelayLane.removeFirst()
         }
         
         return nil
@@ -160,9 +223,15 @@ public final class PriorityOutboxQueue: @unchecked Sendable {
         return true
     }
     
-    /// Clears all pending packets in the queue.
+    /// Clears only pending stranger relay packets (e.g. when relay participation is disabled).
+    public func clearRelayQueue() {
+        strangerRelayLane.removeAll()
+    }
+    
+    /// Clears all pending packets across all lanes.
     public func clear() {
         urgentLane.removeAll()
         normalCoalescedLane.removeAll()
+        strangerRelayLane.removeAll()
     }
 }

@@ -21,7 +21,7 @@ import Network
 /// - Priority coalescing outbox preventing radio saturation and stale location queueing (`PriorityOutboxQueue`).
 /// - Bounded retries and exponential backoff on connection failure.
 /// - Real-time diagnostics for two-device physical verification.
-public actor PeerTransportService: PeerTransport {
+public actor PeerTransportService: PeerTransport, MeshTransport {
     
     // MARK: - Internal Peer State
     
@@ -32,6 +32,8 @@ public actor PeerTransportService: PeerTransport {
         var connection: NWConnection
         var isReady: Bool = false
         var isOutbound: Bool
+        var isGroupMember: Bool
+        var capabilities: TransportCapabilities
         let framer = StreamMessageFramer()
         var retryCount: Int = 0
         var lastSeen: Date = Date()
@@ -41,13 +43,17 @@ public actor PeerTransportService: PeerTransport {
             displayName: String,
             endpoint: NWEndpoint,
             connection: NWConnection,
-            isOutbound: Bool
+            isOutbound: Bool,
+            isGroupMember: Bool = false,
+            capabilities: TransportCapabilities = .standardMesh
         ) {
             self.peerId = peerId
             self.displayName = displayName
             self.endpoint = endpoint
             self.connection = connection
             self.isOutbound = isOutbound
+            self.isGroupMember = isGroupMember
+            self.capabilities = capabilities
         }
     }
     
@@ -68,14 +74,32 @@ public actor PeerTransportService: PeerTransport {
     /// Endpoints currently visible in NWBrowser results keyed by peer ID.
     private var discoveredEndpoints: [String: (endpoint: NWEndpoint, displayName: String?)] = [:]
     
-    /// Dual-lane prioritized outbox.
+    /// Dual-lane prioritized outbox with stranger relay ring buffer.
     private let outbox = PriorityOutboxQueue()
     private var isFlushingOutbox: Bool = false
+    
+    /// Neighbor management registry.
+    public let neighborTable: NeighborTable
+    
+    /// Forwarding rate limiter enforcing Decision 7 token bucket budgets.
+    public let rateLimiter: ForwardingBudgetManaging
+    
+    /// User-controlled communal mesh relay toggle.
+    public private(set) var isRelayEnabled: Bool = true
     
     // MARK: - Streams & Continuations
     
     private var inboundContinuation: AsyncStream<InboundPacket>.Continuation?
     public private(set) var inboundPackets: AsyncStream<InboundPacket>
+    
+    private var inboundFrameContinuation: AsyncStream<InboundFrame>.Continuation?
+    public private(set) var inboundFrames: AsyncStream<InboundFrame>
+    
+    private var sendOutcomeContinuation: AsyncStream<SendOutcome>.Continuation?
+    public private(set) var sendOutcomes: AsyncStream<SendOutcome>
+    
+    private var neighborEventContinuation: AsyncStream<NeighborEvent>.Continuation?
+    public private(set) var neighborEvents: AsyncStream<NeighborEvent>
     
     private var peerUpdatesContinuation: AsyncStream<[PeerInfo]>.Continuation?
     public private(set) var peerUpdates: AsyncStream<[PeerInfo]>
@@ -98,13 +122,42 @@ public actor PeerTransportService: PeerTransport {
     
     // MARK: - Initialization
     
-    public init() {
+    public init(
+        neighborTable: NeighborTable? = nil,
+        rateLimiter: ForwardingBudgetManaging? = nil,
+        clock: MeshClock = SystemMeshClock()
+    ) {
+        let nTable = neighborTable ?? NeighborTable(clock: clock)
+        self.neighborTable = nTable
+        self.rateLimiter = rateLimiter ?? ForwardingRateLimiter(clock: clock)
+        
         var localInbound: AsyncStream<InboundPacket>.Continuation?
         let inStream = AsyncStream<InboundPacket> { continuation in
             localInbound = continuation
         }
         self.inboundPackets = inStream
         self.inboundContinuation = localInbound
+        
+        var localInboundFrame: AsyncStream<InboundFrame>.Continuation?
+        let inFrameStream = AsyncStream<InboundFrame> { continuation in
+            localInboundFrame = continuation
+        }
+        self.inboundFrames = inFrameStream
+        self.inboundFrameContinuation = localInboundFrame
+        
+        var localOutcomes: AsyncStream<SendOutcome>.Continuation?
+        let outcomeStream = AsyncStream<SendOutcome> { continuation in
+            localOutcomes = continuation
+        }
+        self.sendOutcomes = outcomeStream
+        self.sendOutcomeContinuation = localOutcomes
+        
+        var localNeighborEvents: AsyncStream<NeighborEvent>.Continuation?
+        let nEventStream = AsyncStream<NeighborEvent> { continuation in
+            localNeighborEvents = continuation
+        }
+        self.neighborEvents = nEventStream
+        self.neighborEventContinuation = localNeighborEvents
         
         var localPeerUpdates: AsyncStream<[PeerInfo]>.Continuation?
         let peerStream = AsyncStream<[PeerInfo]> { continuation in
@@ -135,6 +188,24 @@ public actor PeerTransportService: PeerTransport {
             localInbound = continuation
         }
         self.inboundContinuation = localInbound
+        
+        var localInboundFrame: AsyncStream<InboundFrame>.Continuation?
+        self.inboundFrames = AsyncStream { continuation in
+            localInboundFrame = continuation
+        }
+        self.inboundFrameContinuation = localInboundFrame
+        
+        var localOutcomes: AsyncStream<SendOutcome>.Continuation?
+        self.sendOutcomes = AsyncStream { continuation in
+            localOutcomes = continuation
+        }
+        self.sendOutcomeContinuation = localOutcomes
+        
+        var localNeighborEvents: AsyncStream<NeighborEvent>.Continuation?
+        self.neighborEvents = AsyncStream { continuation in
+            localNeighborEvents = continuation
+        }
+        self.neighborEventContinuation = localNeighborEvents
         
         var localPeerUpdates: AsyncStream<[PeerInfo]>.Continuation?
         self.peerUpdates = AsyncStream { continuation in
@@ -201,12 +272,139 @@ public actor PeerTransportService: PeerTransport {
         discoveredEndpoints.removeAll()
         outbox.clear()
         
+        for neighbor in await neighborTable.activeNeighbors() {
+            await neighborTable.removeNeighbor(peerId: neighbor.id)
+        }
+        
         activeSession = nil
         updateState(.stopped)
         emitPeerUpdates()
     }
     
-    /// Broadcasts a 56-byte wire datagram to all currently connected direct peers.
+    // MARK: - MeshTransport Protocol Implementation
+    
+    /// Submits a complete 54-byte protocol frame to a specific connected peer.
+    public func sendFrame(_ data: Data, to peerId: String) async throws -> SendOutcome {
+        guard currentState != .stopped, activeSession != nil else {
+            throw TransportError.notStarted
+        }
+        guard data.count == PacketConstants.wirePacketSize else {
+            throw TransportError.invalidPacketSize
+        }
+        guard let peer = connections[peerId], peer.isReady else {
+            let err = TransportError.peerNotFound(peerId)
+            let byte0 = data[data.startIndex]
+            let pType = PacketType(rawValue: byte0 & 0x0F) ?? .locationPing
+            let failedOutcome = SendOutcome(destinationPeerId: peerId, packetType: pType, isSuccess: false, error: err)
+            sendOutcomeContinuation?.yield(failedOutcome)
+            throw err
+        }
+        
+        let item = try outbox.enqueue(data: data, destinationPeerId: peerId, isRelay: false)
+        triggerOutboxFlush()
+        
+        let outcome = SendOutcome(id: item.id, destinationPeerId: peerId, packetType: item.packetType, isSuccess: true)
+        return outcome
+    }
+    
+    /// Submits a complete 54-byte protocol frame for broadcast to all connected direct peers.
+    public func broadcastFrame(_ data: Data) async throws {
+        try await broadcastPacket(data)
+    }
+    
+    /// Blindly forwards an opaque 54-byte protocol frame to a designated next hop.
+    /// Does not decrypt the payload. Mutates only hopCount (+1) and enforces hopLimit.
+    public func forwardFrame(_ data: Data, to nextHopPeerId: String) async throws -> SendOutcome {
+        guard currentState != .stopped, activeSession != nil else {
+            throw TransportError.notStarted
+        }
+        guard isRelayEnabled else {
+            throw TransportError.relayDisabled
+        }
+        guard data.count == PacketConstants.wirePacketSize else {
+            throw TransportError.invalidPacketSize
+        }
+        
+        let byte0 = data[data.startIndex]
+        guard (byte0 >> 4) == PacketConstants.protocolVersion else {
+            throw PacketCodecError.unsupportedVersion(byte0 >> 4)
+        }
+        
+        let byte1 = data[data.startIndex + 1]
+        let hopLimit = (byte1 >> 4) & 0x0F
+        let hopCount = byte1 & 0x0F
+        
+        guard hopLimit >= 1 && hopLimit <= PacketConstants.sosHopLimit else {
+            throw PacketCodecError.invalidHopLimit(hopLimit)
+        }
+        guard hopCount < hopLimit else {
+            throw PacketCodecError.hopCountExceededLimit(count: hopCount, limit: hopLimit)
+        }
+        
+        guard let peer = connections[nextHopPeerId], peer.isReady else {
+            let err = TransportError.peerNotFound(nextHopPeerId)
+            let pType = PacketType(rawValue: byte0 & 0x0F) ?? .locationPing
+            let failedOutcome = SendOutcome(destinationPeerId: nextHopPeerId, packetType: pType, isSuccess: false, error: err)
+            sendOutcomeContinuation?.yield(failedOutcome)
+            throw err
+        }
+        
+        // Rate limiting budget check
+        let packetType = PacketType(rawValue: byte0 & 0x0F) ?? .locationPing
+        if packetType == .sos {
+            let allowed = await rateLimiter.consumeSOSToken()
+            guard allowed else {
+                throw TransportError.rateLimitExceeded("Urgent SOS forwarding budget exceeded")
+            }
+        } else {
+            let allowed = await rateLimiter.consumeOrdinaryToken()
+            guard allowed else {
+                throw TransportError.rateLimitExceeded("Ordinary relay budget exceeded (2 pkts/sec)")
+            }
+        }
+        
+        // Mutate only hopCount: Byte 1 low 4 bits incremented by 1
+        var mutatedData = data
+        let newByte1 = ((hopLimit & 0x0F) << 4) | ((hopCount + 1) & 0x0F)
+        mutatedData[mutatedData.startIndex + 1] = newByte1
+        
+        let item = try outbox.enqueue(data: mutatedData, destinationPeerId: nextHopPeerId, isRelay: true)
+        triggerOutboxFlush()
+        
+        let outcome = SendOutcome(id: item.id, destinationPeerId: nextHopPeerId, packetType: packetType, isSuccess: true)
+        return outcome
+    }
+    
+    /// Current view of directly reachable neighbors from NeighborTable.
+    public func activeNeighbors() async -> [NeighborInfo] {
+        await neighborTable.activeNeighbors()
+    }
+    
+    /// Current queue depth across urgent, normal, and relay queues.
+    public func queueDepth() async -> QueueDepth {
+        outbox.queueDepth
+    }
+    
+    /// Updates relay participation status.
+    public func setRelayParticipation(enabled: Bool) async {
+        guard isRelayEnabled != enabled else { return }
+        isRelayEnabled = enabled
+        if !enabled {
+            outbox.clearRelayQueue()
+            logEvent("Mesh relay participation disabled. Purged relay outbox.", level: .info)
+        } else {
+            logEvent("Mesh relay participation enabled.", level: .info)
+        }
+    }
+    
+    /// Checks if relaying is currently permitted.
+    public func isRelayPermitted() async -> Bool {
+        isRelayEnabled
+    }
+    
+    // MARK: - Legacy PeerTransport Protocol Implementation
+    
+    /// Broadcasts a 54-byte wire datagram to all currently connected direct peers.
     public func broadcastPacket(_ data: Data) async throws {
         guard currentState != .stopped, activeSession != nil else {
             throw TransportError.notStarted
@@ -215,24 +413,13 @@ public actor PeerTransportService: PeerTransport {
             throw TransportError.invalidPacketSize
         }
         
-        try outbox.enqueue(data: data, destinationPeerId: nil)
+        try outbox.enqueue(data: data, destinationPeerId: nil, isRelay: false)
         triggerOutboxFlush()
     }
     
-    /// Transmits a 56-byte wire datagram to a specific connected peer.
+    /// Transmits a 54-byte wire datagram to a specific connected peer.
     public func sendPacket(_ data: Data, to peerId: String) async throws {
-        guard currentState != .stopped, activeSession != nil else {
-            throw TransportError.notStarted
-        }
-        guard data.count == PacketConstants.wirePacketSize else {
-            throw TransportError.invalidPacketSize
-        }
-        guard let peer = connections[peerId], peer.isReady else {
-            throw TransportError.peerNotFound(peerId)
-        }
-        
-        try outbox.enqueue(data: data, destinationPeerId: peerId)
-        triggerOutboxFlush()
+        _ = try await sendFrame(data, to: peerId)
     }
     
     /// Returns the number of direct peer connections currently established and operational.
@@ -413,7 +600,7 @@ public actor PeerTransportService: PeerTransport {
     private func handleBrowseResults(_ results: Set<NWBrowser.Result>, changes: Set<NWBrowser.Result.Change>) {
         guard let session = activeSession else { return }
         
-        var currentDiscovered: [String: (endpoint: NWEndpoint, displayName: String?)] = [:]
+        var currentDiscovered: [String: (endpoint: NWEndpoint, displayName: String?, isGroup: Bool)] = [:]
         
         for result in results {
             guard case let .service(name, _, _, _) = result.endpoint else { continue }
@@ -422,25 +609,28 @@ public actor PeerTransportService: PeerTransport {
             // 1. Prevent connecting to self or loopback ghosts from previous session
             guard remotePeerId != localPeerId, !remotePeerId.starts(with: localPeerId) else { continue }
             
-            // 2. Validate session ID from TXT record if present
+            // 2. Check session ID from TXT record if present
             var remoteName: String?
+            var isGroup = false
             if case let .bonjour(txtRecord) = result.metadata {
                 if let sidStr = txtRecord.dictionary["sid"] {
                     let expectedSid = String(format: "%08X", session.sessionId)
-                    guard sidStr.uppercased() == expectedSid.uppercased() else {
-                        // Discovered peer belongs to a different session; skip
-                        continue
-                    }
+                    isGroup = (sidStr.uppercased() == expectedSid.uppercased())
                 }
                 if let name = txtRecord.dictionary["name"] {
                     remoteName = name
                 }
             }
             
-            currentDiscovered[remotePeerId] = (result.endpoint, remoteName)
+            // If communal relaying is disabled, do not peer with stranger nodes
+            if !isRelayEnabled && !isGroup {
+                continue
+            }
+            
+            currentDiscovered[remotePeerId] = (result.endpoint, remoteName, isGroup)
         }
         
-        self.discoveredEndpoints = currentDiscovered
+        self.discoveredEndpoints = currentDiscovered.mapValues { ($0.endpoint, $0.displayName) }
         
         // Evaluate connection initiation for discovered peers
         for (remotePeerId, info) in currentDiscovered {
@@ -455,25 +645,25 @@ public actor PeerTransportService: PeerTransport {
             // The peer with the smaller peerId initiates the outbound connection.
             // The peer with the larger peerId waits for the incoming connection.
             if localPeerId < remotePeerId {
-                logEvent("Discovered peer \(remotePeerId) (Initiator role: local < remote). Connecting...", level: .info)
-                initiateOutboundConnection(to: info.endpoint, peerId: remotePeerId, displayName: info.displayName)
+                logEvent("Discovered peer \(remotePeerId) (Initiator role: local < remote, group: \(info.isGroup)). Connecting...", level: .info)
+                initiateOutboundConnection(to: info.endpoint, peerId: remotePeerId, displayName: info.displayName, isGroupMember: info.isGroup)
             } else {
-                logEvent("Discovered peer \(remotePeerId) (Listener role: local > remote). Awaiting incoming link.", level: .info)
+                logEvent("Discovered peer \(remotePeerId) (Listener role: local > remote, group: \(info.isGroup)). Awaiting incoming link.", level: .info)
                 // Schedule fallback connection in case remote is delayed
-                scheduleFallbackConnection(to: info.endpoint, peerId: remotePeerId, displayName: info.displayName)
+                scheduleFallbackConnection(to: info.endpoint, peerId: remotePeerId, displayName: info.displayName, isGroupMember: info.isGroup)
             }
         }
     }
     
-    private func scheduleFallbackConnection(to endpoint: NWEndpoint, peerId: String, displayName: String?) {
+    private func scheduleFallbackConnection(to endpoint: NWEndpoint, peerId: String, displayName: String?, isGroupMember: Bool) {
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 3_500_000_000) // 3.5 seconds
             guard let self = self else { return }
-            await self.checkAndFallbackConnect(to: endpoint, peerId: peerId, displayName: displayName)
+            await self.checkAndFallbackConnect(to: endpoint, peerId: peerId, displayName: displayName, isGroupMember: isGroupMember)
         }
     }
     
-    private func checkAndFallbackConnect(to endpoint: NWEndpoint, peerId: String, displayName: String?) {
+    private func checkAndFallbackConnect(to endpoint: NWEndpoint, peerId: String, displayName: String?, isGroupMember: Bool) {
         guard activeSession != nil, currentState != .stopped else { return }
         guard discoveredEndpoints[peerId] != nil else { return }
         
@@ -482,12 +672,12 @@ public actor PeerTransportService: PeerTransport {
         }
         
         logEvent("Fallback connection trigger for peer \(peerId). Initiating outbound link.", level: .info)
-        initiateOutboundConnection(to: endpoint, peerId: peerId, displayName: displayName)
+        initiateOutboundConnection(to: endpoint, peerId: peerId, displayName: displayName, isGroupMember: isGroupMember)
     }
     
     // MARK: - Connection Lifecycle
     
-    private func initiateOutboundConnection(to endpoint: NWEndpoint, peerId: String, displayName: String?) {
+    private func initiateOutboundConnection(to endpoint: NWEndpoint, peerId: String, displayName: String?, isGroupMember: Bool) {
         // Prevent duplicate connection attempts
         if let existing = connections[peerId], existing.isReady {
             return
@@ -501,7 +691,8 @@ public actor PeerTransportService: PeerTransport {
             displayName: displayName ?? "Peer-\(peerId.prefix(4))",
             endpoint: endpoint,
             connection: nwConn,
-            isOutbound: true
+            isOutbound: true,
+            isGroupMember: isGroupMember
         )
         connections[peerId] = peer
         
@@ -518,7 +709,8 @@ public actor PeerTransportService: PeerTransport {
             displayName: "Connecting...",
             endpoint: connection.endpoint,
             connection: connection,
-            isOutbound: false
+            isOutbound: false,
+            isGroupMember: false // stranger until verified
         )
         connections[tempId] = peer
         
@@ -542,7 +734,18 @@ public actor PeerTransportService: PeerTransport {
             peer.isReady = true
             peer.retryCount = 0
             peer.lastSeen = Date()
-            logEvent("Connection to \(peer.peerId) reached READY state.", level: .info)
+            logEvent("Connection to \(peer.peerId) reached READY state (isGroup: \(peer.isGroupMember)).", level: .info)
+            
+            Task {
+                await neighborTable.registerOrUpdateNeighbor(
+                    id: peer.peerId,
+                    displayName: peer.displayName,
+                    state: .connected,
+                    rssi: nil,
+                    isGroupMember: peer.isGroupMember,
+                    capabilities: peer.capabilities
+                )
+            }
             
             // Start reading frames directly without handshake
             receiveNextBytes(from: peer)
@@ -572,6 +775,10 @@ public actor PeerTransportService: PeerTransport {
         peer.isReady = false
         peer.connection.cancel()
         connections.removeValue(forKey: peerId)
+        
+        Task {
+            await neighborTable.removeNeighbor(peerId: peerId)
+        }
         
         refreshConnectionState()
         emitPeerUpdates()
@@ -661,10 +868,28 @@ public actor PeerTransportService: PeerTransport {
                 let frames = try peer.framer.processIncomingChunk(data)
                 
                 for frame in frames {
-                    do {
-                        let wirePacket = try RawWirePacket.fromWireData(frame)
-                        packetsReceivedCount += 1
-                        
+                    packetsReceivedCount += 1
+                    
+                    Task {
+                        await neighborTable.recordNeighborActivity(
+                            peerId: peer.peerId,
+                            rssi: nil,
+                            isGroupMember: peer.isGroupMember
+                        )
+                    }
+                    
+                    let wirePacket = try? RawWirePacket.fromWireData(frame)
+                    
+                    let inboundFrame = InboundFrame(
+                        rawData: frame,
+                        rawPacket: wirePacket,
+                        sourcePeerId: peer.peerId,
+                        receivedRssi: nil,
+                        receivedAt: Date()
+                    )
+                    inboundFrameContinuation?.yield(inboundFrame)
+                    
+                    if let wirePacket = wirePacket {
                         let inbound = InboundPacket(
                             rawPacket: wirePacket,
                             sourcePeerId: peer.peerId,
@@ -672,8 +897,6 @@ public actor PeerTransportService: PeerTransport {
                             receivedAt: Date()
                         )
                         inboundContinuation?.yield(inbound)
-                    } catch {
-                        logEvent("Packet codec error: \(error.localizedDescription)", level: .warning)
                     }
                 }
             } catch {
@@ -713,7 +936,20 @@ public actor PeerTransportService: PeerTransport {
                 } else {
                     logEvent("Target peer \(targetId) unavailable for packet \(item.packetType).", level: .warning)
                     sendErrorsCount += 1
-                    transportErrorsContinuation?.yield(.peerNotFound(targetId))
+                    let err = TransportError.peerNotFound(targetId)
+                    transportErrorsContinuation?.yield(err)
+                    
+                    Task {
+                        await neighborTable.recordTransmissionOutcome(peerId: targetId, success: false)
+                    }
+                    let failedOutcome = SendOutcome(
+                        id: item.id,
+                        destinationPeerId: targetId,
+                        packetType: item.packetType,
+                        isSuccess: false,
+                        error: err
+                    )
+                    sendOutcomeContinuation?.yield(failedOutcome)
                 }
             } else {
                 // Broadcast to all active direct peers
@@ -735,12 +971,39 @@ public actor PeerTransportService: PeerTransport {
             guard let self = self else { return }
             Task {
                 if let error = error {
+                    if let p = peer {
+                        await self.neighborTable.recordTransmissionOutcome(peerId: p.peerId, success: false)
+                    }
                     await self.handleSendError(error, on: peer, outboxItem: outboxItem)
+                    
+                    let outcome = SendOutcome(
+                        id: outboxItem.id,
+                        destinationPeerId: peer?.peerId ?? (outboxItem.destinationPeerId ?? "broadcast"),
+                        packetType: outboxItem.packetType,
+                        isSuccess: false,
+                        error: .sendFailed(error.localizedDescription)
+                    )
+                    await self.recordSendOutcome(outcome)
                 } else {
+                    if let p = peer {
+                        await self.neighborTable.recordTransmissionOutcome(peerId: p.peerId, success: true)
+                    }
                     await self.recordSendSuccess(packetType: outboxItem.packetType)
+                    
+                    let outcome = SendOutcome(
+                        id: outboxItem.id,
+                        destinationPeerId: peer?.peerId ?? (outboxItem.destinationPeerId ?? "broadcast"),
+                        packetType: outboxItem.packetType,
+                        isSuccess: true
+                    )
+                    await self.recordSendOutcome(outcome)
                 }
             }
         })
+    }
+    
+    private func recordSendOutcome(_ outcome: SendOutcome) {
+        sendOutcomeContinuation?.yield(outcome)
     }
     
     private func recordSendSuccess(packetType: PacketType) {
