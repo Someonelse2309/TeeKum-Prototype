@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AVFoundation
+import UIKit
 
 /// Native AVFoundation Camera QR Scanner with pre-permission educational primer,
 /// permission denial handling, and simulator fallback.
@@ -47,6 +48,13 @@ public struct QRScannerView: View {
         }
         .onAppear {
             authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        }
+        .onChange(of: manualLinkInput) { _, newValue in
+            if let extracted = GroupSession.extractInviteURL(from: newValue)?.absoluteString,
+               extracted != newValue,
+               newValue.contains("teekum://") {
+                manualLinkInput = extracted
+            }
         }
     }
     
@@ -108,20 +116,37 @@ public struct QRScannerView: View {
                 .font(.headline)
                 .foregroundStyle(.white)
             
-            Text("Camera hardware is not available on iOS Simulator. Paste a universal invite link (teekum://join#...) or click below to join.")
+            Text("Camera hardware is not available on iOS Simulator. Paste a universal invite link (teekum://join#...) or full share message below to join.")
                 .font(.footnote)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.gray)
                 .padding(.horizontal)
             
-            TextField("teekum://join#key=...", text: $manualLinkInput)
-                .textFieldStyle(.plain)
-                .padding()
-                .background(Color(white: 0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .foregroundStyle(.white)
-                .font(.caption.monospaced())
-                .padding(.horizontal)
+            HStack(spacing: 8) {
+                TextField("teekum://join#key=... or paste message", text: $manualLinkInput)
+                    .textFieldStyle(.plain)
+                    .foregroundStyle(.white)
+                    .font(.caption.monospaced())
+                
+                Button {
+                    if let clip = UIPasteboard.general.string {
+                        if let extracted = GroupSession.extractInviteURL(from: clip)?.absoluteString {
+                            manualLinkInput = extracted
+                        } else {
+                            manualLinkInput = clip.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "doc.on.clipboard")
+                        .font(.subheadline)
+                        .foregroundStyle(.green)
+                }
+                .accessibilityLabel("Paste from Clipboard")
+            }
+            .padding()
+            .background(Color(white: 0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal)
             
             Button {
                 let trimmed = manualLinkInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -225,14 +250,31 @@ public struct QRScannerView: View {
     
     private var manualEntryAccordion: some View {
         VStack(spacing: 12) {
-            HStack {
-                TextField("Or paste teekum://join invite link...", text: $manualLinkInput)
-                    .font(.caption)
-                    .textFieldStyle(.plain)
-                    .padding(12)
-                    .background(Color(white: 0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .foregroundStyle(.white)
+            HStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    TextField("Paste link or share message...", text: $manualLinkInput)
+                        .font(.caption)
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(.white)
+                    
+                    Button {
+                        if let clip = UIPasteboard.general.string {
+                            if let extracted = GroupSession.extractInviteURL(from: clip)?.absoluteString {
+                                manualLinkInput = extracted
+                            } else {
+                                manualLinkInput = clip.trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    }
+                    .accessibilityLabel("Paste from Clipboard")
+                }
+                .padding(12)
+                .background(Color(white: 0.15))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
                 
                 if !manualLinkInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button("Join") {

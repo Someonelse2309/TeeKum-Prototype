@@ -9,6 +9,7 @@
 > *Companion Documents:*
 > - [AI Coding Agent System Prompt & Task Playbook (docs/AGENT_PROMPT.md)](docs/AGENT_PROMPT.md)
 > - [Technical Requirements Document (docs/TechnicalRequirements.md)](docs/TechnicalRequirements.md)
+> - [Networking Architecture & Wire Protocol (docs/NETWORKING.md)](docs/NETWORKING.md)
 > - [54-Byte Wire Protocol & Payload Developer Guide (docs/PAYLOAD_GUIDE.md)](docs/PAYLOAD_GUIDE.md)
 > - [Development Log (docs/DEVELOPMENT_LOG.md)](docs/DEVELOPMENT_LOG.md)
 > 

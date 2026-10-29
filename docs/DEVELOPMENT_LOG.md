@@ -5,6 +5,87 @@
 
 ---
 
+### [2026-10-29 11:22] — Guidance: ShareLink Template Configuration in QRCodeView
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed
+- **Target Phase / Milestone:** Phase 1 — Group Pairing & ShareLink Text Configuration
+
+#### 1. Objective & Scope
+- Identify the exact source location defining the shared message text `"Join my offline concert group on TeeKum: \(title)"` for user configuration.
+
+#### 2. Findings
+- Located in [`TeeKum Prototype/Views/Components/QRCodeView.swift`](../TeeKum%20Prototype/Views/Components/QRCodeView.swift#L87-L91) inside the SwiftUI `ShareLink` component.
+- The `title` parameter dynamically binds to `session.sessionName` passed from both [`GroupPairingView.swift`](../TeeKum%20Prototype/Views/GroupPairingView.swift#L198) and [`MainMapView.swift`](../TeeKum%20Prototype/Views/MainMapView.swift#L466).
+
+---
+
+### [2026-10-29 11:18] — Feature: Universal Share Message Regex Link Extraction & 1-Tap Clipboard Paste
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed
+- **Target Phase / Milestone:** Phase 1 — Group Pairing & QR/Link Ingestion UX
+
+#### 1. Objective & Scope
+- Allow peers who receive a copied share message (e.g. `"Join my offline concert group on TeeKum: Festival Crew teekum://join#key=EQMSefLnvHGgDn7OQxFTebz7KeeGr/Wr+FEC/3KJd1A=&sid=F390&name=Festival%20Crew"`) to copy the entire text from WhatsApp, iMessage, Notes, or email and paste it directly into TeeKum.
+- Implement regex extraction to automatically locate, extract, and clean the `teekum://join...` link from arbitrary message text, stripping surrounding punctuation and boilerplate.
+- Add a 1-tap "Paste from Clipboard" action in `QRScannerView` manual entry views that auto-extracts the link from the system pasteboard.
+
+#### 2. Changes Made & Files Touched
+- [`TeeKum Prototype/Models/GroupSession.swift`](../TeeKum%20Prototype/Models/GroupSession.swift):
+  - Added `extractInviteURL(from text: String) -> URL?`: Uses case-insensitive regex `(?i)teekum://join[^\s<>"'\(\)\[\]\{\}]+` to find offline links inside arbitrary text blocks, trimming trailing punctuation (e.g., `.,;:!?`).
+  - Added `parseInvite(from text: String) -> GroupSessionInvite?`: Overload that extracts the URL via regex and parses the payload directly from raw strings.
+- [`TeeKum Prototype/Views/GroupPairingView.swift`](../TeeKum%20Prototype/Views/GroupPairingView.swift):
+  - Updated `handleScannedCode(_ code: String)` to use `GroupSession.parseInvite(from: code)`, allowing direct acceptance of full copied share messages in addition to scanned QR barcodes.
+- [`TeeKum Prototype/Views/Components/QRScannerView.swift`](../TeeKum%20Prototype/Views/Components/QRScannerView.swift):
+  - Added 1-tap clipboard paste button (`doc.on.clipboard`) to both `simulatorFallbackView` and `manualEntryAccordion`.
+  - Added `.onChange(of: manualLinkInput)` to automatically extract and clean the `teekum://` URL into the text field if a user pastes a full message containing boilerplate text.
+- [`TeeKum Prototype/Tests/UIStateTests.swift`](../TeeKum%20Prototype/Tests/UIStateTests.swift):
+  - Added comprehensive test assertions in `testInitialsCodecAndAutoMeshEdgeCases` verifying exact user share message parsing, multiline quoted messages with trailing punctuation, and non-link rejection.
+
+#### 3. Key Decisions & Rationale
+- **Frictionless Ingestion:** Users copying messages from third-party messengers often copy the entire message rather than carefully selecting only the URL portion. Extracting the URL via regex ensures zero join failures without requiring manual URL editing by the user.
+
+#### 4. Verification & Testing Performed
+- **Xcode Build:** Compiled successfully via `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -destination "id=C80ECE14-94DC-40AF-B9F4-403F9CE40ACC" build` -> **BUILD SUCCEEDED**.
+- **Automated Tests:** Verified full suite on booted simulator (`C80ECE14-94DC-40AF-B9F4-403F9CE40ACC`) via `-runAllTests`. All test suites passed including `UIStateTests` with regex extraction.
+
+---
+
+### [2026-10-29 11:08] — Documentation: Authoritative Networking Architecture & Protocol Guide (`docs/NETWORKING.md`)
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed
+- **Target Phase / Milestone:** Networking Architecture & Developer Documentation (Protocol v2)
+
+#### 1. Objective & Scope
+- Provide a comprehensive, authoritative documentation file ([`docs/NETWORKING.md`](NETWORKING.md)) breaking down TeeKum's entire peer-to-peer networking architecture, transport protocols, connection lifecycle, stream framing, outbox prioritization, and iOS platform constraints.
+
+#### 2. Changes Made & Files Touched
+- [`docs/NETWORKING.md`](NETWORKING.md):
+  - Created master networking architecture guide detailing the 5-layer networking stack (Application $\to$ Protocol/Crypto $\to$ Flow Control $\to$ Peer Transport $\to$ Physical AWDL).
+  - Documented physical radio layer: Apple Wireless Direct Link (AWDL), Wi-Fi Direct, and BLE proximity coordination without routers.
+  - Detailed Bonjour discovery (`NWListener` / `NWBrowser`), TXT record metadata (`sid`, `name`), and session isolation.
+  - Explained transport selection: TCP vs. UDP over AWDL, keep-alive tuning (`keepaliveIdle = 5s`, `interval = 2s`), and deterministic tie-breaking (lexicographical peer ID comparison with 3.5s deadlock fallback).
+  - Documented zero-handshake architecture enabled by Base-27 2-byte sender initials.
+  - Documented flow control: `StreamMessageFramer` (chunk buffering, frame extraction, self-healing stream resynchronization) and `PriorityOutboxQueue` (dual-lane outbox with urgent SOS preemption and obsolete ping coalescing).
+  - Fully mapped Protocol v2 54-byte binary wire layout, Associated Authenticated Data (AAD) Byte 1 masking for relays, 12-byte AEAD nonce construction, and all 4 primary payload types.
+  - Documented the 6-step inbound ingestion filter, background pocket execution (`showsBackgroundLocationIndicator`), and Festival Survival Mode (<20% battery cutoff).
+- Documentation Cross-Links:
+  - [`docs/agent.md`](agent.md): Added `docs/NETWORKING.md` to Companion Documents.
+  - [`docs/TechnicalRequirements.md`](TechnicalRequirements.md): Cross-linked `docs/NETWORKING.md` in Section 2.2 under `Network.framework`.
+
+#### 3. Key Decisions & Rationale
+- **Authoritative Single Document:** Created a dedicated reference [`docs/NETWORKING.md`](NETWORKING.md) explaining both low-level transport mechanisms (`Network.framework` P2P, AWDL, Bonjour) and high-level protocol framing (`StreamMessageFramer`, `PriorityOutboxQueue`, 54-byte binary layout).
+- **Practical Engineering Focus:** Provided concrete ASCII stack diagrams, Mermaid discovery/tie-breaking sequence diagrams, and real byte-by-byte wire tables matching the current codebase.
+
+#### 4. Verification & Testing Performed
+- **Automated Test Suite:** Re-verified all 79 automated test assertions pass (100% pass across `PacketCodecTests`, `PeerTransportTests`, `CryptoSecurityTests`, `LocationPublishingTests`, `UIStateTests`, `SOSEndToEndTests`, and `LiveActivityTests`).
+- **Build Verification:** Clean build succeeded (`xcodebuild` targeting iOS 17+ Simulator).
+- **Link Integrity:** Verified relative cross-links between `docs/NETWORKING.md`, `docs/agent.md`, and `docs/TechnicalRequirements.md`.
+
+#### 5. Open Items & Next Steps
+- Continue physical device field-testing of AWDL link stability between two or more physical iPhones.
+
+---
+
 ### [2026-10-29 10:45] — Documentation: 54-Byte Wire Protocol & Payload Developer Guide (`docs/PAYLOAD_GUIDE.md`)
 - **Contributor / Agent:** Antigravity (Pair Programming Agent)
 - **Status:** Completed

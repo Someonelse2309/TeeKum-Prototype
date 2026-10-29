@@ -100,6 +100,44 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
         return components.url ?? URL(string: "teekum://join")!
     }
     
+    /// Extracts a `teekum://join...` URL from any arbitrary string (e.g. copied share message, email, or chat).
+    /// Uses regex matching to locate the offline link even when embedded inside boilerplate text such as:
+    /// `"Join my offline concert group on TeeKum: Festival Crew teekum://join#key=...&sid=...&name=..."`.
+    public static func extractInviteURL(from text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        
+        // Direct URL parse if the string itself is a clean teekum URL
+        if let directURL = URL(string: trimmed),
+           let scheme = directURL.scheme?.lowercased(),
+           scheme == "teekum" {
+            return directURL
+        }
+        
+        // Regex extraction to find teekum:// URL inside any arbitrary text
+        // Matches teekum://join followed by query or fragment parameters
+        let pattern = #"(?i)teekum://join[^\s<>"'\(\)\[\]\{\}]+"#
+        guard let range = text.range(of: pattern, options: .regularExpression) else {
+            return nil
+        }
+        
+        var rawMatched = String(text[range])
+        
+        // Trim trailing sentence punctuation if accidentally attached
+        let trailingPunctuation = CharacterSet(charactersIn: ".,;:!?")
+        while let last = rawMatched.unicodeScalars.last, trailingPunctuation.contains(last) {
+            rawMatched.removeLast()
+        }
+        
+        return URL(string: rawMatched)
+    }
+    
+    /// Parses an incoming string (raw text, copied share message, or direct URL) into a `GroupSessionInvite`.
+    public static func parseInvite(from text: String) -> GroupSessionInvite? {
+        guard let url = extractInviteURL(from: text) else { return nil }
+        return parseInvite(from: url)
+    }
+    
     /// Parses an incoming universal link or QR barcode string into a `GroupSessionInvite`.
     public static func parseInvite(from url: URL) -> GroupSessionInvite? {
         guard let scheme = url.scheme?.lowercased(), scheme == "teekum" else { return nil }

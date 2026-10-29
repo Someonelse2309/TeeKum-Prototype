@@ -316,14 +316,8 @@ public struct GroupPairingView: View {
     }
     
     private func handleScannedCode(_ code: String) {
-        let trimmedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmedCode) else {
-            sessionViewModel.errorMessage = "Scanned barcode is not a valid URL: \(trimmedCode)"
-            return
-        }
-        
-        guard let invite = GroupSession.parseInvite(from: url) else {
-            sessionViewModel.errorMessage = "Invalid TeeKum QR code or mismatched session format."
+        guard let invite = GroupSession.parseInvite(from: code) else {
+            sessionViewModel.errorMessage = "Invalid TeeKum invite link or mismatched session format."
             return
         }
         

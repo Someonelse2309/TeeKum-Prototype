@@ -495,6 +495,46 @@ public struct UIStateTests {
             return false
         }
         
+        // 6. Regex invite link extraction from full copied share messages
+        let fullShareMessage = "Join my offline concert group on TeeKum: Festival Crew teekum://join#key=EQMSefLnvHGgDn7OQxFTebz7KeeGr/Wr+FEC/3KJd1A=&sid=F390&name=Festival%20Crew"
+        guard let extractedURL = GroupSession.extractInviteURL(from: fullShareMessage) else {
+            print("FAILED: extractInviteURL failed on full share message")
+            return false
+        }
+        guard extractedURL.absoluteString == "teekum://join#key=EQMSefLnvHGgDn7OQxFTebz7KeeGr/Wr+FEC/3KJd1A=&sid=F390&name=Festival%20Crew" else {
+            print("FAILED: extractedURL mismatch: \(extractedURL.absoluteString)")
+            return false
+        }
+        guard let inviteFromFullMessage = GroupSession.parseInvite(from: fullShareMessage) else {
+            print("FAILED: parseInvite(from: String) failed on full share message")
+            return false
+        }
+        guard inviteFromFullMessage.sessionId == 0xF390,
+              inviteFromFullMessage.sessionName == "Festival Crew",
+              inviteFromFullMessage.keyData.count == 32 else {
+            print("FAILED: inviteFromFullMessage properties mismatch")
+            return false
+        }
+        
+        // Multiline with punctuation and quotes
+        let multilineShare = "Hey everyone!\n\"Join my offline concert group on TeeKum: Hard Summer teekum://join#key=\(keyBase64)&sid=ABCD&name=Hard%20Summer.\"\nSee you at the stage!"
+        guard let inviteFromMultiline = GroupSession.parseInvite(from: multilineShare) else {
+            print("FAILED: parseInvite failed on multiline quoted message with trailing period")
+            return false
+        }
+        guard inviteFromMultiline.sessionId == 0xABCD,
+              inviteFromMultiline.sessionName == "Hard Summer",
+              inviteFromMultiline.keyData == keyData else {
+            print("FAILED: inviteFromMultiline properties mismatch")
+            return false
+        }
+        
+        // Invalid text without teekum link
+        guard GroupSession.parseInvite(from: "Just some random text without links") == nil else {
+            print("FAILED: parseInvite should return nil for random text")
+            return false
+        }
+        
         print("PASSED: testInitialsCodecAndAutoMeshEdgeCases")
         return true
     }
