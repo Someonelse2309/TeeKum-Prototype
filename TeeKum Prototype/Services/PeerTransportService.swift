@@ -283,7 +283,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     
     // MARK: - MeshTransport Protocol Implementation
     
-    /// Submits a complete 54-byte protocol frame to a specific connected peer.
+    /// Submits a complete 56-byte protocol frame to a specific connected peer.
     public func sendFrame(_ data: Data, to peerId: String) async throws -> SendOutcome {
         guard currentState != .stopped, activeSession != nil else {
             throw TransportError.notStarted
@@ -307,12 +307,12 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         return outcome
     }
     
-    /// Submits a complete 54-byte protocol frame for broadcast to all connected direct peers.
+    /// Submits a complete 56-byte protocol frame for broadcast to all connected direct peers.
     public func broadcastFrame(_ data: Data) async throws {
         try await broadcastPacket(data)
     }
     
-    /// Blindly forwards an opaque 54-byte protocol frame to a designated next hop.
+    /// Blindly forwards an opaque 56-byte protocol frame to a designated next hop.
     /// Does not decrypt the payload. Mutates only hopCount (+1) and enforces hopLimit.
     public func forwardFrame(_ data: Data, to nextHopPeerId: String) async throws -> SendOutcome {
         guard currentState != .stopped, activeSession != nil else {
@@ -330,9 +330,8 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
             throw PacketCodecError.unsupportedVersion(byte0 >> 4)
         }
         
-        let byte1 = data[data.startIndex + 1]
-        let hopLimit = (byte1 >> 4) & 0x0F
-        let hopCount = byte1 & 0x0F
+        let hopLimit = data[data.startIndex + 1]
+        let hopCount = data[data.startIndex + 2]
         
         guard hopLimit >= 1 && hopLimit <= PacketConstants.sosHopLimit else {
             throw PacketCodecError.invalidHopLimit(hopLimit)
@@ -363,10 +362,9 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
             }
         }
         
-        // Mutate only hopCount: Byte 1 low 4 bits incremented by 1
+        // Mutate only hopCount: Byte 2 incremented by 1
         var mutatedData = data
-        let newByte1 = ((hopLimit & 0x0F) << 4) | ((hopCount + 1) & 0x0F)
-        mutatedData[mutatedData.startIndex + 1] = newByte1
+        mutatedData[mutatedData.startIndex + 2] = hopCount + 1
         
         let item = try outbox.enqueue(data: mutatedData, destinationPeerId: nextHopPeerId, isRelay: true)
         triggerOutboxFlush()
@@ -404,7 +402,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     
     // MARK: - Legacy PeerTransport Protocol Implementation
     
-    /// Broadcasts a 54-byte wire datagram to all currently connected direct peers.
+    /// Broadcasts a 56-byte wire datagram to all currently connected direct peers.
     public func broadcastPacket(_ data: Data) async throws {
         guard currentState != .stopped, activeSession != nil else {
             throw TransportError.notStarted
@@ -417,7 +415,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         triggerOutboxFlush()
     }
     
-    /// Transmits a 54-byte wire datagram to a specific connected peer.
+    /// Transmits a 56-byte wire datagram to a specific connected peer.
     public func sendPacket(_ data: Data, to peerId: String) async throws {
         _ = try await sendFrame(data, to: peerId)
     }

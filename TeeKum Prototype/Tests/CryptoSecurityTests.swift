@@ -225,7 +225,7 @@ public struct CryptoSecurityTests {
                 // Expected
             }
             
-            // Subtest D: Tamper hopLimit (Byte 1 high nibble)
+            // Subtest D: Tamper hopLimit (Byte 1)
             var tamperedLimitEnvelope = envelope
             tamperedLimitEnvelope.hopLimit = 4
             do {
@@ -530,7 +530,7 @@ public struct CryptoSecurityTests {
     // MARK: - Test 13: End-to-End Wire Datagram Codec
     
     public static func testEndToEndWireDatagramCodec() async -> Bool {
-        print("[Test 13] End-to-end 54-byte wire datagram seal and open...")
+        print("[Test 13] End-to-end 56-byte wire datagram seal and open...")
         let cryptoService = CryptoService()
         let key = cryptoService.generateSymmetricKey()
         
@@ -552,14 +552,14 @@ public struct CryptoSecurityTests {
         let plainBytes = sosPayload.serialize()
         
         do {
-            // Seal to exact 54 wire bytes
+            // Seal to exact 56 wire bytes
             let wireData = try await cryptoService.sealToWireBytes(payload: plainBytes, envelope: envelope, using: key)
-            guard wireData.count == 54 else {
-                print("  FAIL: Wire data must be exactly 54 bytes, got \(wireData.count)")
+            guard wireData.count == 56 else {
+                print("  FAIL: Wire data must be exactly 56 bytes, got \(wireData.count)")
                 return false
             }
             
-            // Open 54 wire bytes
+            // Open 56 wire bytes
             let (unpackedEnvelope, decryptedPayload) = try await cryptoService.openWireBytes(wireData, using: key)
             guard unpackedEnvelope == envelope else {
                 print("  FAIL: Unpacked envelope mismatch.")
@@ -578,7 +578,7 @@ public struct CryptoSecurityTests {
                 return false
             }
             
-            print("  PASS: End-to-end 54-byte datagram sealed, parsed, and verified.")
+            print("  PASS: End-to-end 56-byte datagram sealed, parsed, and verified.")
             return true
         } catch {
             print("  FAIL: End-to-end wire error: \(error)")

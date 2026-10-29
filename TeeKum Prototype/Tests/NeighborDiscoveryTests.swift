@@ -570,8 +570,8 @@ public struct NeighborDiscoveryTests {
         
         // Create packet with hopLimit=8, hopCount=0
         let originalPacket = createValidWirePacket(type: .locationPing, hopLimit: 8, hopCount: 0, seq: 42, sid: 0xCAFE)
-        let originalCiphertext = originalPacket.subdata(in: 8..<38)
-        let originalAuthTag = originalPacket.subdata(in: 38..<54)
+        let originalCiphertext = originalPacket.subdata(in: 10..<40)
+        let originalAuthTag = originalPacket.subdata(in: 40..<56)
         
         // Setup frame collector on Node B
         let nodeBStream = await nodeB.inboundFrames
@@ -596,10 +596,10 @@ public struct NeighborDiscoveryTests {
         }
         
         // Verify frame was mutated correctly:
-        // Byte 1: hopLimit (high 4 bits) must remain 8, hopCount (low 4 bits) must have incremented from 0 to 1
-        let byte1 = frame.rawData[1]
-        let hopLimit = (byte1 >> 4) & 0x0F
-        let hopCount = byte1 & 0x0F
+        // Byte 1: hopLimit must remain 8
+        // Byte 2: hopCount must have incremented from 0 to 1
+        let hopLimit = frame.rawData[1]
+        let hopCount = frame.rawData[2]
         guard hopLimit == 8 else {
             print("  FAIL: hopLimit should remain 8, got \(hopLimit).")
             return false
@@ -610,8 +610,8 @@ public struct NeighborDiscoveryTests {
         }
         
         // Ciphertext and Auth Tag must remain 100% byte-identical
-        let receivedCiphertext = frame.rawData.subdata(in: 8..<38)
-        let receivedAuthTag = frame.rawData.subdata(in: 38..<54)
+        let receivedCiphertext = frame.rawData.subdata(in: 10..<40)
+        let receivedAuthTag = frame.rawData.subdata(in: 40..<56)
         guard receivedCiphertext == originalCiphertext else {
             print("  FAIL: Ciphertext corrupted during forwarding.")
             return false
@@ -792,7 +792,7 @@ public struct NeighborDiscoveryTests {
             print("  FAIL: Relay Bob did not receive frame.")
             return false
         }
-        guard frameAtRelay.sourcePeerId == "ALICE", (frameAtRelay.rawData[1] & 0x0F) == 0 else {
+        guard frameAtRelay.sourcePeerId == "ALICE", frameAtRelay.rawData[2] == 0 else {
             print("  FAIL: Frame at relay mismatch.")
             return false
         }
@@ -816,8 +816,8 @@ public struct NeighborDiscoveryTests {
             print("  FAIL: Immediate 1-hop source should be RELAY_BOB.")
             return false
         }
-        guard (frameAtCharlie.rawData[1] & 0x0F) == 1 else {
-            print("  FAIL: Cumulative hopCount at Charlie should be 1, got \(frameAtCharlie.rawData[1] & 0x0F).")
+        guard frameAtCharlie.rawData[2] == 1 else {
+            print("  FAIL: Cumulative hopCount at Charlie should be 1, got \(frameAtCharlie.rawData[2]).")
             return false
         }
         guard let rawPacket = frameAtCharlie.rawPacket else {

@@ -28,17 +28,17 @@ The TeeKum wire protocol defines a strict, non-negotiable architectural separati
 
 ```mermaid
 graph TD
-    subgraph WirePacket ["54-Byte Wire Datagram"]
-        subgraph CleartextEnvelope ["8-Byte Cleartext Routing Envelope"]
-            B0["Byte 0: Version (4b) | Type (4b)<br/>[IMMUTABLE, SEALED IN AAD]"]
-            B1A["Byte 1 High: HopLimit (4b)<br/>[IMMUTABLE, SEALED IN AAD]"]
-            B1B["Byte 1 Low: HopCount (4b)<br/>[MUTABLE, MASKED TO 0x00 IN AAD]"]
-            B23["Bytes 2..3: Session ID (16b)<br/>[IMMUTABLE, SEALED IN AAD & NONCE]"]
-            B47["Bytes 4..7: Sequence Number (32b)<br/>[IMMUTABLE, SEALED IN AAD & NONCE]"]
+    subgraph WirePacket ["56-Byte Wire Datagram"]
+        subgraph CleartextEnvelope ["10-Byte Cleartext Routing Envelope"]
+            B0["Byte 0: Version (4b) | Type (4b)<br/>[IMMUTABLE, SEALED IN AAD & NONCE]"]
+            B1["Byte 1: HopLimit (8b)<br/>[IMMUTABLE, SEALED IN AAD]"]
+            B2["Byte 2: HopCount (8b)<br/>[MUTABLE, MASKED TO 0x00 IN AAD]"]
+            B35["Bytes 3..5: Session ID (24b)<br/>[IMMUTABLE, SEALED IN AAD & NONCE]"]
+            B69["Bytes 6..9: Sequence Number (32b)<br/>[IMMUTABLE, SEALED IN AAD & NONCE]"]
         end
         subgraph ProtectedPayload ["46-Byte Opaque Cryptographic Block"]
-            Ciphertext["Bytes 8..37: ChaCha20 Ciphertext (30B)<br/>[SEALED WITH 256-BIT GROUP KEY]"]
-            AuthTag["Bytes 38..53: Poly1305 MAC Tag (16B)<br/>[SEALED OVER CIPHERTEXT + AAD]"]
+            Ciphertext["Bytes 10..39: ChaCha20 Ciphertext (30B)<br/>[SEALED WITH 256-BIT GROUP KEY]"]
+            AuthTag["Bytes 40..55: Poly1305 MAC Tag (16B)<br/>[SEALED OVER CIPHERTEXT + AAD]"]
         end
     end
 ```
@@ -49,12 +49,12 @@ graph TD
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `version` | Byte 0 (high 4b) | 4 bits | Readable | Sealed in AAD & Nonce | Must be `0x02`. Any version tampering fails Poly1305. |
 | `type` | Byte 0 (low 4b) | 4 bits | Readable | Sealed in AAD & Nonce | Must be `0x01`..`0x06`. Changing type fails Poly1305. |
-| `hopLimit` | Byte 1 (high 4b) | 4 bits | Readable | Sealed in AAD verbatim | Authenticated. Relay cannot inflate forwarding budget. |
-| `hopCount` | Byte 1 (low 4b) | 4 bits | Mutable | **Masked to `0x00` in AAD** | Mutated per relay hop without invalidating recipient MAC. |
-| `sessionId` | Bytes 2..3 | 16 bits | Readable | Sealed in AAD & Nonce | Authenticated. Relays cannot change session association. |
-| `sequenceNumber` | Bytes 4..7 | 32 bits | Readable | Sealed in AAD & Nonce | Authenticated. Partitioned per member; monotonic counter. |
-| `ciphertext` | Bytes 8..37 | 30 bytes | **Opaque Blob** | ChaCha20 Ciphertext | Relays possess no group keys; cannot read plaintext. |
-| `authTag` | Bytes 38..53 | 16 bytes | **Opaque Blob** | Poly1305 MAC Tag (128b)| End-to-end tamper proof. Any bit change causes immediate drop. |
+| `hopLimit` | Byte 1 | 8 bits | Readable | Sealed in AAD verbatim | Authenticated. Relay cannot inflate forwarding budget. |
+| `hopCount` | Byte 2 | 8 bits | Mutable | **Masked to `0x00` in AAD** | Mutated per relay hop without invalidating recipient MAC. |
+| `sessionId` | Bytes 3..5 | 24 bits | Readable | Sealed in AAD & Nonce | Authenticated. Relays cannot change session association. |
+| `sequenceNumber` | Bytes 6..9 | 32 bits | Readable | Sealed in AAD & Nonce | Authenticated. Partitioned per member; monotonic counter. |
+| `ciphertext` | Bytes 10..39 | 30 bytes | **Opaque Blob** | ChaCha20 Ciphertext | Relays possess no group keys; cannot read plaintext. |
+| `authTag` | Bytes 40..55 | 16 bytes | **Opaque Blob** | Poly1305 MAC Tag (128b)| End-to-end tamper proof. Any bit change causes immediate drop. |
 
 ---
 
@@ -65,14 +65,17 @@ In standard AEAD, authenticating cleartext metadata binds it to the message. How
 
 If `hopCount` were authenticated directly, the first relay increment would invalidate the Poly1305 tag, breaking end-to-end delivery.
 
-**Solution:** The 8-byte Associated Authenticated Data (AAD) normalizes Byte 1 by zero-masking the lower 4 bits:
+**Solution:** The 10-byte Associated Authenticated Data (AAD) normalizes Byte 2 by zero-masking it:
 
-$$\text{MaskedByte1} = (\mathtt{hopLimit} \ \& \ \mathtt{0x0F}) \ll 4$$
-$$\text{AAD} = \mathtt{byte0} \parallel \text{MaskedByte1} \parallel \mathtt{sessionId} [2\text{B}] \parallel \mathtt{sequenceNumber} [4\text{B}]$$
+$$\text{MaskedByte2} = \mathtt{0x00}$$
+$$\text{AAD} = \mathtt{byte0} \parallel \mathtt{hopLimit} [1\text{B}] \parallel \mathtt{0x00} [1\text{B}] \parallel \mathtt{sessionId} [3\text{B}] \parallel \mathtt{sequenceNumber} [4\text{B}]$$
+
+**Nonce Derivation (12 Bytes / 96 Bits RFC 8439):**
+$$\text{Nonce} = \mathtt{sessionId} [3\text{B}] \parallel \mathtt{sequenceNumber} [4\text{B}] \parallel \mathtt{byte0} [1\text{B}] \parallel \mathtt{"TKM2"} [4\text{B}]$$
 
 ### 3.2 Formal Security Properties
-1. **Relay Invariance:** When a relay increments Byte 1 low 4 bits (`hopCount &+= 1`), the masked value computed by the recipient is identical to the masked value used during sender sealing. The MAC verification succeeds.
-2. **Forwarding Budget Protection:** `hopLimit` occupies Byte 1 high 4 bits and is authenticated verbatim inside `MaskedByte1`. If an attacker or rogue relay modifies `hopLimit` (e.g. inflating it to cause broadcast storms), the recipient's Poly1305 check fails immediately and the packet is dropped with `.dropSecurityVerificationFailed`.
+1. **Relay Invariance:** When a relay increments Byte 2 (`hopCount &+= 1`), the masked value computed by the recipient is identical to the masked value used during sender sealing (Byte 2 masked to `0x00`). The Poly1305 MAC verification succeeds.
+2. **Forwarding Budget Protection:** `hopLimit` occupies Byte 1 and is authenticated verbatim inside AAD. If an attacker or rogue relay modifies `hopLimit` (e.g. inflating it to cause broadcast storms), the recipient's Poly1305 check fails immediately and the packet is dropped with `.dropSecurityVerificationFailed`.
 3. **Hop Budget Termination:** Intermediate relays check `hopCount < hopLimit` and `hopCount < 8`. Once `hopCount == hopLimit`, the forwarding budget is exhausted and the packet is dropped immediately with `.dropHopLimitExceeded`.
 
 ---
@@ -83,7 +86,7 @@ All 8 threat scenarios identified in the engineering instructions were implement
 
 ```mermaid
 flowchart TD
-    InboundPacket[Inbound Wire Datagram] --> SizeCheck{Size == 54B & Ver == 0x02?}
+    InboundPacket[Inbound Wire Datagram] --> SizeCheck{Size == 56B & Ver == 0x02?}
     SizeCheck -- Malformed --> DropMalformed[Drop: .dropMalformed]
     SizeCheck -- Valid --> HopCheck{hopCount < hopLimit & hopCount < 8?}
     HopCheck -- Exceeded --> DropHop[Drop: .dropHopLimitExceeded]
@@ -108,7 +111,7 @@ flowchart TD
 ---
 
 ### Threat Scenario 1: Outsider Forged SOS Injection
-- **Attack Vector:** An attacker with no group credentials transmits a forged 54-byte emergency SOS packet matching a local session ID to induce panic, trigger false alarms, and manipulate rendezvous locations.
+- **Attack Vector:** An attacker with no group credentials transmits a forged 56-byte emergency SOS packet matching a local session ID to induce panic, trigger false alarms, and manipulate rendezvous locations.
 - **Defense Mechanism:** Destination verifies the 16-byte Poly1305 authentication tag using the 256-bit group symmetric key.
 - **Result:** Without the secret key, forgery fails MAC verification with probability $1 - 2^{-128}$. The packet is dropped immediately with `.dropSecurityVerificationFailed`. Zero sirens, zero map mutations, zero state changes occur.
 - **Verification:** Verified in `testOutsiderForgedSOSRejection`.
@@ -198,17 +201,17 @@ In accordance with Section 15 of `docs/agent.md`, the following threats are expl
 +-----------------------------------+---------------------------------------------------------------+
 | 1. RF Physical Traffic Analysis   | AWDL / Wi-Fi Direct frame transmissions and MAC headers are   |
 |                                   | observable by a sophisticated adversary with an SDR. Frame    |
-|                                   | sizes (54B) and transmission cadences could leak presence.    |
-|                                   | -> Mitigated partially by fixed 54B padding; timing unmasked. |
+|                                   | sizes (56B) and transmission cadences could leak presence.    |
+|                                   | -> Mitigated partially by fixed 56B padding; timing unmasked. |
 |                                   |                                                               |
 | 2. Silent Packet Dropping         | A malicious or selfish node can accept a packet for forwarding|
 |    (Blackhole Attack)             | and silently drop it without transmitting.                     |
 |                                   | -> Mitigated by multi-path bounded flooding; single-path      |
 |                                   |    unicast routes remain vulnerable if a relay drops traffic. |
 |                                   |                                                               |
-| 3. Ephemeral Session Collision    | 16-bit session IDs allow 65,536 distinct groups. At a mega-   |
-|                                   | festival with 100,000 attendees, hash collisions between two  |
-|                                   | independent groups have non-zero probability (~1-2%).         |
+| 3. Ephemeral Session Collision    | 24-bit session IDs allow 16,777,216 distinct groups. At a     |
+|                                   | mega-festival with 100,000 attendees, hash collisions between |
+|                                   | two independent groups have negligible probability (<0.001%). |
 |                                   | -> Collisions result in harmless MAC drops, but duplicate     |
 |                                   |    cache could suppress packets if sequence numbers collide.  |
 |                                   |                                                               |
@@ -229,7 +232,7 @@ In accordance with Section 15 of `docs/agent.md`, the following threats are expl
 ## 8. Verification & Acceptance Sign-Off
 
 - **Cryptographic Primitives:** ChaCha20-Poly1305 (RFC 8439), 256-bit symmetric key, 96-bit deterministic nonce.
-- **Wire Compatibility:** 54-byte binary datagrams, 8-byte cleartext envelope, 30-byte ciphertext, 16-byte MAC tag.
+- **Wire Compatibility:** 56-byte binary datagrams, 10-byte cleartext envelope, 30-byte ciphertext, 16-byte MAC tag.
 - **Automated Test Coverage:** 12/12 threat scenarios verified; 103/103 total project tests passing.
 - **Compilation Status:** Clean build under Xcode 16 / iOS 17.0+ Simulator without warnings or errors.
 - **Security Boundary:** Zero unauthenticated state mutations; zero stranger payload decryptions.

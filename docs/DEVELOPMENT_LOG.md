@@ -5,6 +5,53 @@
 
 ---
 
+### [2026-10-29 14:50] — Protocol Reconfiguration: Fixed 56-Byte Wire Protocol v2 Standardization
+- **Contributor / Agent:** Agent 2 — TeeKum Blind Relay Security Specialist
+- **Status:** Completed & Verified (56-Byte Format Standardized Across Protocol, Codec, Services, Tests & Specs)
+- **Target Phase / Milestone:** Phase 2 Security Architecture & Wire Framing Alignment
+
+#### 1. Objective & Scope
+- Standardize the wire protocol layout to exactly **56 bytes** (reconfigured from 54 bytes) based on technical lead protocol review.
+- Expand cleartext envelope from 8 bytes to **10 bytes** to provide dedicated uncompressed byte fields for `hopLimit` (UInt8, Byte 1) and `hopCount` (UInt8, Byte 2), expand `sessionId` to a 24-bit integer (Bytes 3..5), and preserve the 32-bit partitioned sequence number (Bytes 6..9).
+- Retain exact 30-byte ChaCha20 encrypted payload (Bytes 10..39) and 16-byte Poly1305 MAC tag (Bytes 40..55), yielding exactly $10 + 30 + 16 = 56$ bytes total wire size.
+- Maintain Associated Authenticated Data (AAD) hop-masking invariant: Byte 2 (`hopCount`) is normalized to `0x00` in AAD during recipient Poly1305 MAC calculation, ensuring blind intermediate relays can increment Byte 2 without invalidating message authenticity.
+- Update 96-bit ChaCha20-Poly1305 nonce derivation to RFC 8439 standard: 3-byte `sessionId` + 4-byte `sequenceNumber` + 1-byte `versionAndType` + 4-byte domain tag `"TKM2"`.
+- Reconfigure all transport framers, priority outboxes, blind forwarders, simulated networks, and test suites across the repository.
+
+#### 2. Architectural Implementations & Reconfigurations Delivered
+1. **56-Byte Wire Datagram Specification (`Packet.swift`):**
+   - `PacketConstants.wirePacketSize = 56`
+   - `PacketConstants.cleartextEnvelopeSize = 10`
+   - `PacketConstants.protocolDomainTag = [0x54, 0x4B, 0x4D, 0x32]` (`"TKM2"`, 4 bytes)
+   - `CleartextEnvelope`:
+     - Byte 0: `versionAndType` (`0x02` | `type`)
+     - Byte 1: `hopLimit` (UInt8)
+     - Byte 2: `hopCount` (UInt8)
+     - Bytes 3..5: `sessionId` (UInt24 big-endian, 3 bytes)
+     - Bytes 6..9: `sequenceNumber` (UInt32 big-endian, 4 bytes)
+   - `RawWirePacket`:
+     - Envelope: `0..<10` (10 bytes)
+     - Ciphertext: `10..<40` (30 bytes)
+     - AuthTag: `40..<56` (16 bytes)
+2. **Cryptographic Engine & Nonce / AAD (`Packet.swift`, `CryptoService.swift`):**
+   - 10-byte AAD normalizes Byte 2 (`hopCount`) to `0x00`.
+   - 12-byte Nonce derived from 3-byte `sessionId` + 4-byte `sequenceNumber` + 1-byte `versionAndType` + 4-byte `"TKM2"`.
+3. **Multi-Hop Blind Forwarders & Transports (`PacketForwarder.swift`, `PeerTransportService.swift`, `SimulatedMeshTransport.swift`):**
+   - Validates incoming datagrams against 56 bytes.
+   - Enforces `hopLimit` at Byte 1, mutates only Byte 2 (`data[2] &+= 1`) during blind relaying.
+4. **Automated Test Suites Realigned to 56 Bytes:**
+   - `PacketCodecTests.swift`: 10-byte envelope serialization, 56-byte wire validation, 55B/57B rejection, updated test vectors.
+   - `PeerTransportTests.swift`: 56-byte framing, 56 1-byte chunk partial reassembly, 168-byte coalesced slicing, 112-byte fragmentation.
+   - `NeighborDiscoveryTests.swift`: Slices `10..<40` and `40..<56`, Byte 2 hopCount checks.
+   - `CryptoSecurityTests.swift`: 56-byte datagram seal and open test.
+   - `RoutingForwardingTests.swift`: 10-byte envelope extraction (`0..<10`), Byte 2 relay mutation, Byte 1 hopLimit tamper test.
+   - `SOSEndToEndTests.swift`: 56-byte multi-hop relay forwarding.
+   - `LocationPublishingTests.swift`: 56-byte location publication assertions.
+5. **Documentation Alignment:**
+   - Updated `docs/PHASE2_SECURITY_SPECIFICATION.md` diagram, tables, AAD mathematical equations, and threat models.
+
+---
+
 ### [2026-10-29 14:36] — Phase 2 Milestone 2.3: Blind Relay Security Boundaries, Routing & Forwarding Engine
 - **Contributor / Agent:** Agent 2 — TeeKum Blind Relay Security Specialist
 - **Status:** Completed & Verified (103/103 Automated Tests Passing, 100% Success, 12/12 Security Threat Tests Passing)

@@ -11,8 +11,8 @@ import CoreLocation
 // MARK: - Constants
 
 nonisolated public enum PacketConstants {
-    public static let wirePacketSize: Int = 54
-    public static let cleartextEnvelopeSize: Int = 8
+    public static let wirePacketSize: Int = 56
+    public static let cleartextEnvelopeSize: Int = 10
     public static let encryptedPayloadSize: Int = 30
     public static let authTagSize: Int = 16
     public static let nonceSize: Int = 12
@@ -23,8 +23,8 @@ nonisolated public enum PacketConstants {
     public static let meetingPointHopLimit: UInt8 = 15
     public static let sosHopLimit: UInt8 = 15
     
-    /// 5-byte protocol domain tag used in nonce construction: 'T', 'K', 'M', '0', '2'
-    public static let protocolDomainTag: [UInt8] = [0x54, 0x4B, 0x4D, 0x30, 0x32]
+    /// 4-byte protocol domain tag used in nonce construction: 'T', 'K', 'M', '2'
+    public static let protocolDomainTag: [UInt8] = [0x54, 0x4B, 0x4D, 0x32]
 }
 
 // MARK: - Packet Type
@@ -152,7 +152,7 @@ public struct CleartextEnvelope: Equatable, Sendable {
         sequenceNumber & 0x00FFFFFF
     }
     
-    // MARK: - Serialization (8 Bytes)
+    // MARK: - Serialization (10 Bytes)
     
     public func serialize() -> Data {
         var data = Data(capacity: PacketConstants.cleartextEnvelopeSize)
@@ -161,15 +161,21 @@ public struct CleartextEnvelope: Equatable, Sendable {
         let byte0 = ((version & 0x0F) << 4) | (type.rawValue & 0x0F)
         data.append(byte0)
         
-        // Byte 1: hopLimit (high 4 bits) | hopCount (low 4 bits)
-        let byte1 = ((hopLimit & 0x0F) << 4) | (hopCount & 0x0F)
-        data.append(byte1)
+        // Byte 1: hopLimit (UInt8)
+        data.append(hopLimit)
         
-        // Bytes 2..3: sessionId (16-bit big-endian)
-        var sidBE = sessionId.bigEndian
-        data.append(Data(bytes: &sidBE, count: 2))
+        // Byte 2: hopCount (UInt8)
+        data.append(hopCount)
         
-        // Bytes 4..7: sequenceNumber (32-bit big-endian)
+        // Bytes 3..5: sessionId (3 bytes, 24-bit big-endian)
+        let sid3Bytes: [UInt8] = [
+            UInt8((sessionId >> 16) & 0xFF),
+            UInt8((sessionId >> 8) & 0xFF),
+            UInt8(sessionId & 0xFF)
+        ]
+        data.append(contentsOf: sid3Bytes)
+        
+        // Bytes 6..9: sequenceNumber (32-bit big-endian)
         var seqBE = sequenceNumber.bigEndian
         data.append(Data(bytes: &seqBE, count: 4))
         
@@ -192,22 +198,23 @@ public struct CleartextEnvelope: Equatable, Sendable {
             throw PacketCodecError.unknownPacketType(typeRaw)
         }
         
-        let byte1 = data[data.startIndex + 1]
-        let hopLimit = (byte1 >> 4) & 0x0F
+        let hopLimit = data[data.startIndex + 1]
         guard hopLimit >= 1 else {
             throw PacketCodecError.invalidHopLimit(hopLimit)
         }
         
-        let hopCount = byte1 & 0x0F
+        let hopCount = data[data.startIndex + 2]
         guard hopCount <= hopLimit else {
             throw PacketCodecError.hopCountExceededLimit(count: hopCount, limit: hopLimit)
         }
         
-        let sid = data.subdata(in: (data.startIndex + 2)..<(data.startIndex + 4)).withUnsafeBytes {
-            $0.load(as: UInt16.self).bigEndian
-        }
+        let b3 = UInt32(data[data.startIndex + 3])
+        let b4 = UInt32(data[data.startIndex + 4])
+        let b5 = UInt32(data[data.startIndex + 5])
+        let sid32 = (b3 << 16) | (b4 << 8) | b5
+        let sid16 = UInt16(sid32 & 0xFFFF)
         
-        let seq = data.subdata(in: (data.startIndex + 4)..<(data.startIndex + 8)).withUnsafeBytes {
+        let seq = data.subdata(in: (data.startIndex + 6)..<(data.startIndex + 10)).withUnsafeBytes {
             $0.load(as: UInt32.self).bigEndian
         }
         
@@ -216,25 +223,35 @@ public struct CleartextEnvelope: Equatable, Sendable {
             type: type,
             hopLimit: hopLimit,
             hopCount: hopCount,
-            sessionId: sid,
+            sessionId: sid16,
             sequenceNumber: seq
         )
     }
     
-    // MARK: - Cryptographic Inputs (8 Bytes AAD)
+    // MARK: - Cryptographic Inputs (10 Bytes AAD)
     
     public func authenticatedAssociatedData() -> Data {
         var aad = Data(capacity: PacketConstants.cleartextEnvelopeSize)
         
+        // Byte 0: versionAndType
         let byte0 = ((version & 0x0F) << 4) | (type.rawValue & 0x0F)
         aad.append(byte0)
         
-        let maskedByte1 = (hopLimit & 0x0F) << 4
-        aad.append(maskedByte1)
+        // Byte 1: hopLimit
+        aad.append(hopLimit)
         
-        var sidBE = sessionId.bigEndian
-        aad.append(Data(bytes: &sidBE, count: 2))
+        // Byte 2: hopCount masked to 0x00
+        aad.append(0x00)
         
+        // Bytes 3..5: sessionId (3 bytes)
+        let sid3Bytes: [UInt8] = [
+            UInt8((sessionId >> 16) & 0xFF),
+            UInt8((sessionId >> 8) & 0xFF),
+            UInt8(sessionId & 0xFF)
+        ]
+        aad.append(contentsOf: sid3Bytes)
+        
+        // Bytes 6..9: sequenceNumber (4 bytes)
         var seqBE = sequenceNumber.bigEndian
         aad.append(Data(bytes: &seqBE, count: 4))
         
@@ -242,15 +259,19 @@ public struct CleartextEnvelope: Equatable, Sendable {
     }
     
     /// Constructs the deterministic 12-byte (96-bit) AEAD Nonce:
-    /// - Bytes 0..1: sessionId (UInt16 big-endian, 2 bytes)
-    /// - Bytes 2..5: sequenceNumber (UInt32 big-endian, 4 bytes)
-    /// - Byte 6: versionAndType (Byte 0)
-    /// - Bytes 7..11: Protocol Domain Tag "TKM02" ([0x54, 0x4B, 0x4D, 0x30, 0x32])
+    /// - Bytes 0..2: sessionId (3 bytes)
+    /// - Bytes 3..6: sequenceNumber (4 bytes)
+    /// - Byte 7: versionAndType (1 byte)
+    /// - Bytes 8..11: Protocol Domain Tag "TKM2" ([0x54, 0x4B, 0x4D, 0x32])
     public func constructNonce() -> Data {
         var nonceData = Data(capacity: PacketConstants.nonceSize)
         
-        var sidBE = sessionId.bigEndian
-        nonceData.append(Data(bytes: &sidBE, count: 2))
+        let sid3Bytes: [UInt8] = [
+            UInt8((sessionId >> 16) & 0xFF),
+            UInt8((sessionId >> 8) & 0xFF),
+            UInt8(sessionId & 0xFF)
+        ]
+        nonceData.append(contentsOf: sid3Bytes)
         
         var seqBE = sequenceNumber.bigEndian
         nonceData.append(Data(bytes: &seqBE, count: 4))
@@ -263,7 +284,7 @@ public struct CleartextEnvelope: Equatable, Sendable {
     }
 }
 
-// MARK: - 54-Byte Wire Packet
+// MARK: - 56-Byte Wire Packet
 
 public struct RawWirePacket: Equatable, Sendable {
     public var envelope: CleartextEnvelope
@@ -276,7 +297,7 @@ public struct RawWirePacket: Equatable, Sendable {
         self.authTag = authTag
     }
     
-    /// Combines envelope (8B), ciphertext (30B), and auth tag (16B) into exactly 54 bytes.
+    /// Combines envelope (10B), ciphertext (30B), and auth tag (16B) into exactly 56 bytes.
     public func toWireData() throws -> Data {
         let envData = envelope.serialize()
         guard envData.count == PacketConstants.cleartextEnvelopeSize else {
@@ -296,16 +317,16 @@ public struct RawWirePacket: Equatable, Sendable {
         return packet
     }
     
-    /// Parses a 54-byte binary datagram from the network.
+    /// Parses a 56-byte binary datagram from the network.
     public static func fromWireData(_ data: Data) throws -> RawWirePacket {
         guard data.count == PacketConstants.wirePacketSize else {
             throw PacketCodecError.invalidPacketSize(expected: PacketConstants.wirePacketSize, actual: data.count)
         }
         
-        let envData = data.subdata(in: 0..<8)
+        let envData = data.subdata(in: 0..<10)
         let envelope = try CleartextEnvelope.deserialize(from: envData)
-        let ciphertext = data.subdata(in: 8..<38)
-        let authTag = data.subdata(in: 38..<54)
+        let ciphertext = data.subdata(in: 10..<40)
+        let authTag = data.subdata(in: 40..<56)
         
         return RawWirePacket(envelope: envelope, ciphertext: ciphertext, authTag: authTag)
     }

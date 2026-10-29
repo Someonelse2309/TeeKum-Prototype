@@ -269,7 +269,7 @@ public enum RoutingForwardingTests {
         
         // Scenario A: Valid relay mutation: hopCount incremented from 0 to 1
         var relayedData = wireData
-        relayedData[1] = ((8 & 0x0F) << 4) | (1 & 0x0F) // hopLimit: 8, hopCount: 1
+        relayedData[2] = 1 // hopLimit remains 8 at index 1, hopCount becomes 1 at index 2
         
         let decisionA = await forwarder.evaluateInboundPacket(wireData: relayedData, fromPeerId: "relay-1")
         guard decisionA == .deliverLocally else {
@@ -279,7 +279,8 @@ public enum RoutingForwardingTests {
         
         // Scenario B: Malicious relay alters hopLimit from 8 to 15
         var rogueHopLimitData = wireData
-        rogueHopLimitData[1] = ((15 & 0x0F) << 4) | (1 & 0x0F)
+        rogueHopLimitData[1] = 15
+        rogueHopLimitData[2] = 1
         await dupCache.removeAll()
         
         let decisionB = await forwarder.evaluateInboundPacket(wireData: rogueHopLimitData, fromPeerId: "rogue-relay")
@@ -290,7 +291,8 @@ public enum RoutingForwardingTests {
         
         // Scenario C: hopCount exceeds hopLimit (hopCount == 8, hopLimit == 8)
         var exhaustedHopData = wireData
-        exhaustedHopData[1] = ((8 & 0x0F) << 4) | (8 & 0x0F)
+        exhaustedHopData[1] = 8
+        exhaustedHopData[2] = 8
         await dupCache.removeAll()
         
         let decisionC = await forwarder.evaluateInboundPacket(wireData: exhaustedHopData, fromPeerId: "exhausted-relay")
@@ -868,7 +870,7 @@ public enum RoutingForwardingTests {
             return false
         }
         
-        let env1 = try! CleartextEnvelope.deserialize(from: mutated1.subdata(in: 0..<8))
+        let env1 = try! CleartextEnvelope.deserialize(from: mutated1.subdata(in: 0..<10))
         guard env1.hopCount == 1 else {
             print("  FAIL: Relay 1 should set hopCount = 1, got \(env1.hopCount)")
             return false
@@ -881,7 +883,7 @@ public enum RoutingForwardingTests {
             return false
         }
         
-        let env2 = try! CleartextEnvelope.deserialize(from: mutated2.subdata(in: 0..<8))
+        let env2 = try! CleartextEnvelope.deserialize(from: mutated2.subdata(in: 0..<10))
         guard env2.hopCount == 2 else {
             print("  FAIL: Relay 2 should set hopCount = 2, got \(env2.hopCount)")
             return false
@@ -938,7 +940,7 @@ public enum RoutingForwardingTests {
         )
         
         // 1. Verify cleartext envelope contains NO coordinates or initials
-        let envelopeData = wireData.subdata(in: 0..<8)
+        let envelopeData = wireData.subdata(in: 0..<10)
         let envelope = try! CleartextEnvelope.deserialize(from: envelopeData)
         guard envelope.sessionId == sessionId && envelope.sequenceNumber == 999 else {
             print("  FAIL: Cleartext envelope corrupted")

@@ -168,8 +168,8 @@ public struct DiagnosticsView: View {
                         LabeledContent("Transport Mode", value: "Apple Network.framework P2P")
                         LabeledContent("Link Layer", value: "AWDL / Wi-Fi Direct & BLE")
                         LabeledContent("Bonjour Service", value: "_teekum._tcp")
-                        LabeledContent("Wire Packet Size", value: "54 Bytes Fixed (Protocol v2)")
-                        LabeledContent("Outer Envelope", value: "8 Bytes (Cleartext Routing)")
+                        LabeledContent("Wire Packet Size", value: "56 Bytes Fixed (Protocol v2)")
+                        LabeledContent("Outer Envelope", value: "10 Bytes (Cleartext Routing)")
                         LabeledContent("Payload Cipher", value: "30 Bytes (ChaCha20-Poly1305)")
                         LabeledContent("Auth Tag (MAC)", value: "16 Bytes (Tamper Detection)")
                     }

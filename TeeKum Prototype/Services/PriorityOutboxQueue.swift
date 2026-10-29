@@ -108,7 +108,7 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Enqueues a packet for transmission.
     ///
     /// - Parameters:
-    ///   - data: Exactly 54 bytes of binary wire data.
+    ///   - data: Exactly 56 bytes of binary wire data.
     ///   - destinationPeerId: Destination peer ID or nil for broadcast.
     ///   - isRelay: True if forwarding a stranger's opaque packet on the communal mesh.
     /// - Returns: The created `OutboxItem`.

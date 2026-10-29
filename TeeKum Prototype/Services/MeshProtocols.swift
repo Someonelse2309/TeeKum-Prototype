@@ -68,14 +68,15 @@ public struct PacketKey: Hashable, Sendable, CustomStringConvertible {
     }
     
     public init?(wireData: Data) {
-        guard wireData.count >= 8 else { return nil }
-        let sid = wireData.subdata(in: (wireData.startIndex + 2)..<(wireData.startIndex + 4)).withUnsafeBytes {
-            $0.load(as: UInt16.self).bigEndian
-        }
-        let seq = wireData.subdata(in: (wireData.startIndex + 4)..<(wireData.startIndex + 8)).withUnsafeBytes {
+        guard wireData.count >= 10 else { return nil }
+        let b3 = UInt32(wireData[wireData.startIndex + 3])
+        let b4 = UInt32(wireData[wireData.startIndex + 4])
+        let b5 = UInt32(wireData[wireData.startIndex + 5])
+        let sid = (b3 << 16) | (b4 << 8) | b5
+        let seq = wireData.subdata(in: (wireData.startIndex + 6)..<(wireData.startIndex + 10)).withUnsafeBytes {
             $0.load(as: UInt32.self).bigEndian
         }
-        self.sessionId = UInt32(sid)
+        self.sessionId = sid
         self.sequenceNumber = seq
     }
     
@@ -251,13 +252,13 @@ public protocol MeshTransport: Actor {
     /// Stops the transport and cleans up all radio/socket resources.
     func stop() async
     
-    /// Submits a complete 54-byte protocol frame to a specific connected peer.
+    /// Submits a complete 56-byte protocol frame to a specific connected peer.
     func sendFrame(_ data: Data, to peerId: String) async throws -> SendOutcome
     
-    /// Submits a complete 54-byte protocol frame for broadcast to all connected direct peers.
+    /// Submits a complete 56-byte protocol frame for broadcast to all connected direct peers.
     func broadcastFrame(_ data: Data) async throws
     
-    /// Blindly forwards an opaque 54-byte protocol frame to a designated next hop.
+    /// Blindly forwards an opaque 56-byte protocol frame to a designated next hop.
     /// Does not decrypt the payload. Mutates only hopCount (+1) and enforces hopLimit.
     func forwardFrame(_ data: Data, to nextHopPeerId: String) async throws -> SendOutcome
     
@@ -363,7 +364,7 @@ public enum ForwardingDecision: Sendable, Equatable {
     case dropHopLimitExceeded                       // hopCount >= hopLimit (max 8)
     case dropRateLimitExceeded                      // Exceeded 2 pkts/sec budget
     case dropPolicyDisabled                         // Relay participation is OFF or battery < 20%
-    case dropMalformed                              // Size != 54B or invalid version
+    case dropMalformed                              // Size != 56B or invalid version
     case dropSecurityVerificationFailed             // Authenticated tag mismatch, replay rejected, or forged packet
 }
 

@@ -250,7 +250,7 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         emitPeerUpdates()
     }
     
-    /// Submits a complete 54-byte protocol frame to a specific connected peer.
+    /// Submits a complete 56-byte protocol frame to a specific connected peer.
     public func sendFrame(_ data: Data, to peerId: String) async throws -> SendOutcome {
         guard currentState != .stopped else { throw TransportError.notStarted }
         guard data.count == PacketConstants.wirePacketSize else { throw TransportError.invalidPacketSize }
@@ -294,7 +294,7 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         return outcome
     }
     
-    /// Submits a complete 54-byte protocol frame for broadcast to all connected direct peers.
+    /// Submits a complete 56-byte protocol frame for broadcast to all connected direct peers.
     public func broadcastFrame(_ data: Data) async throws {
         guard currentState != .stopped else { throw TransportError.notStarted }
         guard data.count == PacketConstants.wirePacketSize else { throw TransportError.invalidPacketSize }
@@ -305,7 +305,7 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
         }
     }
     
-    /// Blindly forwards an opaque 54-byte protocol frame to a designated next hop.
+    /// Blindly forwards an opaque 56-byte protocol frame to a designated next hop.
     /// Does not decrypt the payload. Mutates only hopCount (+1) and enforces hopLimit.
     public func forwardFrame(_ data: Data, to nextHopPeerId: String) async throws -> SendOutcome {
         guard currentState != .stopped else { throw TransportError.notStarted }
@@ -317,9 +317,8 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
             throw PacketCodecError.unsupportedVersion(byte0 >> 4)
         }
         
-        let byte1 = data[data.startIndex + 1]
-        let hopLimit = (byte1 >> 4) & 0x0F
-        let hopCount = byte1 & 0x0F
+        let hopLimit = data[data.startIndex + 1]
+        let hopCount = data[data.startIndex + 2]
         
         guard hopLimit >= 1 && hopLimit <= PacketConstants.sosHopLimit else {
             throw PacketCodecError.invalidHopLimit(hopLimit)
@@ -343,10 +342,9 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
             }
         }
         
-        // Mutate only hopCount (Byte 1 low 4 bits)
+        // Mutate only hopCount (Byte 2)
         var mutatedData = data
-        let newByte1 = ((hopLimit & 0x0F) << 4) | ((hopCount + 1) & 0x0F)
-        mutatedData[mutatedData.startIndex + 1] = newByte1
+        mutatedData[mutatedData.startIndex + 2] = hopCount + 1
         
         // Check destination link
         guard let link = links[nextHopPeerId], link.isConnected, let remote = link.transport else {

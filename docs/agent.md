@@ -359,17 +359,17 @@ Target battery budget: **~3% to 5% per hour**.
 
 ---
 
-## 6. Message and Packet Protocol (54-Byte Wire Specification, Protocol v2)
+## 6. Message and Packet Protocol (56-Byte Wire Specification, Protocol v2)
 
-The app utilizes a **Fixed 54-Byte Secure Binary Wire Format** transmitted over Apple's
+The app utilizes a **Fixed 56-Byte Secure Binary Wire Format** transmitted over Apple's
 `Network.framework` P2P datagram connections.
 
 ```text
 +-----------------------+-----------------------------+-------------------------+
-|  Outer Envelope (8B)  |   Encrypted Payload (30B)   |   Auth Tag (16B)        |
+|  Outer Envelope (10B) |   Encrypted Payload (30B)   |   Auth Tag (16B)        |
 |  (Cleartext Routing)  |   (Zero-Knowledge Cipher)   |   (Poly1305 / AES-GCM)  |
 +-----------------------+-----------------------------+-------------------------+
-0                       8                             38                        54 Bytes
+0                       10                            40                        56 Bytes
 ```
 
 ### 6.1 Binary Layout & CoreLocation Data Type Mapping
@@ -377,18 +377,19 @@ The app utilizes a **Fixed 54-Byte Secure Binary Wire Format** transmitted over 
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
 | **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | High 4 bits = Version (`0x2` for Protocol v2), Low 4 bits = Type (`0x1` Ping, `0x2` SOS, `0x3` Meeting, `0x6` ACK, `0x4` RouteReq, `0x5` RouteResp). |
-| **1** | `hopMetadata` | `UInt8` | `(UInt8, UInt8)` | High 4 bits = Hop Limit (`8`), Low 4 bits = Hop Count (starts at `0`, incremented per relay). |
-| **2..3** | `sessionId` | `UInt16` | `UInt16` | 16-bit big-endian hash identifying the group session network (`0x0001...0xFFFF`). |
-| **4..7** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian partitioned counter: 8-bit `memberSlot` (high) + 24-bit counter (low) for replay protection & duplicate cache key. |
-| **8..11** | `latitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Signed 32-bit big-endian integer. Conversion: `Int32((latitude * 1_000_000).rounded())` (~11cm precision). |
-| **12..15** | `longitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Signed 32-bit big-endian integer. Conversion: `Int32((longitude * 1_000_000).rounded())` (~11cm precision). |
-| **16..19** | `timestamp` | `UInt32` | `Date` | Big-endian Unix epoch seconds (`UInt32(date.timeIntervalSince1970)`). Fixed measurement time. |
-| **20** | `accuracy` | `UInt8` | `CLLocationAccuracy` (`Double`) | Horizontal accuracy radius in meters (`UInt8(min(255, max(0, accuracy.rounded())))`). |
-| **21** | `statusCode` | `UInt8` | `StatusCode` (`enum: UInt8`) | Compact 1-byte festival activity hash (`0x00` Available, `0x0A` Drinks, `0x0B` Restroom, etc.). |
-| **22..25** | `targetRefId` | `UInt32` | `UInt32?` | Optional 32-bit big-endian ID of target member or meeting point (`0x00000000` if none). |
-| **26..27** | `senderInitials` | `UInt16` | `String` (1 to 3 Chars A-Z) | 2-byte Base-27 encoded 1 to 3-letter initials (formula: `(a*729) + (b*27) + c`). Eliminates radio handshake. |
-| **28..37** | `variantData` | `10 Bytes` | `VariantSpecificData` | 10 bytes reserved for variant-specific payloads (see Section 6.2). |
-| **38..53** | `authTag` | `16 Bytes` | `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM authentication tag verifying payload + envelope AAD. |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Maximum forwarding hop budget ($1\dots 15$, default 8 for pings, 8 for SOS). Authenticated in AAD. |
+| **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hop counter ($0\dots \text{hopLimit}$, starts at `0`). Mutated per relay hop; masked to `0x00` in AAD. |
+| **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian hash identifying the group session network (`0x000001...0xFFFFFF`). |
+| **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian partitioned counter: 8-bit `memberSlot` (high) + 24-bit counter (low) for replay protection & duplicate cache key. |
+| **10..13** | `latitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Signed 32-bit big-endian integer. Conversion: `Int32((latitude * 1_000_000).rounded())` (~11cm precision). |
+| **14..17** | `longitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Signed 32-bit big-endian integer. Conversion: `Int32((longitude * 1_000_000).rounded())` (~11cm precision). |
+| **18..21** | `timestamp` | `UInt32` | `Date` | Big-endian Unix epoch seconds (`UInt32(date.timeIntervalSince1970)`). Fixed measurement time. |
+| **22** | `accuracy` | `UInt8` | `CLLocationAccuracy` (`Double`) | Horizontal accuracy radius in meters (`UInt8(min(255, max(0, accuracy.rounded())))`). |
+| **23** | `statusCode` | `UInt8` | `StatusCode` (`enum: UInt8`) | Compact 1-byte festival activity hash (`0x00` Available, `0x0A` Drinks, `0x0B` Restroom, etc.). |
+| **24..27** | `targetRefId` | `UInt32` | `UInt32?` | Optional 32-bit big-endian ID of target member or meeting point (`0x00000000` if none). |
+| **28..29** | `senderInitials` | `UInt16` | `String` (1 to 3 Chars A-Z) | 2-byte Base-27 encoded 1 to 3-letter initials (formula: `(a*729) + (b*27) + c`). Eliminates radio handshake. |
+| **30..39** | `variantData` | `10 Bytes` | `VariantSpecificData` | 10 bytes reserved for variant-specific payloads (see Section 6.2). |
+| **40..55** | `authTag` | `16 Bytes` | `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM authentication tag verifying payload + envelope AAD. |
 
 #### 6.1.1 2-Byte Base-27 Initials Codec & Serverless QR Group Pairing
 
@@ -424,18 +425,18 @@ To eliminate out-of-band P2P connection handshakes while allowing flexible membe
 - **Zero-Handshake Architecture:**
   Because 2-byte initials travel inside every authenticated payload, receiving nodes display the member's 3-letter badge immediately on the map and radar without needing an initial P2P connection handshake or name negotiation phase. Relayed packets from multi-hop peers are immediately actionable.
 
-#### 16-Bit Session ID & Nonce Derivation Model
-- **Derivation Algorithm:** The 16-bit `sessionId` is derived by taking the first 2 bytes (big-endian) of `SHA256(timestamp || latitude || longitude || randomSalt)`. Latitude and longitude are sampled at creation time via `LocationServiceProvider`.
+#### 24-Bit Session ID & Nonce Derivation Model
+- **Derivation Algorithm:** The 24-bit `sessionId` is derived by taking the first 3 bytes (big-endian) of `SHA256(timestamp || latitude || longitude || randomSalt)`. Latitude and longitude are sampled at creation time via `LocationServiceProvider`.
 - **GPS Unavailable Fallback:** If location services are disabled or no GPS fix is available, fallback computes `SHA256(timestamp || randomSalt)`.
-- **Sentinel Rule:** `0x0000` is strictly reserved as an invalid/unassigned sentinel. If hashing produces `0x0000`, the value is bumped to `0x0001`.
+- **Sentinel Rule:** `0x000000` is strictly reserved as an invalid/unassigned sentinel. If hashing produces `0x000000`, the value is bumped to `0x000001`.
 - **12-Byte (96-Bit) AEAD Nonce Construction:**
-  - `Bytes 0..1`: `sessionId` (2 bytes, `UInt16` big-endian)
-  - `Bytes 2..5`: `sequenceNumber` (4 bytes, `UInt32` big-endian)
-  - `Byte 6`: `versionAndType` (1 byte, envelope Byte 0)
-  - `Bytes 7..11`: 5-byte protocol domain tag `"TKM02"` (`[0x54, 0x4B, 0x4D, 0x30, 0x32]`)
+  - `Bytes 0..2`: `sessionId` (3 bytes, `UInt24` big-endian)
+  - `Bytes 3..6`: `sequenceNumber` (4 bytes, `UInt32` big-endian)
+  - `Byte 7`: `versionAndType` (1 byte, envelope Byte 0)
+  - `Bytes 8..11`: 4-byte protocol domain tag `"TKM2"` (`[0x54, 0x4B, 0x4D, 0x32]`)
 - **Serverless Invite URL & QR Code:**
-  - `teekum://join#key=<Base64Key>&sid=%04X&name=<PercentEncodedName>`
-  - Keychain Key Account: `session_0x%04X`
+  - `teekum://join#key=<Base64Key>&sid=%06X&name=<PercentEncodedName>`
+  - Keychain Key Account: `session_0x%06X`
 
 #### Why Int32 Quantization for CoreLocation `Double`?
 - **Swift / Model Layer:** The app models coordinates strictly using standard Apple `CLLocationCoordinate2D` where `latitude` and `longitude` are native 64-bit IEEE 754 `Double` (`CLLocationDegrees`).
@@ -567,7 +568,7 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 
 1. **Coalescing Outbox:** The outbox queue keeps only the freshest normal location ping (superseded unsent pings are overwritten). Emergency SOS packets cut the line into the URGENT priority lane and transmit immediately with bounded retries.
 2. **6-Step Inbound Filter:**
-   1. *Size Check:* Ensure exactly 54 bytes.
+   1. *Size Check:* Ensure exactly 56 bytes.
    2. *Version Check:* Ensure `version == 0x02`.
    3. *Deduplication Check:* Drop if `(sessionId, sequenceNumber)` is in the 5-minute LRU packet cache.
    4. *Crypto Verification:* Verify 16-byte auth tag using group key. Drop on failure.
@@ -589,7 +590,7 @@ Use an **AODV-inspired on-demand routing approach** with bounded flooding fallba
         -   To accommodate massive festival grounds, racecourses, and multi-tier stadium venues where paths exceed 15 hops, the hop mechanism will evolve from a 4-bit/4-bit single byte into **two dedicated 8-bit bytes**:
             1. `hopLimit: UInt8` (Byte 1): Immutable forwarding budget ($0\dots 255$, e.g. 16 for normal pings, 32 for SOS/rendezvous). Authenticated verbatim inside the ChaCha20-Poly1305 AAD to prevent rogue relays from inflating packet lifetime.
             2. `hopCount: UInt8` (Byte 2): Mutable traversal counter ($0\dots 255$, starts at `0`). Incrementing per relay. Masked to `0x00` during AAD authentication so intermediate nodes can mutate it without invalidating the 128-bit MAC tag.
-        -   **Payload Padding Absorption:** To maintain the exact 54-byte total wire footprint on AWDL/Wi-Fi Direct without adding radio fragmentation or MTU overhead, 1 byte is absorbed from the inner payload's reserved padding (reducing reserved from 8 bytes down to 7 bytes in `LOCATION_PING` and `SOS`).
+        -   **Wire Standard (56 Bytes):** The envelope expands to 10 bytes (incorporating dedicated 8-bit `hopLimit` and `hopCount`, 24-bit `sessionId`, and 32-bit `sequenceNumber`). Combined with the intact 30-byte payload and 16-byte Poly1305 auth tag, this yields an exact 56-byte wire datagram without requiring any payload padding reduction.
         -   **Vulnerability Prevention:** A single decrementing TTL byte was evaluated and rejected because a mutating TTL cannot be authenticated without masking it completely in AAD, leaving the packet vulnerable to rogue nodes resetting the TTL to 255 and causing infinite broadcast storms and battery exhaustion. The 2-byte split (`hopLimit` sealed + `hopCount` masked) provides full tamper-resistance, prevents relay loops, and gives the destination full telemetry on path length.
     -   **Hop Limit (TTL) Budgets:** Set to a default of **16 hops** for regular location pings and **32 hops** for rendezvous meeting points and emergency SOS alerts (with ceiling up to 255 if needed).
     -   **Relay Rate Limit:** Stranger relays cap re-transmissions to **2 packets/second** (<1ms CPU per hop) to preserve battery. SOS packets receive immediate priority.
@@ -701,7 +702,7 @@ Use an **AODV-inspired on-demand routing approach** with bounded flooding fallba
 10. Architecture must remain **pure, simple MVVM** with **zero external dependencies**.
 11. Group creation is **100% serverless** via URL fragment links and QR barcodes.
 12. There is **only ONE active meeting point** at a time for the group.
-13. Wire format is fixed at **54 bytes** (Protocol v2) with big-endian integer coordinates, 16-bit session ID, and full 16-byte authentication tags.
+13. Wire format is fixed at **56 bytes** (Protocol v2) with big-endian integer coordinates, 24-bit session ID, and full 16-byte authentication tags.
 14. **Mandatory Development Logging:** Every agent or developer modifying the codebase MUST maintain and update the chronological log in [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md). Every development task, feature addition, bug fix, architectural decision, and test verification must be logged to ensure seamless context handoff and traceability.
 
 ---

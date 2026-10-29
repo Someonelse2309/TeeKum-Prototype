@@ -92,9 +92,8 @@ public actor PacketForwarder: PacketForwarding {
             return .dropMalformed
         }
         
-        let byte1 = wireData[wireData.startIndex + 1]
-        let hopLimit = (byte1 >> 4) & 0x0F
-        let hopCount = byte1 & 0x0F
+        let hopLimit = wireData[wireData.startIndex + 1]
+        let hopCount = wireData[wireData.startIndex + 2]
         
         guard hopLimit >= 1 && hopLimit <= PacketConstants.sosHopLimit else {
             totalDroppedMalformedCount += 1
@@ -189,10 +188,9 @@ public actor PacketForwarder: PacketForwarding {
             }
         }
         
-        // 6. Mutable Metadata Mutation (Byte 1 low 4 bits: hopCount &+= 1)
+        // 6. Mutable Metadata Mutation (Byte 2: hopCount &+= 1)
         var mutatedData = wireData
-        let newByte1 = ((hopLimit & 0x0F) << 4) | ((hopCount + 1) & 0x0F)
-        mutatedData[mutatedData.startIndex + 1] = newByte1
+        mutatedData[mutatedData.startIndex + 2] = hopCount + 1
         
         // 7. Route Selection & Next-Hop Resolution
         let activeNeighbors = await neighborTable.activeNeighbors()
