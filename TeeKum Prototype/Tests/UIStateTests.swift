@@ -450,6 +450,32 @@ public struct UIStateTests {
         // Clean up
         mpVM.cancelMeetingPoint()
         
+        // Premade Meeting Location Dropdown Verification
+        guard PremadeMeetingLocation.defaultName == "Meeting Point" else {
+            print("FAILED: PremadeMeetingLocation defaultName must be 'Meeting Point'")
+            return false
+        }
+        guard PremadeMeetingLocation.allLocations.first == "Meeting Point" else {
+            print("FAILED: PremadeMeetingLocation first option must be 'Meeting Point'")
+            return false
+        }
+        guard PremadeMeetingLocation.allLocations.contains("Ferris Wheel"),
+              PremadeMeetingLocation.allLocations.contains("Main Stage Sound Booth") else {
+            print("FAILED: PremadeMeetingLocation missing key festival landmarks")
+            return false
+        }
+        
+        mpVM.proposeMeetingPoint(
+            name: PremadeMeetingLocation.defaultName,
+            coordinate: CLLocationCoordinate2D(latitude: 33.6820, longitude: -116.2350),
+            proposerId: "ALX"
+        )
+        guard mpVM.activeMeetingPoint?.name == "Meeting Point" else {
+            print("FAILED: default dropdown meeting point proposal failed")
+            return false
+        }
+        mpVM.cancelMeetingPoint()
+        
         print("PASSED: testMeetingPointProposalAndAttendance")
         return true
     }

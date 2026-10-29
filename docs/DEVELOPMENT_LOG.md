@@ -5,6 +5,33 @@
 
 ---
 
+### [2026-10-29 12:13] — UI Refinement: Premade Location Dropdown Menu (Default "Meeting Point")
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed
+- **Target Phase / Milestone:** Phase 1 — Meeting Point UX
+
+#### 1. Objective & Scope
+- Replace freeform text fields with a native SwiftUI dropdown `Menu` of curated festival locations across both the map-drop sheet and the meeting management sheet.
+- Disallow custom text input, standardizing selection to the curated list with a default selection of `"Meeting Point"`.
+
+#### 2. Changes Made & Files Touched
+- [`TeeKum Prototype/Models/MeetingPoint.swift`](../TeeKum%20Prototype/Models/MeetingPoint.swift):
+  - Defined `PremadeMeetingLocation` with `defaultName = "Meeting Point"` and 16 curated options (*"Meeting Point"*, *"Main Stage Sound Booth"*, *"Main Stage Left"*, *"Main Stage Right"*, *"Ferris Wheel"*, *"Food Court / Trucks"*, *"Beer Garden"*, *"First Aid / Medical Tent"*, *"Water Refill Station"*, *"Merch Stand"*, *"Main Entrance / Exit"*, *"Gate 3 Exit"*, *"Restrooms North"*, *"Restrooms South"*, *"VIP Lounge"*, *"Lost & Found"*).
+- [`TeeKum Prototype/Views/Components/SetMeetingPointSheet.swift`](../TeeKum%20Prototype/Views/Components/SetMeetingPointSheet.swift):
+  - Replaced the custom text field with a SwiftUI `Menu` picker displaying the selected location name (defaulting to `"Meeting Point"`), a yellow pin icon, and chevrons. Removed custom text typing.
+- [`TeeKum Prototype/Views/MeetingPointsView.swift`](../TeeKum%20Prototype/Views/MeetingPointsView.swift):
+  - Replaced text field input with the identical `PremadeMeetingLocation` dropdown menu.
+- [`TeeKum Prototype/Views/MainMapView.swift`](../TeeKum%20Prototype/Views/MainMapView.swift):
+  - Updated `handleMapLongPress` and temporary pin label to default to `PremadeMeetingLocation.defaultName` (`"Meeting Point"`).
+- [`TeeKum Prototype/Tests/UIStateTests.swift`](../TeeKum%20Prototype/Tests/UIStateTests.swift):
+  - Extended `testMeetingPointProposalAndAttendance` asserting `PremadeMeetingLocation` default name, list contents, and successful proposal.
+
+#### 3. Verification & Testing Performed
+- **Xcode Build:** Compiled cleanly with `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -destination "id=C80ECE14-94DC-40AF-B9F4-403F9CE40ACC" build` -> **BUILD SUCCEEDED**.
+- **Automated Tests:** All 12 UI state suites, SOS suites, Live Activity tests, codec tests, crypto tests, and transport tests passed with 100% success on the iOS simulator.
+
+---
+
 ### [2026-10-29 12:09] — Feature: Communal Mesh Compact Agreement Screen Prior to Creating/Joining Groups
 - **Contributor / Agent:** Antigravity (Pair Programming Agent)
 - **Status:** Completed

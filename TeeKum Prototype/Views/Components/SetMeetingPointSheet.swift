@@ -9,18 +9,18 @@ import SwiftUI
 import CoreLocation
 
 /// Compact bottom sheet presented when a user long-presses anywhere on the festival map
-/// to enter a landmark name and broadcast a new group rendezvous point over the mesh.
+/// to choose a premade location name from a dropdown menu and broadcast a new group rendezvous point over the mesh.
 public struct SetMeetingPointSheet: View {
     public let coordinate: CLLocationCoordinate2D
     public let activeMeetingPoint: MeetingPoint?
     public let onConfirm: (String, CLLocationCoordinate2D) -> Void
     public let onCancel: () -> Void
     
-    @State private var nameInput: String
+    @State private var selectedLocation: String
     
     public init(
         coordinate: CLLocationCoordinate2D,
-        initialName: String = "",
+        initialName: String = PremadeMeetingLocation.defaultName,
         activeMeetingPoint: MeetingPoint?,
         onConfirm: @escaping (String, CLLocationCoordinate2D) -> Void,
         onCancel: @escaping () -> Void
@@ -29,12 +29,13 @@ public struct SetMeetingPointSheet: View {
         self.activeMeetingPoint = activeMeetingPoint
         self.onConfirm = onConfirm
         self.onCancel = onCancel
-        _nameInput = State(initialValue: initialName)
+        let initial = initialName.isEmpty ? PremadeMeetingLocation.defaultName : initialName
+        _selectedLocation = State(initialValue: initial)
     }
     
     public var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 16) {
                 // Inline notice if replacing an existing active meeting point
                 if let active = activeMeetingPoint {
                     HStack(spacing: 6) {
@@ -57,28 +58,53 @@ public struct SetMeetingPointSheet: View {
                     .font(.caption2.monospaced())
                     .foregroundStyle(.gray)
                 
-                // Landmark Name Input
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Landmark Name")
+                // Premade Location Dropdown Menu (No custom name textfield)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Meetup Location")
                         .font(.caption.bold())
                         .foregroundStyle(.gray)
                         .textCase(.uppercase)
                     
-                    TextField("Enter landmark name (e.g. Sound Booth, Ferris Wheel)", text: $nameInput)
-                        .font(.subheadline)
-                        .padding(12)
+                    Menu {
+                        ForEach(PremadeMeetingLocation.allLocations, id: \.self) { location in
+                            Button {
+                                selectedLocation = location
+                            } label: {
+                                HStack {
+                                    Text(location)
+                                    if selectedLocation == location {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "mappin.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(.yellow)
+                            
+                            Text(selectedLocation)
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.white)
+                            
+                            Spacer()
+                            
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption.bold())
+                                .foregroundStyle(.gray)
+                        }
+                        .padding(14)
                         .background(Color(white: 0.18))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
                 }
                 
                 Spacer()
                 
                 // Primary Broadcast Button
                 Button {
-                    let trimmed = nameInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let finalName = trimmed.isEmpty ? String(format: "Meeting Point (%.4f, %.4f)", coordinate.latitude, coordinate.longitude) : trimmed
-                    onConfirm(finalName, coordinate)
+                    onConfirm(selectedLocation, coordinate)
                 } label: {
                     Label("Broadcast Meeting Point", systemImage: "mappin.and.ellipse")
                         .font(.headline)

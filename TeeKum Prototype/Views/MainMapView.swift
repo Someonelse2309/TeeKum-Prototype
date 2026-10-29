@@ -316,7 +316,7 @@ public struct MainMapView: View {
                     .shadow(color: .yellow.opacity(0.9), radius: 8)
             }
             
-            Text(droppedPinName.isEmpty ? "New Spot" : droppedPinName)
+            Text(droppedPinName.isEmpty ? PremadeMeetingLocation.defaultName : droppedPinName)
                 .font(.caption2.bold())
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -329,7 +329,7 @@ public struct MainMapView: View {
     private func handleMapLongPress(at coordinate: CLLocationCoordinate2D) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         droppedPinCoordinate = coordinate
-        droppedPinName = ""
+        droppedPinName = PremadeMeetingLocation.defaultName
         isShowingDroppedPinSheet = true
     }
     

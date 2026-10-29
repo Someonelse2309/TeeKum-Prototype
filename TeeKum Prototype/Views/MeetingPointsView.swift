@@ -17,7 +17,7 @@ public struct MeetingPointsView: View {
     
     @Environment(\.dismiss) private var dismiss
     
-    @State private var meetingNameInput: String = ""
+    @State private var selectedLocation: String = PremadeMeetingLocation.defaultName
     
     public init(
         meetingPointViewModel: MeetingPointViewModel,
@@ -179,18 +179,46 @@ public struct MeetingPointsView: View {
                 .font(.headline)
                 .foregroundStyle(.white)
             
-            // Landmark Name Input
+            // Premade Meetup Location Dropdown Menu
             VStack(alignment: .leading, spacing: 6) {
-                Text("Landmark Name")
+                Text("Meetup Location")
                     .font(.caption.bold())
                     .foregroundStyle(.gray)
                     .textCase(.uppercase)
                 
-                TextField("Enter landmark name (e.g. Ferris Wheel)", text: $meetingNameInput)
-                    .padding()
+                Menu {
+                    ForEach(PremadeMeetingLocation.allLocations, id: \.self) { location in
+                        Button {
+                            selectedLocation = location
+                        } label: {
+                            HStack {
+                                Text(location)
+                                if selectedLocation == location {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.yellow)
+                        
+                        Text(selectedLocation)
+                            .font(.subheadline.bold())
+                            .foregroundStyle(.white)
+                        
+                        Spacer()
+                        
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption.bold())
+                            .foregroundStyle(.gray)
+                    }
+                    .padding(14)
                     .background(Color(white: 0.15))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .foregroundStyle(.white)
+                }
             }
             
             // Propose Button
@@ -205,7 +233,6 @@ public struct MeetingPointsView: View {
                     .foregroundStyle(.black)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
-            .disabled(meetingNameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding()
         .background(Color(white: 0.1))
@@ -214,13 +241,10 @@ public struct MeetingPointsView: View {
     
     private func proposeCurrentMeeting() {
         guard let session = sessionViewModel.activeSession else { return }
-        let name = meetingNameInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        
         let coord = userLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 33.6803, longitude: -116.2366)
         
         meetingPointViewModel.proposeMeetingPoint(
-            name: name,
+            name: selectedLocation,
             coordinate: coord,
             targetTime: Date().addingTimeInterval(1800), // 30 min default
             proposerId: session.localInitials,

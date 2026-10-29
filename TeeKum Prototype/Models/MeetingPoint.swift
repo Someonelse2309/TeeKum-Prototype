@@ -65,6 +65,30 @@ public enum VenueLandmark {
     }
 }
 
+/// Curated premade festival locations available in the meeting point dropdown menu.
+public enum PremadeMeetingLocation {
+    public static let defaultName = "Meeting Point"
+    
+    public static let allLocations: [String] = [
+        "Meeting Point",
+        "Main Stage Sound Booth",
+        "Main Stage Left",
+        "Main Stage Right",
+        "Ferris Wheel",
+        "Food Court / Trucks",
+        "Beer Garden",
+        "First Aid / Medical Tent",
+        "Water Refill Station",
+        "Merch Stand",
+        "Main Entrance / Exit",
+        "Gate 3 Exit",
+        "Restrooms North",
+        "Restrooms South",
+        "VIP Lounge",
+        "Lost & Found"
+    ]
+}
+
 /// Model representing the single active rendezvous point for a group session.
 public struct MeetingPoint: Identifiable, Equatable, Hashable, Sendable {
     /// Unique 32-bit identifier for this meeting instance.
