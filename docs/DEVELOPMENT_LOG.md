@@ -5,6 +5,35 @@
 
 ---
 
+### [2026-10-29 15:47] — Architectural Specification: Phase 3 Multi-Floor Venue Intelligence, Differential Barometry & AR 3D Elevation (Decision D12)
+- **Contributor / Role:** Senior App Development Consultant & Technical Product Advisor
+- **Status:** Scoped, Specified & Documented in `agent.md` and `TechnicalRequirements.md`
+- **Target Phase / Milestone:** Phase 3 — Venue Intelligence & Polish
+
+#### 1. Objective & Scope
+- Solve vertical elevation ambiguity and "0-meter arrival" confusion in multi-story concert arenas, stadiums, and exhibition convention centers without requiring cloud infrastructure or Apple IMDF indoor mapping.
+- Standardize the integration of `CMAltimeter` barometric data into the binary wire protocol and user interface.
+- Integrate 3D vertical elevation positioning into the Phase 3 AR "Spotter Lens" camera overlay.
+
+#### 2. Key Decisions & Technical Specifications
+1. **Decision D12 (Multi-Floor Venue Intelligence & Differential Barometry):**
+   - **Wire Format Zero Overhead:** Allocates 3 bytes from the 8-byte reserved padding in `LocationPingPayload` and `SOSPayload`:
+     - Byte 22: `floorLevel: Int8` (signed integer $-128 \dots +126$; `0x7F` = Auto/Unknown).
+     - Bytes 23..24: `barometricPressure: UInt16` (centi-hPa: $(P_{\text{hPa}} - 800.0) \times 100$, yielding $\approx 8\text{cm}$ vertical resolution).
+     - Bytes 25..29: 5 bytes remaining reserved padding. Datagram wire size remains fixed at 56 bytes.
+   - **Peer-to-Peer Differential Altitude:** Calculates relative vertical separation via $\Delta h \approx 8.43 \times (P_{\text{local}} - P_{\text{remote}})$. Because all co-located attendees experience identical ambient weather drift, weather variations cancel out.
+   - **Signal Smoothing:** Uses a moving median pressure filter over 15 seconds to eliminate HVAC stadium surges and elevator pressure transients.
+   - **2D Map Multi-Floor Selector:** Adds a floor filter pill (`All`, `B1`, `L1`, `L2`, `L3`) on `MainMapView`, dimming out-of-floor member pins and displaying relative floor badges.
+   - **Vertical Arrival Warning:** In `FinderBeaconView`, when horizontal distance $<12\text{m}$ and $|\Delta h| > 2.5\text{m}$, replaces false "Arrived" state with vertical elevation guidance: *"1 Floor Above You (Find Stairs)"*.
+2. **AR Camera 3D Vertical Projection (Decision D11 & D12 Integration):**
+   - RealityKit/ARKit renders floating nametags at true relative vertical elevation ($\Delta h$) for multi-tier concert venues (e.g. Mezzanine, Balcony, Bleachers).
+   - Draws vertical elevation stem lines from the ground plane to floating nametags.
+   - Displays ceiling/floor slab occlusion indicators (*"Friend is on Floor 2 above ceiling — Head to Arena Stairs"*) to guide users when physical floors block direct line-of-sight.
+
+#### 3. Changes Made & Files Touched
+- [`docs/agent.md`](agent.md): Updated Section 12 Phase 3 checklist to include Decision D12 (Multi-Floor & Multi-Story Venue Intelligence) and integrated 3D vertical elevation projection into the AR "Spotter Lens" specification.
+- [`docs/TechnicalRequirements.md`](TechnicalRequirements.md): Added approved decision **D12** to Section 1, updated technical checklist, and authored comprehensive Multi-Floor specifications in Section 4.
+
 ### [2026-10-29 15:35] — Architectural Specification: Phase 3 Apple Watch Companion & Micro-Navigation Standardization (Decisions D10 & D11)
 - **Contributor / Role:** Senior App Development Consultant & Technical Product Advisor
 - **Status:** Scoped, Specified & Documented in `agent.md` and `TechnicalRequirements.md`

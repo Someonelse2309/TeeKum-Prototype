@@ -684,15 +684,22 @@ Use an **AODV-inspired on-demand routing approach** with bounded flooding fallba
 
 ### Phase 3 --- Venue Intelligence & Polish
 -   [ ] Custom venue event vector overlays (stages, medical, water stations).
--   [ ] **Apple Watch Companion Extension (`TeeKumWatch`):**
+-   [ ] **Multi-Floor & Multi-Story Venue Intelligence (Decision D12):**
+    -   [ ] Absorb 3 bytes into inner payload reserved padding: `floorLevel: Int8` (Byte 22, range -128..+126, 0x7F=Auto/Unknown) and `barometricPressure: UInt16` (Bytes 23..24, centi-hPa `(hPa - 800) * 100`, 0.01 hPa / ~8cm resolution), retaining 5 reserved bytes and 56-byte wire format.
+    -   [ ] Peer-to-peer differential barometry via `CMAltimeter` ($\Delta h \approx 8.43 \times \Delta P$) providing sub-meter vertical separation between co-located phones without cloud/IMDF dependency.
+    -   [ ] Moving median pressure filter to reject HVAC surges and elevator air pressure spikes.
+    -   [ ] 2D Map floor switcher pill (`All`, `B1`, `L1`, `L2`, `L3`) on `MainMapView` with dimmed cross-floor pins and vertical floor delta badges.
+    -   [ ] Vertical elevation warning in `FinderBeaconView` to prevent "0-meter arrival" confusion when friends are on different levels.
+-   [ ] **Apple Watch Companion Extension (`TeeKumWatch`, Decision D10):**
     -   [ ] Tethered companion architecture via `WatchConnectivity` (`WCSession`), strictly rejecting standalone mesh node execution to protect watch battery and adhere to watchOS ad-hoc networking restrictions.
     -   [ ] High-intensity Taptic Engine wrist haptic patterns for incoming emergency SOS alerts to penetrate 100+ dB concert/festival noise.
     -   [ ] Discrete 3-second wrist SOS trigger transmitting through host iPhone outbox queue.
     -   [ ] Heads-up wrist compass navigation with facing haptic alignment and distance badges to selected friend.
     -   [ ] 1-tap meeting point RSVP cards ("On my way" / "Can't make it") synchronized via `updateApplicationContext`.
     -   [ ] watchOS Smart Stack integration leveraging existing `TeeKumWidgets` Live Activity attributes.
--   [ ] **Close-Range Micro-Navigation ("Spotter Lens" & UWB Radar):**
+-   [ ] **Close-Range Micro-Navigation ("Spotter Lens", 3D Elevation & UWB Radar, Decision D11):**
     -   [ ] Preserve 2D MapKit (`MainMapView`) as primary macro-view; evaluate RealityKit/ARKit as an opt-in HUD inside `FinderBeaconView` (<30m range).
+    -   [ ] **AR 3D Vertical Elevation Positioning:** Render floating 3D nametags at calculated relative height ($\Delta h$) for multi-tier arenas (mezzanine, balconies, bleachers) with visual vertical elevation stems and ceiling occlusion indicators ("Above on Level 2 — Take Stairs").
     -   [ ] Enforce 30-second camera/GPU auto-timeout to prevent battery drain and thermal throttling.
     -   [ ] Graceful fallback to 2D compass/heading when VIO tracking degrades under strobe or dark venue conditions (`ARCamera.TrackingState.limited`).
     -   [ ] Nearby Interaction (UWB via U1/U2) precision radar prioritized where hardware supports.
