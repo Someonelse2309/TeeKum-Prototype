@@ -27,7 +27,7 @@ All multi-byte integer values are serialized strictly in **Big-Endian (Network B
 | Wire Range | Byte Count | Field Name | Wire Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
 | **0** | 1 | `versionAndType` | `UInt8` | High 4 bits: Protocol Version (`0x01`). Low 4 bits: Packet Type (`0x01`..`0x06`). |
-| **1** | 1 | `hopMetadata` | `UInt8` | High 4 bits: `hopLimit` (`1`..`15`, default `8`). Low 4 bits: `hopCount` (`0`..`hopLimit`). |
+| **1** | 1 | `hopMetadata` | `UInt8` | High 4 bits: `hopLimit` (`1`..`15`, default `8` for ping, `15` for SOS & meeting rendezvous). Low 4 bits: `hopCount` (`0`..`hopLimit`). |
 | **2..5** | 4 | `sessionId` | `UInt32` | 32-bit big-endian hash identifying the group session network. |
 | **6..9** | 4 | `sequenceNumber` | `UInt32` | 32-bit big-endian partitioned counter (`memberSlot: UInt8` + `counter: UInt24`). |
 | **10..39**| 30 | `encryptedPayload` | `30 Bytes` | Private inner payload encrypted with ChaCha20. |
@@ -206,3 +206,58 @@ flowchart TD
 | **8..11**| 18..21 | `discoveryNonce`| `UInt32` | Nonce to suppress route loops. |
 | **12** | 22 | `routeCost` | `UInt8` | Cumulative metric cost. |
 | **13..29**| 23..39 | `reserved` | `17 Bytes`| Reserved path metadata. |
+
+---
+
+## 6. Phase 2 Protocol Evolution: Expanded 2-Byte Hop Control (Protocol v3 Planning)
+
+### 6.1 Motivation & Venue Scalability Tradeoffs
+
+In Phase 1, `hopMetadata` is packed into a single byte (`hopLimit: 4 bits` | `hopCount: 4 bits`), constraining packets to a maximum of 15 hops. While sufficient for direct links and small festival gatherings, large-scale multi-tier stadium venues and sprawling multi-stage festival grounds require route depths exceeding 15 hops.
+
+Two architectural models were evaluated for expanding hop budgets:
+
+| Approach | Wire Format | Cryptographic Integrity | Relay Loop & Storm Protection | Telemetry / Path Depth | Verdict |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Single Mutating TTL Byte** (`ttl: UInt8`) | 1 Byte (`ttl` decrements from e.g. 255 to 0) | **CRITICAL VULNERABILITY:** Mutating byte must be masked to `0x00` in AAD. Relays can alter TTL arbitrarily. | **FAILS:** Rogue stranger node can reset TTL to 255, creating infinite broadcast storms and battery exhaustion. | **POOR:** Destination receives only remaining TTL, not hops traversed. | **REJECTED** |
+| **Expanded 2-Byte Hop Control** (`hopLimit` + `hopCount`) | 2 Bytes (`hopLimit: UInt8`, `hopCount: UInt8`) | **SECURE:** `hopLimit` authenticated verbatim in AAD. `hopCount` masked to `0x00` in AAD. Intermediary cannot tamper with limit. | **ROBUST:** Relay stops forwarding when `hopCount >= hopLimit`. Intermediaries cannot inflate forwarding budget. | **EXCELLENT:** Destination observes exact hop count traversed for diagnostics & link cost. | **APPROVED (Phase 2)** |
+
+### 6.2 Protocol v3 Wire Framing Specification
+
+In Phase 2 development, the wire framing evolves as follows while strictly maintaining the **54-byte total datagram size** to avoid radio fragmentation on AWDL / Wi-Fi Direct:
+
+```text
++-----------------------+-----------------------------+-------------------------+
+|  Outer Envelope (9B)  |   Encrypted Payload (29B)   |   Auth Tag (16B)        |
+|  (Cleartext Routing)  |   (Zero-Knowledge Cipher)   |   (Poly1305 / AES-GCM)  |
++-----------------------+-----------------------------+-------------------------+
+0                       9                             38                        54 Bytes
+```
+
+#### Outer Envelope (9 Bytes):
+- **Byte 0:** `versionAndType` (`UInt8`): High 4 bits = Version (`0x3`), Low 4 bits = Type (`0x1`..`0x6`).
+- **Byte 1:** `hopLimit` (`UInt8`): Maximum allowable hops ($0 \dots 255$, e.g. 16 for normal pings, 32 for SOS). Authenticated in AAD.
+- **Byte 2:** `hopCount` (`UInt8`): Hops traversed so far ($0 \dots 255$, starts at 0, incremented by each relay). Masked to `0x00` in AAD.
+- **Bytes 3..4:** `sessionId` (`UInt16` big-endian): 16-bit group session identifier.
+- **Bytes 5..8:** `sequenceNumber` (`UInt32` big-endian): Partitioned member sequence counter.
+
+#### Encrypted Payload (29 Bytes) & Padding Absorption:
+To preserve the exact 54-byte wire datagram, 1 byte is absorbed from the existing reserved payload padding:
+- `LOCATION_PING`: Reserved padding reduced from 8 bytes to 7 bytes.
+- `SOS`: Reserved padding reduced from 8 bytes to 7 bytes.
+- `MEETING_UPDATE`: Reserved padding reduced from 6 bytes to 5 bytes.
+- `ACK`: Reserved padding reduced from 12 bytes to 11 bytes.
+
+#### AEAD Associated Authenticated Data (AAD) Construction:
+The 9-byte AAD buffer supplied to ChaCha20-Poly1305 is constructed as:
+```text
+Byte 0:    versionAndType (UInt8)
+Byte 1:    hopLimit (UInt8, authenticated verbatim)
+Byte 2:    0x00 (hopCount masked to zero)
+Bytes 3..4: sessionId (UInt16 big-endian)
+Bytes 5..8: sequenceNumber (UInt32 big-endian)
+```
+
+### 6.3 Implementation Phasing
+- **Phase 1 (Current Active Build):** Strictly maintains Protocol v2 (8-byte cleartext envelope, 1-byte 4-bit/4-bit `hopMetadata`, 30-byte payload, 16-byte auth tag = 54 bytes). All 73 tests pass against this format.
+- **Phase 2 (Roadmap Milestone):** Migrates to Protocol v3 (9-byte envelope, 29-byte payload, 16-byte auth tag = 54 bytes) when multi-hop stranger mesh routing and AODV route discovery are implemented.

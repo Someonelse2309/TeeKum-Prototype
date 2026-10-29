@@ -210,7 +210,7 @@ public final class LocationPublisher {
         let envelope = CleartextEnvelope(
             version: PacketConstants.protocolVersion,
             type: .sos,
-            hopLimit: PacketConstants.defaultHopLimit,
+            hopLimit: PacketConstants.sosHopLimit,
             hopCount: 0,
             sessionId: session.sessionId,
             sequenceNumber: seq

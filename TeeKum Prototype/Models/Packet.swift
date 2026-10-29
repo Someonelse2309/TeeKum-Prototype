@@ -21,6 +21,7 @@ public enum PacketConstants {
     public static let defaultHopLimit: UInt8 = 8
     public static let maxHopLimit: UInt8 = 15
     public static let meetingPointHopLimit: UInt8 = 15
+    public static let sosHopLimit: UInt8 = 15
     
     /// 5-byte protocol domain tag used in nonce construction: 'T', 'K', 'M', '0', '2'
     public static let protocolDomainTag: [UInt8] = [0x54, 0x4B, 0x4D, 0x30, 0x32]

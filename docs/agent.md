@@ -452,7 +452,7 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
 | **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x22` (High nibble = Version `2`, Low nibble = Type `2`). |
-| **1** | `hopMetadata` | `UInt8` | `(UInt8, UInt8)` | High 4 bits = Hop Limit (`8`), Low 4 bits = Hop Count (`0` initially). |
+| **1** | `hopMetadata` | `UInt8` | `(UInt8, UInt8)` | High 4 bits = Hop Limit (`15` for urgent emergency reach), Low 4 bits = Hop Count (`0` initially). |
 | **2..3** | `sessionId` | `UInt16` | `UInt16` | 16-bit big-endian hash of the active group session. |
 | **4..7** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
 | **8..11** | `latitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Freshest available latitude (`Double * 1_000_000`, signed 32-bit big-endian). |
@@ -493,7 +493,7 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
 | **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x26` (High nibble = Version `2`, Low nibble = Type `6`). |
-| **1** | `hopMetadata` | `UInt8` | `(UInt8, UInt8)` | High 4 bits = Hop Limit (`8`), Low 4 bits = Hop Count (`0`). |
+| **1** | `hopMetadata` | `UInt8` | `(UInt8, UInt8)` | High 4 bits = Hop Limit (`15` for SOS/meeting ACK, `8` for ping), Low 4 bits = Hop Count (`0`). |
 | **2..3** | `sessionId` | `UInt16` | `UInt16` | 16-bit big-endian group session ID. |
 | **4..7** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
 | **8..11** | `ackedSeqNumber`| `UInt32` | `UInt32` | The exact sequence number of the message being acknowledged. |
@@ -549,12 +549,18 @@ Every packet is strictly **54 bytes** total. Below are the exact byte layouts fo
 
 Use an **AODV-inspired on-demand routing approach** with bounded flooding fallback.
 
--   **Phase 1 (Direct Offline MVP):** Direct peer-to-peer connections between group members with Live Activity & background location indicator.
+-   **Phase 1 (Direct Offline MVP):** Direct peer-to-peer connections between group members with Live Activity & background location indicator. Uses 1-byte `hopMetadata` (`hopLimit: 4 bits` | `hopCount: 4 bits`, range 0..15).
 -   **Phase 2 (Multi-Hop Stranger Mesh & Communal Compact):**
     -   Phones act as zero-knowledge blind relays for encrypted packets.
     -   Relay participation is an all-in community compact agreed upon joining or creating a group via a dedicated consent screen.
     -   Relay nodes **cannot** decrypt location, status, or identity payloads.
-    -   **Hop Limit (TTL):** Set to a maximum of **8 hops** for regular location pings and **15 hops** for rendezvous meeting points.
+    -   **Expanded 2-Byte Hop Control (Phase 2 Evolution):**
+        -   To accommodate massive festival grounds, racecourses, and multi-tier stadium venues where paths exceed 15 hops, the hop mechanism will evolve from a 4-bit/4-bit single byte into **two dedicated 8-bit bytes**:
+            1. `hopLimit: UInt8` (Byte 1): Immutable forwarding budget ($0\dots 255$, e.g. 16 for normal pings, 32 for SOS/rendezvous). Authenticated verbatim inside the ChaCha20-Poly1305 AAD to prevent rogue relays from inflating packet lifetime.
+            2. `hopCount: UInt8` (Byte 2): Mutable traversal counter ($0\dots 255$, starts at `0`). Incrementing per relay. Masked to `0x00` during AAD authentication so intermediate nodes can mutate it without invalidating the 128-bit MAC tag.
+        -   **Payload Padding Absorption:** To maintain the exact 54-byte total wire footprint on AWDL/Wi-Fi Direct without adding radio fragmentation or MTU overhead, 1 byte is absorbed from the inner payload's reserved padding (reducing reserved from 8 bytes down to 7 bytes in `LOCATION_PING` and `SOS`).
+        -   **Vulnerability Prevention:** A single decrementing TTL byte was evaluated and rejected because a mutating TTL cannot be authenticated without masking it completely in AAD, leaving the packet vulnerable to rogue nodes resetting the TTL to 255 and causing infinite broadcast storms and battery exhaustion. The 2-byte split (`hopLimit` sealed + `hopCount` masked) provides full tamper-resistance, prevents relay loops, and gives the destination full telemetry on path length.
+    -   **Hop Limit (TTL) Budgets:** Set to a default of **16 hops** for regular location pings and **32 hops** for rendezvous meeting points and emergency SOS alerts (with ceiling up to 255 if needed).
     -   **Relay Rate Limit:** Stranger relays cap re-transmissions to **2 packets/second** (<1ms CPU per hop) to preserve battery. SOS packets receive immediate priority.
     -   Duplicate suppression via 256-entry LRU packet hash cache.
     -   Automatic suspension at 20% battery (Festival Survival Mode).
@@ -640,7 +646,8 @@ Use an **AODV-inspired on-demand routing approach** with bounded flooding fallba
 -   [ ] Neighbor and routing tables (AODV-style on-demand).
 -   [ ] Blind packet relaying with opt-in user toggle.
 -   [ ] Lock Screen Live Activity for communal relay approval (Timed 30m vs Always Active).
--   [ ] Forwarding budget, hop limits (max 8), and packet cache deduplication.
+-   [ ] Forwarding budget, hop limits (max 8 in Phase 1, configurable up to 255 in Phase 2), and packet cache deduplication.
+-   [ ] Expand hop control to 2 separate bytes (`hopLimit: UInt8`, `hopCount: UInt8`) supporting up to 255 hops with AAD masking and payload padding absorption.
 -   [ ] Multi-hop SOS forwarding on physical devices.
 
 ### Phase 3 --- Venue Intelligence & Polish

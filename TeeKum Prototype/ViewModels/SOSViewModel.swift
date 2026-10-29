@@ -263,7 +263,7 @@ public final class SOSViewModel {
         let envelope = CleartextEnvelope(
             version: PacketConstants.protocolVersion,
             type: .sos,
-            hopLimit: PacketConstants.defaultHopLimit,
+            hopLimit: PacketConstants.sosHopLimit,
             hopCount: 0,
             sessionId: session.sessionId,
             sequenceNumber: seq
@@ -530,7 +530,7 @@ public final class SOSViewModel {
         let ackEnvelope = CleartextEnvelope(
             version: PacketConstants.protocolVersion,
             type: .ack,
-            hopLimit: PacketConstants.defaultHopLimit,
+            hopLimit: PacketConstants.sosHopLimit,
             hopCount: 0,
             sessionId: session.sessionId,
             sequenceNumber: seq

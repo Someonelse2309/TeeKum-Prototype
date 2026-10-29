@@ -619,6 +619,10 @@ public struct LocationPublishingTests {
             print("FAILED: Expected SOS envelope type, got \(sosWirePacket.envelope.type)")
             return false
         }
+        guard sosWirePacket.envelope.hopLimit == PacketConstants.sosHopLimit else {
+            print("FAILED: Expected SOS hopLimit \(PacketConstants.sosHopLimit), got \(sosWirePacket.envelope.hopLimit)")
+            return false
+        }
         
         print("  ✓ LocationPublisher sealed 54-byte wire packets and dispatched both location pings and SOS.")
         return true

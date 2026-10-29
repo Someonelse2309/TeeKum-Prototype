@@ -5,6 +5,89 @@
 
 ---
 
+### [2026-10-29 10:35] — Feature / Protocol Update: Increase SOS Hop Limit to 15 (Max Protocol v2 TTL)
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed
+- **Target Phase / Milestone:** Phase 1 — Emergency SOS & Binary Wire Protocol (Protocol v2)
+
+#### 1. Objective & Scope
+- Increase the hop limit (TTL) for emergency SOS packets to 15 (`PacketConstants.sosHopLimit = 15`), maximizing mesh propagation reach across dense festival grounds in Phase 1 before Phase 2's 2-byte hop expansion.
+- Ensure reciprocal reachability for emergency confirmation ACKs by also assigning them `PacketConstants.sosHopLimit` (15).
+
+#### 2. Changes Made & Files Touched
+- [`TeeKum Prototype/Models/Packet.swift`](../TeeKum%20Prototype/Models/Packet.swift):
+  - Added `public static let sosHopLimit: UInt8 = 15` in `PacketConstants`.
+- [`TeeKum Prototype/ViewModels/SOSViewModel.swift`](../TeeKum%20Prototype/ViewModels/SOSViewModel.swift):
+  - Updated `triggerEmergencySOS` to assign `hopLimit: PacketConstants.sosHopLimit` (15) on outbound SOS packets.
+  - Updated `sendDeliveryACK` to assign `hopLimit: PacketConstants.sosHopLimit` (15) on delivery confirmation ACKs.
+- [`TeeKum Prototype/Services/LocationPublisher.swift`](../TeeKum%20Prototype/Services/LocationPublisher.swift):
+  - Updated `dispatchUrgentSOS` to assign `hopLimit: PacketConstants.sosHopLimit` (15).
+- [`TeeKum Prototype/Tests/SOSEndToEndTests.swift`](../TeeKum%20Prototype/Tests/SOSEndToEndTests.swift):
+  - Added strict assertions checking `rawWire.envelope.hopLimit == PacketConstants.sosHopLimit` on initial SOS creation, intermediate relay reception, and downstream ACK emission.
+- [`TeeKum Prototype/Tests/LocationPublishingTests.swift`](../TeeKum%20Prototype/Tests/LocationPublishingTests.swift):
+  - Added assertion checking `sosWirePacket.envelope.hopLimit == PacketConstants.sosHopLimit`.
+- Documentation Updates:
+  - [`docs/agent.md`](agent.md): Updated Section 6.2 tables for Type 2 (`SOS`) and Type 4 (`ACK`) reflecting `hopLimit = 15`.
+  - [`docs/PROTOCOL_SPECIFICATION.md`](PROTOCOL_SPECIFICATION.md): Updated Section 1.1 table documenting `hopLimit: 15` for SOS & rendezvous.
+
+#### 3. Key Decisions & Rationale
+- **Emergency Priority Parity:** Under Protocol v2's 4-bit/4-bit `hopMetadata` nibble split, 15 is the maximum attainable hop limit ($2^4 - 1$). Since rendezvous points already utilize 15 hops to guarantee group synchronization across large festival venues, emergency SOS alerts warrant identical maximum reach to ensure life-safety alerts penetrate deep crowd clusters.
+- **ACK Reciprocal Reach:** When an SOS packet travels across 10 hops to reach a fellow friend, an ACK bounded by default 8 hops would be dropped en route. Using `sosHopLimit` (15) for SOS ACKs guarantees the distressed member receives definitive delivery feedback.
+
+#### 4. Verification & Testing Performed
+- **Xcode Compilation:** Built with `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -destination "platform=iOS Simulator,name=iPhone 17" build` -> **BUILD SUCCEEDED**.
+- **Automated Test Run on iOS Simulator:** Executed full automated suite via `xcrun simctl launch --console-pty booted com.academy.teekum.TeeKum-Prototype -runAllTests`:
+  - `PacketCodecTests`: 13/13 passed.
+  - `PeerTransportTests`: 13/13 passed.
+  - `CryptoSecurityTests`: 13/13 passed.
+  - `LocationPublishingTests`: 11/11 passed (including SOS hop limit = 15 verification).
+  - `UIStateTests`: 10/10 passed.
+  - `SOSEndToEndTests`: 11/11 passed (including multi-hop SOS forwarding and ACK delivery with hop limit = 15).
+  - `LiveActivityTests`: 5/5 passed.
+  - **Result: 100% Pass across all test suites.**
+
+#### 5. Open Items & Next Steps
+- Physical device multi-device radio verification on iPhone hardware.
+
+### [2026-10-29 10:30] — Planning & Architecture: Phase 2 Expanded 2-Byte Hop Control Specification (hopLimit & hopCount UInt8)
+- **Contributor / Agent:** Antigravity (Pair Programming Agent)
+- **Status:** Completed (Roadmap & Architectural Specification)
+- **Target Phase / Milestone:** Phase 2 — Multi-Hop Mesh & Communal Relay (Roadmap Planning)
+
+#### 1. Objective & Scope
+- Design and document the expansion of packet hop limits to support large-scale multi-tier stadium venues and sprawling multi-stage festival grounds where mesh routes exceed 15 hops.
+- Evaluate trade-offs between:
+  1. A single decrementing 8-bit TTL byte.
+  2. Two dedicated 8-bit bytes (`hopLimit: UInt8` + `hopCount: UInt8`, range 0..255).
+- Following user direction (*"I think put it in the phase 2 development, to make the hopcount larger"*), incorporate the approved 2-byte hop control design into the Phase 2 roadmap across all project specifications without altering Phase 1 code.
+
+#### 2. Changes Made & Files Touched
+- [`docs/agent.md`](agent.md):
+  - Updated Section 7 (*Mesh Routing and Forwarding*) with the Phase 2 2-byte hop control specification: `hopLimit: UInt8` authenticated verbatim in ChaCha20-Poly1305 AAD, `hopCount: UInt8` masked to `0x00` in AAD, and 1-byte payload padding absorption preserving the 54-byte datagram size.
+  - Updated Section 12 (*Phase 2 Checklist*) with the roadmap deliverable item.
+- [`docs/TechnicalRequirements.md`](TechnicalRequirements.md):
+  - Added Decision `D9 — Phase 2 Expanded 2-Byte Hop Control (hopLimit & hopCount UInt8)` to Section 1.2 (*Approved Review Decisions*).
+  - Updated Section 6 (*Final Check & Open Decisions for Future Phases*) scheduling Decision D9 for Phase 2 mesh development.
+- [`docs/PROTOCOL_SPECIFICATION.md`](PROTOCOL_SPECIFICATION.md):
+  - Added Section 6 (*Phase 2 Protocol Evolution: Expanded 2-Byte Hop Control (Protocol v3 Planning)*) detailing motivation, trade-off matrix, wire framing (9B envelope + 29B payload + 16B auth tag = 54B), AAD construction, and backward compatibility isolation.
+
+#### 3. Key Decisions & Rationale
+- **Fatal Flaw of Single Mutating TTL:** A single mutating TTL byte cannot be authenticated in AEAD without masking it to `0x00` during MAC computation. This allows any rogue bystander node to rewrite the TTL to 255 without failing authentication, unleashing unbounded broadcast storms and device battery drain.
+- **Two Dedicated Bytes (`hopLimit` + `hopCount`):**
+  - `hopLimit: UInt8` (Byte 1) is sealed immutable inside ChaCha20-Poly1305 AAD, tamper-proofing the originator's forwarding budget (e.g. 16 for location pings, 32 for emergency SOS).
+  - `hopCount: UInt8` (Byte 2) is mutable, incremented per relay, and masked to `0x00` during AAD calculation. Relays drop packets when `hopCount >= hopLimit`, eliminating loops and preventing unauthorized budget inflation.
+  - The destination gets full telemetry on true route depth.
+- **Payload Padding Absorption:** The outer envelope expands from 8 bytes to 9 bytes. To prevent radio packet fragmentation on AWDL / Wi-Fi Direct, exactly 1 byte is absorbed from the inner payload's reserved padding (reducing reserved from 8 to 7 bytes in `LOCATION_PING` and `SOS`), preserving the exact 54-byte total wire footprint.
+- **Phase Isolation:** Kept Phase 1 Swift code untouched (8-byte envelope with 4-bit/4-bit split and 73/73 passing tests intact).
+
+#### 4. Verification & Testing Performed
+- **Documentation Consistency:** Verified cross-document synchronization across [`docs/agent.md`](agent.md), [`docs/TechnicalRequirements.md`](TechnicalRequirements.md), and [`docs/PROTOCOL_SPECIFICATION.md`](PROTOCOL_SPECIFICATION.md).
+- **Code & Test Suite Health:** Confirmed Phase 1 code remains 100% untouched and passing (73/73 tests on iPhone 17 simulator).
+
+#### 5. Open Items & Next Steps
+- Continue Phase 1 MVP execution on physical devices.
+- When beginning Phase 2 multi-hop mesh development, implement Protocol v3 envelope framing, AAD masking, and padding absorption in [`TeeKum Prototype/Models/Packet.swift`](../TeeKum%20Prototype/Models/Packet.swift) alongside AODV route discovery.
+
 ### [2026-10-29 10:15] — Fix: Live Activity Out-of-Process Rendering Target (`TeeKumWidgets.appex`)
 - **Contributor / Agent:** Antigravity (Pair Programming Agent)
 - **Status:** Completed

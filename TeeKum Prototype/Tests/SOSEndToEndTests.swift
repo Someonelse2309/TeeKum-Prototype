@@ -287,6 +287,10 @@ public struct SOSEndToEndTests {
             print("FAILED: packet type must be .sos (0x02)")
             return false
         }
+        guard rawWire.envelope.hopLimit == PacketConstants.sosHopLimit else {
+            print("FAILED: SOS envelope hopLimit must be \(PacketConstants.sosHopLimit), got \(rawWire.envelope.hopLimit)")
+            return false
+        }
         
         // Decrypt payload to verify coordinate freshness honesty
         let key = SymmetricKey(data: session.symmetricKeyData)
@@ -993,6 +997,10 @@ public struct SOSEndToEndTests {
             print("FAILED: Alice's initial packet must have hopCount = 0")
             return false
         }
+        guard rawAtBob.envelope.hopLimit == PacketConstants.sosHopLimit else {
+            print("FAILED: Alice's initial SOS packet must carry hopLimit \(PacketConstants.sosHopLimit), got \(rawAtBob.envelope.hopLimit)")
+            return false
+        }
         
         await vmB.processInboundPacket(InboundPacket(rawPacket: rawAtBob, sourcePeerId: "Alice"))
         
@@ -1058,6 +1066,10 @@ public struct SOSEndToEndTests {
         let charlieRawAck = try! RawWirePacket.fromWireData(charlieAckData)
         guard charlieRawAck.envelope.type == .ack else {
             print("FAILED: Charlie's emitted packet must be an ACK")
+            return false
+        }
+        guard charlieRawAck.envelope.hopLimit == PacketConstants.sosHopLimit else {
+            print("FAILED: Charlie's emitted ACK must carry hopLimit \(PacketConstants.sosHopLimit), got \(charlieRawAck.envelope.hopLimit)")
             return false
         }
         
