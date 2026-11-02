@@ -74,6 +74,29 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
         Date().timeIntervalSince(lastSeen) > threshold
     }
     
+    /// Determines whether the member's last seen time is within the active stale probe recovery window.
+    /// Active recovery begins after `stalePeerThreshold` (30s) and expires after `stalePeerThreshold + recoveryTimeout` (90s).
+    public func isWithinStaleRecoveryWindow(
+        now: Date = Date(),
+        staleThreshold: TimeInterval = MeshTimingConfiguration.default.stalePeerThreshold,
+        recoveryTimeout: TimeInterval = MeshTimingConfiguration.default.staleRecoveryTimeout
+    ) -> Bool {
+        let age = now.timeIntervalSince(lastSeen)
+        return age > staleThreshold && age <= (staleThreshold + recoveryTimeout)
+    }
+    
+    /// Determines whether the member is eligible for Stage 2 on-demand AODV route discovery.
+    /// Stage 2 initiates after `stalePeerThreshold + routeReqDelay` (45s) and within recovery timeout (90s).
+    public func isEligibleForStaleRouteDiscovery(
+        now: Date = Date(),
+        staleThreshold: TimeInterval = MeshTimingConfiguration.default.stalePeerThreshold,
+        routeReqDelay: TimeInterval = MeshTimingConfiguration.default.staleRouteReqDelay,
+        recoveryTimeout: TimeInterval = MeshTimingConfiguration.default.staleRecoveryTimeout
+    ) -> Bool {
+        let age = now.timeIntervalSince(lastSeen)
+        return age >= (staleThreshold + routeReqDelay) && age <= (staleThreshold + recoveryTimeout)
+    }
+    
     public static func == (lhs: Member, rhs: Member) -> Bool {
         lhs.id == rhs.id &&
         lhs.name == rhs.name &&

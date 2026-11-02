@@ -622,6 +622,7 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
                 displayName: "Sim-\(id)",
                 rssi: link.rssi,
                 isDirectLink: link.isConnected,
+                isGroupMember: link.isGroupMember,
                 lastSeen: clock.now()
             )
         }
@@ -649,6 +650,7 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
                 displayName: "Sim-\(id)",
                 rssi: link.rssi,
                 isDirectLink: link.isConnected,
+                isGroupMember: link.isGroupMember,
                 lastSeen: clock.now()
             )
         }

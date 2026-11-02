@@ -22,6 +22,8 @@ struct TeeKumApp: App {
     private let cryptoService = CryptoService()
     private let peerTransport: PeerTransportService
     private let relayPolicyManager: RelayPolicyManager
+    private let routingTable: RoutingTable
+    private let routeDiscoveryService: RouteDiscoveryService
     
     init() {
         let service = LocationService()
@@ -30,6 +32,14 @@ struct TeeKumApp: App {
         let transport = PeerTransportService()
         self.peerTransport = transport
         self.relayPolicyManager = RelayPolicyManager(transport: transport)
+        let routing = RoutingTable()
+        self.routingTable = routing
+        self.routeDiscoveryService = RouteDiscoveryService(
+            routingTable: routing,
+            neighborTable: transport.neighborTable,
+            transport: transport,
+            cryptoService: cryptoService
+        )
     }
     
     var body: some Scene {
@@ -41,13 +51,18 @@ struct TeeKumApp: App {
                         sessionViewModel: sessionViewModel,
                         sosViewModel: sosViewModel,
                         meetingPointViewModel: meetingPointViewModel,
-                        relayPolicyManager: relayPolicyManager
+                        relayPolicyManager: relayPolicyManager,
+                        peerTransport: peerTransport
                     )
                     .task(id: session.sessionId) {
                         await runSessionLifecycle(session: session)
                     }
                 } else {
-                    GroupPairingView(sessionViewModel: sessionViewModel)
+                    GroupPairingView(
+                        sessionViewModel: sessionViewModel,
+                        relayPolicyManager: relayPolicyManager,
+                        peerTransport: peerTransport
+                    )
                         .task {
                             await stopActiveSession()
                         }
@@ -128,9 +143,15 @@ struct TeeKumApp: App {
                     fflush(stdout)
                     _ = await MeshFailureIntegrationTests.runAllTests()
                     fflush(stdout)
+                    _ = await MeshDebuggerTests.runAllTests()
+                    fflush(stdout)
                     print(">>> ALL AUTOMATED TEST RUNS FINISHED <<<")
                     fflush(stdout)
                 } else {
+                    if ProcessInfo.processInfo.arguments.contains("-runMeshDebuggerTests") {
+                        _ = await MeshDebuggerTests.runAllTests()
+                        fflush(stdout)
+                    }
                     if ProcessInfo.processInfo.arguments.contains("-runMeshFailureTests") {
                         _ = await MeshFailureIntegrationTests.runAllTests()
                         fflush(stdout)
@@ -198,6 +219,12 @@ struct TeeKumApp: App {
         
         // 4. Start Radio Transport
         do {
+            // Synchronize in-memory relay policy manager if user opted into Communal Mesh Compact
+            let savedModeRaw = UserDefaults.standard.string(forKey: "com.teekum.relay.participationMode")
+            if let savedMode = RelayParticipationMode(rawValue: savedModeRaw ?? ""), savedMode == .communalRelayActive {
+                await relayPolicyManager.setParticipationMode(.communalRelayActive)
+            }
+            
             try await peerTransport.start(serviceType: "_teekum._tcp", session: session)
             let policyState = await relayPolicyManager.currentState()
             await peerTransport.setRelayParticipation(enabled: policyState.isRelayPermitted)
@@ -205,7 +232,57 @@ struct TeeKumApp: App {
             print("[TeeKumApp] Radio transport failed to start: \(error)")
         }
         
-        // 4. Start Location Publisher
+        // 4. Configure Adaptive Distant & Stale Peer Cadence & Publisher
+        await routeDiscoveryService.setOnTargetReached { [weak locationService] originator in
+            Task { @MainActor in
+                locationService?.triggerBurstPings(
+                    count: MeshTimingConfiguration.default.staleResponseBurstCount,
+                    interval: MeshTimingConfiguration.default.staleResponseBurstInterval
+                )
+            }
+        }
+        
+        locationService.hasDistantPeersProvider = { [weak sessionViewModel, weak locationService] in
+            guard let sessionViewModel else { return false }
+            
+            // Check if any friend pin is beyond the distant threshold (e.g. 30m)
+            if let localCoord = locationService?.currentLocation?.coordinate {
+                let localLoc = CLLocation(latitude: localCoord.latitude, longitude: localCoord.longitude)
+                let threshold = MeshTimingConfiguration.default.distantDistanceThresholdMeters
+                for member in sessionViewModel.members {
+                    if let coord = member.coordinate {
+                        let memberLoc = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+                        if localLoc.distance(from: memberLoc) >= threshold {
+                            return true
+                        }
+                    }
+                }
+            }
+            
+            // Check if any peer has low RSSI <= threshold (e.g. -75 dBm)
+            let rssiThreshold = MeshTimingConfiguration.default.distantRSSIThreshold
+            for member in sessionViewModel.members {
+                if let rssi = member.rssi, rssi <= rssiThreshold {
+                    return true
+                }
+            }
+            
+            return false
+        }
+        
+        locationService.hasStalePeersProvider = { [weak sessionViewModel] in
+            guard let sessionViewModel else { return false }
+            let now = Date()
+            let timing = MeshTimingConfiguration.default
+            return sessionViewModel.members.contains {
+                $0.isWithinStaleRecoveryWindow(
+                    now: now,
+                    staleThreshold: timing.stalePeerThreshold,
+                    recoveryTimeout: timing.staleRecoveryTimeout
+                )
+            }
+        }
+        
         let publisher = LocationPublisher(
             locationService: locationService,
             sessionProvider: { session },
@@ -215,7 +292,7 @@ struct TeeKumApp: App {
         self.locationPublisher = publisher
         publisher.start()
         
-        // 5. Inbound Packets and Peer Updates
+        // 5. Inbound Packets, Peer Updates, and Stale Supervisor
         let inboundStream = await peerTransport.inboundPackets
         let peerUpdatesStream = await peerTransport.peerUpdates
         await withTaskGroup(of: Void.self) { group in
@@ -236,6 +313,58 @@ struct TeeKumApp: App {
                     }
                 }
             }
+            
+            // 6. Stale Peer Accelerated Cadence & Two-Tier AODV Probe Supervisor
+            group.addTask { @MainActor in
+                var lastGlobalRouteReqDispatch: Date = .distantPast
+                var lastRouteReqTimes: [String: Date] = [:]
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    guard !Task.isCancelled else { break }
+                    
+                    let now = Date()
+                    let timing = MeshTimingConfiguration.default
+                    
+                    // Stage 1 Check: Accelerate cadence while any peer is stale within recovery window (30s < age <= 90s)
+                    let anyStale = sessionViewModel.members.contains {
+                        $0.isWithinStaleRecoveryWindow(
+                            now: now,
+                            staleThreshold: timing.stalePeerThreshold,
+                            recoveryTimeout: timing.staleRecoveryTimeout
+                        )
+                    }
+                    if anyStale != locationService.hasStalePeers {
+                        locationService.hasStalePeers = anyStale
+                        if anyStale {
+                            locationService.triggerCadenceEvaluation()
+                        }
+                    }
+                    
+                    // Stage 2 Check: On-demand AODV ROUTE_REQ staggered across multiple stale peers
+                    if now.timeIntervalSince(lastGlobalRouteReqDispatch) >= timing.staleRouteReqStaggerInterval {
+                        let eligibleMembers = sessionViewModel.members.filter {
+                            $0.isEligibleForStaleRouteDiscovery(
+                                now: now,
+                                staleThreshold: timing.stalePeerThreshold,
+                                routeReqDelay: timing.staleRouteReqDelay,
+                                recoveryTimeout: timing.staleRecoveryTimeout
+                            ) && now.timeIntervalSince(lastRouteReqTimes[$0.id] ?? .distantPast) >= 10.0
+                        }.sorted { $0.lastSeen < $1.lastSeen }
+                        
+                        if let target = eligibleMembers.first {
+                            lastGlobalRouteReqDispatch = now
+                            lastRouteReqTimes[target.id] = now
+                            Task {
+                                _ = try? await routeDiscoveryService.initiateDiscovery(
+                                    to: target.id,
+                                    session: session,
+                                    timeout: 3.0
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -245,7 +374,13 @@ struct TeeKumApp: App {
         locationPublisher?.stop()
         locationPublisher = nil
         await peerTransport.stop()
+        await routeDiscoveryService.setOnTargetReached(nil)
+        await routeDiscoveryService.teardown(sessionId: nil)
         locationService.stopTracking()
+        locationService.hasDistantPeers = false
+        locationService.hasDistantPeersProvider = nil
+        locationService.hasStalePeers = false
+        locationService.hasStalePeersProvider = nil
         locationService.updateStatus(UserStatus(code: .available))
         sosViewModel.stopListening()
         sosViewModel.reset()
@@ -353,6 +488,24 @@ struct TeeKumApp: App {
             meetingPointViewModel.applyInboundUpdate(update)
             await relayMeshPacketIfNeeded(inbound, for: session)
             
+        case .routeReq:
+            if let wireData = try? inbound.rawPacket.toWireData() {
+                _ = try? await routeDiscoveryService.handleInboundRouteReq(
+                    wireData: wireData,
+                    fromPeerId: inbound.sourcePeerId,
+                    session: session
+                )
+            }
+            
+        case .routeResp:
+            if let wireData = try? inbound.rawPacket.toWireData() {
+                _ = try? await routeDiscoveryService.handleInboundRouteResp(
+                    wireData: wireData,
+                    fromPeerId: inbound.sourcePeerId,
+                    session: session
+                )
+            }
+            
         default:
             break
         }
@@ -434,7 +587,11 @@ struct TeeKumApp: App {
             let directPeers = await peerTransport.neighborTable.activeNeighbors()
             let eligible = directPeers.filter { $0.id != inbound.sourcePeerId }
             for peer in eligible {
-                _ = try await peerTransport.forwardFrame(wireData, to: peer.id)
+                do {
+                    _ = try await peerTransport.forwardFrame(wireData, to: peer.id)
+                } catch {
+                    print("[TeeKumApp] Forward to stranger relay peer \(peer.id) failed: \(error)")
+                }
             }
             await relayPolicyManager.recordForwardEvent(type: envelope.type)
         } catch {
@@ -445,6 +602,10 @@ struct TeeKumApp: App {
     @MainActor
     private func handlePeerUpdates(_ peers: [PeerInfo], for session: GroupSession) {
         for peer in peers {
+            guard peer.isGroupMember else {
+                // Anonymous stranger relay: do NOT expose in member rosters or maps (Zero-Knowledge)
+                continue
+            }
             guard peer.id != session.localInitials else { continue }
             if let idx = sessionViewModel.members.firstIndex(where: { $0.id == peer.id }) {
                 var m = sessionViewModel.members[idx]
@@ -453,6 +614,9 @@ struct TeeKumApp: App {
                 }
                 m.isDirectPeer = peer.isDirectLink
                 m.rssi = peer.rssi
+                if peer.lastSeen > m.lastSeen {
+                    m.lastSeen = peer.lastSeen
+                }
                 sessionViewModel.updateMember(m)
             } else {
                 let m = Member(

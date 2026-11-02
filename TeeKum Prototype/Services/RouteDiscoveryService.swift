@@ -85,6 +85,10 @@ public actor RouteDiscoveryService: RouteDiscoveryManaging {
     private var totalRRespReceivedCount: Int = 0
     private var totalRoutesInvalidatedCount: Int = 0
     
+    /// Callback invoked when an inbound route request reaches the local device as destination.
+    /// Used to trigger an immediate location response burst in one-to-many topologies.
+    public var onTargetReached: (@Sendable (String) -> Void)?
+    
     // MARK: - Initialization
     
     public init(
@@ -94,7 +98,8 @@ public actor RouteDiscoveryService: RouteDiscoveryManaging {
         cryptoService: CryptoServiceProvider,
         clock: MeshClock = SystemMeshClock(),
         maxHops: UInt8 = PacketConstants.defaultHopLimit,
-        maxInFlightCapacity: Int = 16
+        maxInFlightCapacity: Int = 16,
+        onTargetReached: (@Sendable (String) -> Void)? = nil
     ) {
         self.routingTable = routingTable
         self.neighborTable = neighborTable
@@ -104,6 +109,11 @@ public actor RouteDiscoveryService: RouteDiscoveryManaging {
         self.maxHops = min(maxHops, PacketConstants.defaultHopLimit)
         self.maxInFlightCapacity = max(1, maxInFlightCapacity)
         self.lastRefillTime = clock.now()
+        self.onTargetReached = onTargetReached
+    }
+    
+    public func setOnTargetReached(_ handler: (@Sendable (String) -> Void)?) {
+        self.onTargetReached = handler
     }
     
     // MARK: - Route Resolution & Discovery Initiation
@@ -361,6 +371,7 @@ public actor RouteDiscoveryService: RouteDiscoveryManaging {
             
             totalRRespSentCount += 1
             _ = try await transport.sendFrame(respWire, to: fromPeerId)
+            onTargetReached?(payload.originatorInitials)
             return .answeredWithRResp(targetInitials: payload.targetInitials, nextHop: fromPeerId)
         }
         

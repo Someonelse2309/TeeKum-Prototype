@@ -45,10 +45,12 @@ public enum RouteDiscoveryTests {
         passed = await testFloodingBudgetExhaustionRateLimiter() && passed
         passed = await testSimultaneousDiscoveryAttempts() && passed
         passed = await testSessionTeardownDuringActiveDiscovery() && passed
+        passed = await testTwoTierStalePeerRouteDiscovery() && passed
+        passed = await testOneToManyStalePeerStaggeredProbingAndBurstResponse() && passed
         
         if passed {
             print("==================================================")
-            print(">>> ALL 12 AODV ROUTE DISCOVERY TESTS PASSED <<<")
+            print(">>> ALL 14 AODV ROUTE DISCOVERY TESTS PASSED <<<")
             print("==================================================\n")
         } else {
             print("❌ SOME AODV ROUTE DISCOVERY TESTS FAILED!")
@@ -728,6 +730,170 @@ public enum RouteDiscoveryTests {
         
         await simulator.stopAll()
         print("  PASS: In-flight discovery aborted cleanly with .sessionTerminated and tables purged.")
+        return true
+    }
+    
+    // MARK: - Test 13: Two-Tier Stale Peer On-Demand Route Discovery
+    
+    public static func testTwoTierStalePeerRouteDiscovery() async -> Bool {
+        print("[Test 13] Two-tier stale peer on-demand AODV route discovery through intermediate relay...")
+        let clock = TestMeshClock()
+        let simulator = MeshTopologySimulator(clock: clock)
+        let key = SymmetricKey(size: .bits256)
+        let keyData = key.withUnsafeBytes { Data($0) }
+        let sessionId: UInt16 = 0x8888
+        
+        let sessionAlice = GroupSession(sessionId: sessionId, sessionName: "Camp", symmetricKeyData: keyData, localInitials: "ALI")
+        let sessionCarol = GroupSession(sessionId: sessionId, sessionName: "Camp", symmetricKeyData: keyData, localInitials: "CAR")
+        let sessionBob = GroupSession(sessionId: sessionId, sessionName: "Camp", symmetricKeyData: keyData, localInitials: "BOB")
+        
+        let alice = await simulator.createNode(id: "Alice", initials: "ALI", session: sessionAlice)
+        _ = await simulator.createNode(id: "Carol", initials: "CAR", session: sessionCarol)
+        let bob = await simulator.createNode(id: "Bob", initials: "BOB", session: sessionBob)
+        
+        // Linear multi-hop topology: Alice <-> Carol <-> Bob
+        await simulator.link("Alice", "Carol")
+        await simulator.link("Carol", "Bob")
+        
+        // Verify Bob is a stale peer (unseen for 45s, crossing stalePeerThreshold + staleRouteReqDelay)
+        let now = Date()
+        let bobMember = Member(id: "BOB", lastSeen: now.addingTimeInterval(-45.0))
+        guard bobMember.isWithinStaleRecoveryWindow(now: now) else {
+            print("  FAIL: Bob should be within stale recovery window.")
+            await simulator.stopAll()
+            return false
+        }
+        guard bobMember.isEligibleForStaleRouteDiscovery(now: now) else {
+            print("  FAIL: Bob should be eligible for Stage 2 on-demand route discovery.")
+            await simulator.stopAll()
+            return false
+        }
+        
+        // Stage 2: Alice triggers on-demand discovery for stale peer "BOB"
+        let routeTask = Task { () -> RouteEntry in
+            try await alice.routeDiscovery.initiateDiscovery(to: "BOB", session: sessionAlice, timeout: 2.0)
+        }
+        
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        
+        guard let route = try? await routeTask.value else {
+            print("  FAIL: On-demand route discovery for stale peer BOB failed to resolve.")
+            await simulator.stopAll()
+            return false
+        }
+        
+        guard route.destinationId == "BOB" && route.nextHopPeerId == "Carol" && route.hopCount == 2 else {
+            print("  FAIL: Expected 2-hop route to BOB via Carol, got nextHop=\(route.nextHopPeerId), hops=\(route.hopCount)")
+            await simulator.stopAll()
+            return false
+        }
+        
+        // Verify symmetric reverse route from Bob back to Alice was also populated
+        let bobRoute = await bob.routingTable.findRoute(to: "ALI", inSession: UInt32(sessionId))
+        guard let bRoute = bobRoute, bRoute.nextHopPeerId == "Carol" && bRoute.hopCount == 2 else {
+            print("  FAIL: Bob failed to record reverse route to ALI via Carol, got \(String(describing: bobRoute))")
+            await simulator.stopAll()
+            return false
+        }
+        
+        await simulator.stopAll()
+        print("  PASS: Stage 2 on-demand AODV route discovery successfully established 2-hop path to stale peer through relay.")
+        return true
+    }
+    
+    // MARK: - Test 14: One-to-Many Multi-Peer Staggered Probing & Response Burst
+    
+    public static func testOneToManyStalePeerStaggeredProbingAndBurstResponse() async -> Bool {
+        print("[Test 14] One-to-many multi-peer staggered probing and response burst...")
+        let clock = TestMeshClock()
+        let simulator = MeshTopologySimulator(clock: clock)
+        let key = SymmetricKey(size: .bits256)
+        let keyData = key.withUnsafeBytes { Data($0) }
+        let sessionId: UInt16 = 0x9999
+        
+        let sessionAlice = GroupSession(sessionId: sessionId, sessionName: "Camp", symmetricKeyData: keyData, localInitials: "ALI")
+        let sessionRelay = GroupSession(sessionId: sessionId, sessionName: "Camp", symmetricKeyData: keyData, localInitials: "REL")
+        let sessionBob = GroupSession(sessionId: sessionId, sessionName: "Camp", symmetricKeyData: keyData, localInitials: "BOB")
+        let sessionCarol = GroupSession(sessionId: sessionId, sessionName: "Camp", symmetricKeyData: keyData, localInitials: "CAR")
+        
+        let alice = await simulator.createNode(id: "Alice", initials: "ALI", session: sessionAlice)
+        _ = await simulator.createNode(id: "Relay", initials: "REL", session: sessionRelay)
+        let bob = await simulator.createNode(id: "Bob", initials: "BOB", session: sessionBob)
+        let carol = await simulator.createNode(id: "Carol", initials: "CAR", session: sessionCarol)
+        
+        // Star-relay topology: Alice <-> Relay <-> Bob, Relay <-> Carol
+        await simulator.link("Alice", "Relay")
+        await simulator.link("Relay", "Bob")
+        await simulator.link("Relay", "Carol")
+        
+        // Bob registers onTargetReached callback to trigger response burst
+        var bobBurstTriggeredBy: String? = nil
+        await bob.routeDiscovery.setOnTargetReached { originator in
+            bobBurstTriggeredBy = originator
+        }
+        
+        // 1. In a group where both Bob and Carol are stale:
+        let now = Date()
+        let bobMember = Member(id: "BOB", lastSeen: now.addingTimeInterval(-50.0))
+        let carolMember = Member(id: "CAR", lastSeen: now.addingTimeInterval(-46.0))
+        
+        let staleMembers = [bobMember, carolMember].filter {
+            $0.isEligibleForStaleRouteDiscovery(now: now)
+        }.sorted { $0.lastSeen < $1.lastSeen } // Longest unseen (Bob: 50s) ranked first
+        
+        guard staleMembers.count == 2 && staleMembers.first?.id == "BOB" && staleMembers.last?.id == "CAR" else {
+            print("  FAIL: Stale members not ordered by longest unseen first.")
+            await simulator.stopAll()
+            return false
+        }
+        
+        // 2. Alice probes the highest priority stale member (Bob)
+        let routeBobTask = Task { () -> RouteEntry in
+            try await alice.routeDiscovery.initiateDiscovery(to: "BOB", session: sessionAlice, timeout: 2.0)
+        }
+        
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        
+        guard let routeBob = try? await routeBobTask.value else {
+            print("  FAIL: Discovery to Bob failed.")
+            await simulator.stopAll()
+            return false
+        }
+        
+        guard routeBob.destinationId == "BOB" && routeBob.nextHopPeerId == "Relay" && routeBob.hopCount == 2 else {
+            print("  FAIL: Route to Bob invalid: \(routeBob).")
+            await simulator.stopAll()
+            return false
+        }
+        
+        // Verify Bob's onTargetReached callback fired with originator ALI
+        guard bobBurstTriggeredBy == "ALI" else {
+            print("  FAIL: Bob onTargetReached callback did not fire with originator ALI, got \(String(describing: bobBurstTriggeredBy)).")
+            await simulator.stopAll()
+            return false
+        }
+        
+        // 3. Staggered pacing: verify Carol can be probed subsequently after stagger delay
+        let routeCarolTask = Task { () -> RouteEntry in
+            try await alice.routeDiscovery.initiateDiscovery(to: "CAR", session: sessionAlice, timeout: 2.0)
+        }
+        
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        
+        guard let routeCarol = try? await routeCarolTask.value else {
+            print("  FAIL: Subsequent discovery to Carol failed.")
+            await simulator.stopAll()
+            return false
+        }
+        
+        guard routeCarol.destinationId == "CAR" && routeCarol.nextHopPeerId == "Relay" && routeCarol.hopCount == 2 else {
+            print("  FAIL: Route to Carol invalid: \(routeCarol).")
+            await simulator.stopAll()
+            return false
+        }
+        
+        await simulator.stopAll()
+        print("  PASS: One-to-many multi-peer staggered probing and response burst successfully verified.")
         return true
     }
 }

@@ -16,7 +16,9 @@ public struct DiagnosticsView: View {
     var mapViewModel: MapViewModel?
     var sosViewModel: SOSViewModel?
     var relayPolicyManager: RelayPolicyManager?
+    var peerTransport: PeerTransportService?
     
+    @State private var isShowingMeshDebugger: Bool = false
     @State private var isRunningTests: Bool = false
     @State private var testResultSummary: String?
     @State private var isRunningUITests: Bool = false
@@ -27,6 +29,8 @@ public struct DiagnosticsView: View {
     @State private var relayTestResultSummary: String?
     @State private var isRunningMeshFailureTests: Bool = false
     @State private var meshFailureTestSummary: String?
+    @State private var isRunningDebuggerTests: Bool = false
+    @State private var debuggerTestSummary: String?
     @State private var relayState: RelayPolicyState?
     @State private var relayTelemetry: RelayTelemetry?
     
@@ -34,12 +38,14 @@ public struct DiagnosticsView: View {
         sessionViewModel: GroupSessionViewModel,
         mapViewModel: MapViewModel? = nil,
         sosViewModel: SOSViewModel? = nil,
-        relayPolicyManager: RelayPolicyManager? = nil
+        relayPolicyManager: RelayPolicyManager? = nil,
+        peerTransport: PeerTransportService? = nil
     ) {
         self.sessionViewModel = sessionViewModel
         self.mapViewModel = mapViewModel
         self.sosViewModel = sosViewModel
         self.relayPolicyManager = relayPolicyManager
+        self.peerTransport = peerTransport
     }
     
     public var body: some View {
@@ -48,6 +54,34 @@ public struct DiagnosticsView: View {
                 Color.black.ignoresSafeArea()
                 
                 List {
+                    // MARK: - 0. Full Mesh Debugger & Lab
+                    Section {
+                        Button {
+                            isShowingMeshDebugger = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "waveform.path.badge.gearshape")
+                                    .font(.title2)
+                                    .foregroundStyle(.yellow)
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Open Mesh Debugger & Lab")
+                                        .font(.headline.bold())
+                                        .foregroundStyle(.white)
+                                    Text("Interactive topology canvas, 56-byte wire packet inspector, packet injector, and virtual multi-node sandbox.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.gray)
+                                }
+                                
+                                Spacer()
+                                
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.gray)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
                     // MARK: - 1. Active Session & Key Fingerprint
                     Section("Active Cryptographic Session") {
                         if let session = sessionViewModel.activeSession {
@@ -395,6 +429,25 @@ public struct DiagnosticsView: View {
                                 .font(.caption.monospaced())
                                 .foregroundStyle(meshSummary.contains("PASSED") ? .green : .red)
                         }
+                        
+                        Button {
+                            runMeshDebuggerVerification()
+                        } label: {
+                            HStack {
+                                Text("Run Mesh Debugger & Lab Suite")
+                                Spacer()
+                                if isRunningDebuggerTests {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(isRunningDebuggerTests)
+                        
+                        if let debuggerSummary = debuggerTestSummary {
+                            Text(debuggerSummary)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(debuggerSummary.contains("PASSED") ? .green : .red)
+                        }
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -411,6 +464,16 @@ public struct DiagnosticsView: View {
                     }
                     .foregroundStyle(.white)
                 }
+            }
+            .sheet(isPresented: $isShowingMeshDebugger) {
+                MeshDebuggerView(
+                    viewModel: MeshDebuggerViewModel(
+                        peerTransport: peerTransport,
+                        groupSessionViewModel: sessionViewModel,
+                        locationService: mapViewModel?.locationService,
+                        relayPolicyManager: relayPolicyManager
+                    )
+                )
             }
         }
     }
@@ -494,13 +557,13 @@ public struct DiagnosticsView: View {
     
     private func runRelayVerification() {
         isRunningRelayTests = true
-        relayTestResultSummary = "Running 11 relay & battery policy tests..."
+        relayTestResultSummary = "Running 12 relay & battery policy tests..."
         
         Task {
             let passed = await RelayPolicyTests.runAllTests()
             await MainActor.run {
                 isRunningRelayTests = false
-                relayTestResultSummary = passed ? "✓ ALL 11 RELAY POLICY TESTS PASSED" : "✗ SOME TESTS FAILED"
+                relayTestResultSummary = passed ? "✓ ALL 12 RELAY POLICY TESTS PASSED" : "✗ SOME TESTS FAILED"
             }
             await loadRelayData()
         }
@@ -517,6 +580,19 @@ public struct DiagnosticsView: View {
                 meshFailureTestSummary = passed ? "✓ ALL 12 MESH FAILURE TESTS PASSED" : "✗ SOME MESH FAILURE TESTS FAILED"
             }
             await loadRelayData()
+        }
+    }
+    
+    private func runMeshDebuggerVerification() {
+        isRunningDebuggerTests = true
+        debuggerTestSummary = "Running 10 mesh debugger tests..."
+        
+        Task {
+            let passed = await MeshDebuggerTests.runAllTests()
+            await MainActor.run {
+                isRunningDebuggerTests = false
+                debuggerTestSummary = passed ? "✓ ALL 10 MESH DEBUGGER TESTS PASSED" : "✗ SOME TESTS FAILED"
+            }
         }
     }
 }

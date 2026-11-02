@@ -150,7 +150,7 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
                 packetType: packetType,
                 destinationPeerId: destinationPeerId,
                 attemptCount: 0,
-                maxRetries: 0, // Relayed stranger packets are not retried locally
+                maxRetries: MeshTimingConfiguration.default.distantLinkMaxRetries,
                 isUrgent: false,
                 isRelay: true
             )
@@ -201,11 +201,15 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Pops the next highest-priority item for transmission.
     /// Priority order:
     /// 1. Urgent lane (SOS, ACK, Meeting updates).
-    /// 2. Normal coalesced lane (local location pings).
-    /// 3. Stranger relay lane (communal mesh packets).
+    /// 2. Stranger relay lane (communal mesh packets forwarded for other devices).
+    /// 3. Normal coalesced lane (local routine location pings).
     public func dequeue() -> OutboxItem? {
         if !urgentLane.isEmpty {
             return urgentLane.removeFirst()
+        }
+        
+        if !strangerRelayLane.isEmpty {
+            return strangerRelayLane.removeFirst()
         }
         
         if let (key, item) = normalCoalescedLane.first {
@@ -213,23 +217,29 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
             return item
         }
         
-        if !strangerRelayLane.isEmpty {
-            return strangerRelayLane.removeFirst()
-        }
-        
         return nil
     }
     
     /// Re-queues an item that encountered a transient transmission failure, if retries remain.
     public func requeueForRetry(_ item: OutboxItem) -> Bool {
-        guard item.isUrgent, item.attemptCount < item.maxRetries else {
+        guard item.attemptCount < item.maxRetries else {
             return false
         }
         
         var retryItem = item
         retryItem.attemptCount += 1
-        urgentLane.insert(retryItem, at: 0) // Preempt back to front of urgent lane
-        return true
+        
+        if item.isUrgent {
+            urgentLane.insert(retryItem, at: 0) // Preempt back to front of urgent lane
+            return true
+        } else if item.isRelay {
+            strangerRelayLane.insert(retryItem, at: 0) // Preempt back to front of stranger relay lane
+            return true
+        } else {
+            let destKey = item.destinationPeerId ?? ""
+            normalCoalescedLane[destKey] = retryItem
+            return true
+        }
     }
     
     /// Clears only pending stranger relay packets (e.g. when relay participation is disabled).

@@ -32,6 +32,7 @@ public struct PeerTransportTests {
         passed = passed && testTieBreakerLogic()
         passed = passed && testDiagnosticsSnapshot()
         passed = passed && testZeroHandshakeImmediatePacketFraming()
+        passed = passed && testPriorityOutboxStrangerRelayElevatedPriority()
         
         if passed {
             print("--- [PeerTransportTests] ALL TRANSPORT TESTS PASSED SUCCESSFULLY! ---")
@@ -543,6 +544,69 @@ public struct PeerTransportTests {
                 return false
             }
             print("  PASS: Immediate 56-byte location packet extracted cleanly with zero-handshake overhead.")
+            return true
+        } catch {
+            print("  FAIL: Unexpected error: \(error)")
+            return false
+        }
+    }
+    
+    // MARK: - Test 14: Stranger Relay Elevated Priority & Distant Link Retries
+    
+    public static func testPriorityOutboxStrangerRelayElevatedPriority() -> Bool {
+        print("[Test 14] PriorityOutboxQueue: Stranger relay elevated ahead of routine location pings & retried...")
+        let outbox = PriorityOutboxQueue()
+        
+        let routinePing = createValidWirePacket(type: .locationPing, seq: 10)
+        let strangerRelay = createValidWirePacket(type: .locationPing, seq: 20, sid: 0x9999)
+        let urgentSOS = createValidWirePacket(type: .sos, seq: 30)
+        
+        do {
+            // 1. Enqueue routine local ping first
+            try outbox.enqueue(data: routinePing, isRelay: false)
+            
+            // 2. Enqueue stranger relay second
+            try outbox.enqueue(data: strangerRelay, destinationPeerId: "distant-peer", isRelay: true)
+            
+            // 3. Enqueue urgent SOS third
+            try outbox.enqueue(data: urgentSOS, isRelay: false)
+            
+            // Dequeue 1: Urgent SOS must come out FIRST
+            guard let first = outbox.dequeue(), first.packetType == .sos else {
+                print("  FAIL: First item must be .sos")
+                return false
+            }
+            
+            // Dequeue 2: Stranger relay must come out SECOND (elevated ahead of routine ping)
+            guard let second = outbox.dequeue(), second.isRelay else {
+                print("  FAIL: Second item must be stranger relay (elevated ahead of routine pings)")
+                return false
+            }
+            
+            // Dequeue 3: Routine ping must come out THIRD
+            guard let third = outbox.dequeue(), !third.isRelay, third.packetType == .locationPing else {
+                print("  FAIL: Third item must be routine location ping")
+                return false
+            }
+            
+            // 4. Verify retry capability for distant relay packet
+            guard second.maxRetries == MeshTimingConfiguration.default.distantLinkMaxRetries else {
+                print("  FAIL: Stranger relay maxRetries should match distantLinkMaxRetries (\(MeshTimingConfiguration.default.distantLinkMaxRetries)), got \(second.maxRetries)")
+                return false
+            }
+            
+            let canRetry1 = outbox.requeueForRetry(second)
+            guard canRetry1 else {
+                print("  FAIL: Requeue attempt 1 should succeed")
+                return false
+            }
+            
+            guard let retriedItem = outbox.dequeue(), retriedItem.isRelay, retriedItem.attemptCount == 1 else {
+                print("  FAIL: Retried relay item should be at the front of relay lane with attemptCount 1")
+                return false
+            }
+            
+            print("  PASS: Stranger relay packet successfully elevated ahead of routine pings with configurable retry budget.")
             return true
         } catch {
             print("  FAIL: Unexpected error: \(error)")

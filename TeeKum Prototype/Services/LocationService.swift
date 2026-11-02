@@ -53,6 +53,18 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     /// Motion state (`true` if user is stationary/resting; `false` if walking/moving).
     public private(set) var isStationary: Bool = false
     
+    /// True when one or more peers are distant or signal is weak.
+    public var hasDistantPeers: Bool = false
+    
+    /// Dynamic provider closure to evaluate whether any peers are distant.
+    public var hasDistantPeersProvider: (@MainActor @Sendable () -> Bool)? = nil
+    
+    /// True when one or more peers are stale and within the active recovery window.
+    public var hasStalePeers: Bool = false
+    
+    /// Dynamic provider closure to evaluate whether any peers are stale and within the active recovery window.
+    public var hasStalePeersProvider: (@MainActor @Sendable () -> Bool)? = nil
+    
     /// Master toggle governing whether coordinates are broadcast to the group.
     public var isLiveSharingEnabled: Bool {
         didSet {
@@ -85,6 +97,9 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     
     /// Active publishing scheduler task. Strictly one task runs at a time.
     private var publishingTask: Task<Void, Never>?
+    
+    /// Active response burst task.
+    private var burstTask: Task<Void, Never>?
     
     /// Continuation for async permission requests.
     private var permissionContinuation: CheckedContinuation<Bool, Never>?
@@ -157,6 +172,12 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     public var currentCadenceInterval: TimeInterval {
         if isSurvivalModeActive {
             return cadenceConfig.survivalInterval
+        } else if hasStalePeers || (hasStalePeersProvider?() ?? false) {
+            // Stale peer detected within recovery window: accelerate cadence to recover fresh updates
+            return cadenceConfig.staleRecoveryInterval
+        } else if hasDistantPeers || (hasDistantPeersProvider?() ?? false) {
+            // Distant peers detected: accelerate cadence from 20s to 2s to maintain relay responsiveness
+            return cadenceConfig.distantPeerInterval
         } else if isStationary {
             return cadenceConfig.stationaryInterval
         } else {
@@ -337,6 +358,36 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     private func stopPublishingScheduler() {
         publishingTask?.cancel()
         publishingTask = nil
+        burstTask?.cancel()
+        burstTask = nil
+    }
+    
+    /// Re-evaluates cadence immediately, restarting the scheduler loop with fresh cadence.
+    public func triggerCadenceEvaluation() {
+        guard isTracking, isLiveSharingEnabled else { return }
+        startPublishingScheduler()
+    }
+    
+    /// Publishes a rapid burst of fresh location pings to punch through intermediate mesh relays.
+    public func triggerBurstPings(
+        count: Int = MeshTimingConfiguration.default.staleResponseBurstCount,
+        interval: TimeInterval = MeshTimingConfiguration.default.staleResponseBurstInterval
+    ) {
+        guard isLiveSharingEnabled, count > 0 else { return }
+        
+        // 1. Immediately publish ping #1
+        publishCurrentState()
+        guard count > 1 else { return }
+        
+        // 2. Schedule remaining burst pings in a cancellable task
+        burstTask?.cancel()
+        burstTask = Task { @MainActor [weak self] in
+            for _ in 1..<count {
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                guard !Task.isCancelled, let self, self.isLiveSharingEnabled else { break }
+                self.publishCurrentState()
+            }
+        }
     }
     
     /// Dispatches the latest useful location and current user status together.

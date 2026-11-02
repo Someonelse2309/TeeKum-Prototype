@@ -21,22 +21,47 @@ nonisolated public struct CadenceConfiguration: Equatable, Sendable {
     /// Publishing interval while stationary (recommended: 15–30 seconds).
     public var stationaryInterval: TimeInterval
     
+    /// Accelerated publishing interval when one or more peers are distant or signal is weak (recommended: 2.0s).
+    public var distantPeerInterval: TimeInterval
+    
     /// Throttled publishing interval in survival mode (<20% battery).
     public var survivalInterval: TimeInterval
     
     /// Duration after which a location fix is marked stale for the UI.
     public var staleThreshold: TimeInterval
     
+    /// Threshold after which a peer is considered stale (recommended: 30.0s).
+    public var stalePeerThreshold: TimeInterval
+    
+    /// Accelerated publishing interval while probing for stale peers (recommended: 2.0s).
+    public var staleRecoveryInterval: TimeInterval
+    
+    /// Additional staleness delay before triggering Stage 2 route discovery (recommended: 15.0s).
+    public var staleRouteReqDelay: TimeInterval
+    
+    /// Maximum active recovery probe window duration before falling back to normal cadence (recommended: 60.0s).
+    public var staleRecoveryTimeout: TimeInterval
+    
     public init(
-        movingInterval: TimeInterval = 4.0,
-        stationaryInterval: TimeInterval = 20.0,
-        survivalInterval: TimeInterval = 60.0,
-        staleThreshold: TimeInterval = 30.0
+        movingInterval: TimeInterval = MeshTimingConfiguration.default.movingInterval,
+        stationaryInterval: TimeInterval = MeshTimingConfiguration.default.stationaryInterval,
+        distantPeerInterval: TimeInterval = MeshTimingConfiguration.default.distantPeerInterval,
+        survivalInterval: TimeInterval = MeshTimingConfiguration.default.survivalInterval,
+        staleThreshold: TimeInterval = MeshTimingConfiguration.default.stalePeerThreshold,
+        stalePeerThreshold: TimeInterval = MeshTimingConfiguration.default.stalePeerThreshold,
+        staleRecoveryInterval: TimeInterval = MeshTimingConfiguration.default.staleRecoveryInterval,
+        staleRouteReqDelay: TimeInterval = MeshTimingConfiguration.default.staleRouteReqDelay,
+        staleRecoveryTimeout: TimeInterval = MeshTimingConfiguration.default.staleRecoveryTimeout
     ) {
         self.movingInterval = movingInterval
         self.stationaryInterval = stationaryInterval
+        self.distantPeerInterval = distantPeerInterval
         self.survivalInterval = survivalInterval
         self.staleThreshold = staleThreshold
+        self.stalePeerThreshold = stalePeerThreshold
+        self.staleRecoveryInterval = staleRecoveryInterval
+        self.staleRouteReqDelay = staleRouteReqDelay
+        self.staleRecoveryTimeout = staleRecoveryTimeout
     }
 }
 
@@ -76,6 +101,18 @@ public protocol LocationServiceProvider: AnyObject {
     
     /// Motion coprocessor activity state (`true` if user is standing/dancing in place; `false` if walking).
     var isStationary: Bool { get }
+    
+    /// True if any tracked group member or radio neighbor is distant (far GPS or weak RSSI).
+    var hasDistantPeers: Bool { get set }
+    
+    /// Optional closure provider to dynamically evaluate whether any peers are distant.
+    var hasDistantPeersProvider: (@MainActor @Sendable () -> Bool)? { get set }
+    
+    /// True if any tracked group member is stale and within active recovery window.
+    var hasStalePeers: Bool { get set }
+    
+    /// Optional closure provider to dynamically evaluate whether any peers are stale and within the active recovery window.
+    var hasStalePeersProvider: (@MainActor @Sendable () -> Bool)? { get set }
     
     /// User-controlled master toggle governing whether coordinates are broadcast to the group.
     var isLiveSharingEnabled: Bool { get set }
@@ -128,8 +165,16 @@ public protocol LocationServiceProvider: AnyObject {
     
     /// Recreates the publishedPings stream and continuation to recover from cancellation.
     func resetPublishedPingsStream()
+    
+    /// Re-evaluates cadence and interrupts any current long sleep if cadence accelerated.
+    func triggerCadenceEvaluation()
+    
+    /// Publishes a rapid burst of fresh location pings to punch through intermediate mesh relays.
+    func triggerBurstPings(count: Int, interval: TimeInterval)
 }
 
 extension LocationServiceProvider {
     public func resetPublishedPingsStream() {}
+    public func triggerCadenceEvaluation() {}
+    public func triggerBurstPings(count: Int, interval: TimeInterval) {}
 }

@@ -421,17 +421,22 @@ public struct NeighborDiscoveryTests {
             _ = queue.dequeue()
         }
         
-        // Next should be the coalesced normal location ping
-        let normalItem = queue.dequeue()
-        guard let normalItem = normalItem, normalItem.packetType == .locationPing, !normalItem.isRelay else {
-            print("  FAIL: Expected normal coalesced ping.")
-            return false
-        }
-        
-        // Next should be the stranger relay packet
+        // Priority 2: Stranger relay packet (elevated ahead of routine pings to prevent starvation)
         let relayItem = queue.dequeue()
         guard let relayItem = relayItem, relayItem.isRelay else {
             print("  FAIL: Expected stranger relay packet.")
+            return false
+        }
+        
+        // Drain remaining relay items
+        while queue.relayCount > 0 {
+            _ = queue.dequeue()
+        }
+        
+        // Priority 3: Coalesced normal location ping
+        let normalItem = queue.dequeue()
+        guard let normalItem = normalItem, normalItem.packetType == .locationPing, !normalItem.isRelay else {
+            print("  FAIL: Expected normal coalesced ping.")
             return false
         }
         

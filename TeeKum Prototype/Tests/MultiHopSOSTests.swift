@@ -71,6 +71,10 @@ public enum MultiHopSOSTests {
         var currentLocation: LocationPin?
         var currentHeading: CLLocationDirection?
         var isStationary: Bool = false
+        var hasDistantPeers: Bool = false
+        var hasDistantPeersProvider: (@MainActor @Sendable () -> Bool)? = nil
+        var hasStalePeers: Bool = false
+        var hasStalePeersProvider: (@MainActor @Sendable () -> Bool)? = nil
         var isLiveSharingEnabled: Bool = true
         var isSurvivalModeActive: Bool = false
         var currentBatteryLevel: Float = 0.85

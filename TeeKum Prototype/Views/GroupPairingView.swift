@@ -14,13 +14,26 @@ import SwiftUI
 /// - Open Mesh: 1-tap auto-mesh connecting to all nearby peers on default festival channel
 public struct GroupPairingView: View {
     @Bindable var sessionViewModel: GroupSessionViewModel
+    var relayPolicyManager: RelayPolicyManager?
+    var peerTransport: PeerTransportService?
     
     @State private var selectedTab: PairingTab = .create
     @State private var initialsInput: String = ""
     @State private var groupNameInput: String = "Festival Crew"
     @State private var createdSession: GroupSession?
     @State private var pendingAgreement: PendingAgreementAction? = nil
+    @State private var isShowingMeshDebugger: Bool = false
     @FocusState private var isFieldFocused: Bool
+    
+    public init(
+        sessionViewModel: GroupSessionViewModel,
+        relayPolicyManager: RelayPolicyManager? = nil,
+        peerTransport: PeerTransportService? = nil
+    ) {
+        self.sessionViewModel = sessionViewModel
+        self.relayPolicyManager = relayPolicyManager
+        self.peerTransport = peerTransport
+    }
     
     enum PendingAgreementAction: Identifiable {
         case create(name: String, initials: String)
@@ -126,6 +139,19 @@ public struct GroupPairingView: View {
             .navigationTitle("TeeKum Pairing")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        isShowingMeshDebugger = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "waveform.path.badge.gearshape")
+                            Text("Mesh Lab")
+                                .font(.caption.bold())
+                        }
+                        .foregroundStyle(.yellow)
+                    }
+                }
+                
                 ToolbarItem(placement: .topBarTrailing) {
                     if createdSession != nil {
                         Button("Reset") {
@@ -136,6 +162,15 @@ public struct GroupPairingView: View {
                         .foregroundStyle(.red)
                     }
                 }
+            }
+            .sheet(isPresented: $isShowingMeshDebugger) {
+                MeshDebuggerView(
+                    viewModel: MeshDebuggerViewModel(
+                        peerTransport: peerTransport,
+                        groupSessionViewModel: sessionViewModel,
+                        relayPolicyManager: relayPolicyManager
+                    )
+                )
             }
             .onAppear {
                 if !sessionViewModel.localUserName.isEmpty && initialsInput.isEmpty {
@@ -148,6 +183,11 @@ public struct GroupPairingView: View {
                     onAgree: {
                         // Persist user opt-in to Communal Mesh Compact (Agent 5)
                         UserDefaults.standard.set(RelayParticipationMode.communalRelayActive.rawValue, forKey: "com.teekum.relay.participationMode")
+                        if let manager = relayPolicyManager {
+                            Task {
+                                await manager.setParticipationMode(.communalRelayActive)
+                            }
+                        }
                         switch action {
                         case .create(let name, let initials):
                             executeCreateGroup(name: name, initials: initials)
@@ -160,6 +200,12 @@ public struct GroupPairingView: View {
                         pendingAgreement = nil
                     },
                     onDecline: {
+                        UserDefaults.standard.set(RelayParticipationMode.disabled.rawValue, forKey: "com.teekum.relay.participationMode")
+                        if let manager = relayPolicyManager {
+                            Task {
+                                await manager.stopRelaying()
+                            }
+                        }
                         if case .join = action {
                             sessionViewModel.pendingInvite = nil
                         }

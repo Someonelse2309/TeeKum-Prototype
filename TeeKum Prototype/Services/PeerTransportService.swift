@@ -72,7 +72,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     private var connections: [String: PeerConnection] = [:]
     
     /// Endpoints currently visible in NWBrowser results keyed by peer ID.
-    private var discoveredEndpoints: [String: (endpoint: NWEndpoint, displayName: String?)] = [:]
+    private var discoveredEndpoints: [String: (endpoint: NWEndpoint, displayName: String?, isGroup: Bool)] = [:]
     
     /// Dual-lane prioritized outbox with stranger relay ring buffer.
     private let outbox = PriorityOutboxQueue()
@@ -393,6 +393,21 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         } else {
             logEvent("Mesh relay participation enabled.", level: .info)
         }
+        
+        // Update Bonjour TXT record dynamically with relay flag
+        if let session = activeSession, let currentListener = listener {
+            var txtDict: [String: Data] = [:]
+            txtDict["sid"] = String(format: "%08X", session.sessionId).data(using: .utf8)
+            txtDict["name"] = session.localMemberName.data(using: .utf8)
+            txtDict["relay"] = (enabled ? "1" : "0").data(using: .utf8)
+            let txtData = NetService.data(fromTXTRecord: txtDict)
+            currentListener.service = NWListener.Service(
+                name: localPeerId,
+                type: serviceType,
+                domain: nil,
+                txtRecord: txtData
+            )
+        }
     }
     
     /// Checks if relaying is currently permitted.
@@ -433,6 +448,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
                 displayName: peer.displayName,
                 rssi: nil,
                 isDirectLink: peer.isReady,
+                isGroupMember: peer.isGroupMember,
                 lastSeen: peer.lastSeen
             )
         }
@@ -481,6 +497,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         var txtDict: [String: Data] = [:]
         txtDict["sid"] = String(format: "%08X", session.sessionId).data(using: .utf8)
         txtDict["name"] = session.localMemberName.data(using: .utf8)
+        txtDict["relay"] = (isRelayEnabled ? "1" : "0").data(using: .utf8)
         let txtData = NetService.data(fromTXTRecord: txtDict)
         
         newListener.service = NWListener.Service(
@@ -610,6 +627,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
             // 2. Check session ID from TXT record if present
             var remoteName: String?
             var isGroup = false
+            var isRemoteRelayEnabled = true // default true for backwards compatibility
             if case let .bonjour(txtRecord) = result.metadata {
                 if let sidStr = txtRecord.dictionary["sid"] {
                     let expectedSid = String(format: "%08X", session.sessionId)
@@ -618,17 +636,22 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
                 if let name = txtRecord.dictionary["name"] {
                     remoteName = name
                 }
+                if let relayStr = txtRecord.dictionary["relay"] {
+                    isRemoteRelayEnabled = (relayStr == "1")
+                }
             }
             
-            // If communal relaying is disabled, do not peer with stranger nodes
-            if !isRelayEnabled && !isGroup {
-                continue
+            // If communal relaying is disabled locally, or remote stranger has relay disabled, do not peer
+            if !isGroup {
+                guard isRelayEnabled && isRemoteRelayEnabled else {
+                    continue
+                }
             }
             
             currentDiscovered[remotePeerId] = (result.endpoint, remoteName, isGroup)
         }
         
-        self.discoveredEndpoints = currentDiscovered.mapValues { ($0.endpoint, $0.displayName) }
+        self.discoveredEndpoints = currentDiscovered
         
         // Evaluate connection initiation for discovered peers
         for (remotePeerId, info) in currentDiscovered {
@@ -636,6 +659,32 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
             if let existing = connections[remotePeerId] {
                 if existing.isReady {
                     continue // Connection is already established and healthy
+                }
+            }
+            
+            // Reconcile pre-discovery inbound link if it arrived before NWBrowser completed
+            if localPeerId > remotePeerId {
+                if let inboundEntry = connections.first(where: { $0.key.starts(with: "inbound-") }) {
+                    let inboundConn = inboundEntry.value
+                    connections.removeValue(forKey: inboundEntry.key)
+                    inboundConn.peerId = remotePeerId
+                    inboundConn.displayName = info.displayName ?? "Peer-\(remotePeerId.prefix(3))"
+                    inboundConn.isGroupMember = info.isGroup
+                    connections[remotePeerId] = inboundConn
+                    logEvent("Matched pre-discovery inbound link to peer \(remotePeerId) (group: \(info.isGroup)).", level: .info)
+                    
+                    Task {
+                        await neighborTable.registerOrUpdateNeighbor(
+                            id: remotePeerId,
+                            displayName: inboundConn.displayName,
+                            state: inboundConn.isReady ? .connected : .connecting,
+                            rssi: nil,
+                            isGroupMember: info.isGroup,
+                            capabilities: inboundConn.capabilities
+                        )
+                    }
+                    emitPeerUpdates()
+                    continue
                 }
             }
             
@@ -700,19 +749,32 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     
     private func handleIncomingConnection(_ connection: NWConnection) {
         // Inbound connection from NWListener
-        // Temporary ID until handshake completes
-        let tempId = "inbound-\(UUID().uuidString.prefix(6))"
+        var resolvedPeerId = "inbound-\(UUID().uuidString.prefix(6))"
+        var resolvedDisplayName = "Connecting..."
+        var isGroup = false
+        
+        // Find awaiting discovered peer that should be connecting to us (remoteId < localPeerId)
+        if let awaitingPeer = discoveredEndpoints.keys.first(where: { remoteId in
+            remoteId < localPeerId && connections[remoteId] == nil
+        }) {
+            resolvedPeerId = awaitingPeer
+            if let info = discoveredEndpoints[awaitingPeer] {
+                resolvedDisplayName = info.displayName ?? "Peer-\(awaitingPeer.prefix(3))"
+                isGroup = info.isGroup
+            }
+        }
+        
         let peer = PeerConnection(
-            peerId: tempId,
-            displayName: "Connecting...",
+            peerId: resolvedPeerId,
+            displayName: resolvedDisplayName,
             endpoint: connection.endpoint,
             connection: connection,
             isOutbound: false,
-            isGroupMember: false // stranger until verified
+            isGroupMember: isGroup
         )
-        connections[tempId] = peer
+        connections[resolvedPeerId] = peer
         
-        logEvent("Incoming link received from endpoint \(connection.endpoint). Starting handshake...", level: .info)
+        logEvent("Incoming link established with peer \(resolvedPeerId) from endpoint \(connection.endpoint).", level: .info)
         setupConnectionHandlers(peer)
         connection.start(queue: dispatchQueue)
     }
@@ -1013,10 +1075,15 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         lastErrorMessage = error.localizedDescription
         logEvent("Transmission error for \(outboxItem.packetType): \(error.localizedDescription)", level: .warning)
         
-        // If urgent, requeue if retries remain
+        // If retries remain (urgent SOS/ACK or distant relay), requeue with configurable backoff
         if outbox.requeueForRetry(outboxItem) {
-            logEvent("Re-queuing urgent packet \(outboxItem.packetType) (attempt \(outboxItem.attemptCount + 1)).", level: .info)
-            triggerOutboxFlush()
+            let attempt = outboxItem.attemptCount + 1
+            logEvent("Re-queuing \(outboxItem.isRelay ? "stranger relay" : "urgent") packet \(outboxItem.packetType) (attempt \(attempt)/\(outboxItem.maxRetries + 1)).", level: .info)
+            let delay = MeshTimingConfiguration.default.distantLinkRetryDelay
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                await self?.triggerOutboxFlush()
+            }
         } else {
             transportErrorsContinuation?.yield(.sendFailed(error.localizedDescription))
         }
@@ -1046,6 +1113,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
                 displayName: peer.displayName,
                 rssi: nil,
                 isDirectLink: peer.isReady,
+                isGroupMember: peer.isGroupMember,
                 lastSeen: peer.lastSeen
             )
         }

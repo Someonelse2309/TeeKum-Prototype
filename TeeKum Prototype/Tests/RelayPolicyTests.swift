@@ -44,10 +44,11 @@ public enum RelayPolicyTests {
         passed = await testLiveActivityUnavailableOrDismissed() && passed
         passed = await testResourceCountersContainNoLocationHistory() && passed
         passed = await testRelaySettingsPersistence() && passed
+        passed = await testBidirectionalCrossGroupStrangerRelay() && passed
         
         if passed {
             print("==================================================")
-            print(">>> ALL 11 RELAY & BATTERY POLICY TESTS PASSED <<<")
+            print(">>> ALL 12 RELAY & BATTERY POLICY TESTS PASSED <<<")
             print("==================================================\n")
         } else {
             print("❌ SOME RELAY & BATTERY POLICY TESTS FAILED!")
@@ -767,6 +768,122 @@ public enum RelayPolicyTests {
         }
         
         print("  PASS: User relay preference persists reliably across restarts in approved settings model.")
+        return true
+    }
+    
+    // MARK: - Test 12: Bidirectional Cross-Group Stranger Relaying
+    
+    /// Verifies that two devices belonging to different groups (Group 1 vs Group 2)
+    /// symmetrically act as anonymous blind relays for each other when opted into Communal Relay.
+    public static func testBidirectionalCrossGroupStrangerRelay() async -> Bool {
+        print("[Test 12] Bidirectional cross-group stranger relaying between different groups...")
+        let clock = TestMeshClock()
+        
+        let outboxA = PriorityOutboxQueue()
+        let managerA = RelayPolicyManager(
+            clock: clock,
+            userDefaults: UserDefaults(suiteName: "test.relay.a")!,
+            storageKeyPrefix: "relay.a",
+            outbox: outboxA,
+            defaultMode: .communalRelayActive
+        )
+        
+        let outboxB = PriorityOutboxQueue()
+        let managerB = RelayPolicyManager(
+            clock: clock,
+            userDefaults: UserDefaults(suiteName: "test.relay.b")!,
+            storageKeyPrefix: "relay.b",
+            outbox: outboxB,
+            defaultMode: .communalRelayActive
+        )
+        
+        // Both nodes must permit relaying
+        let stateA = await managerA.currentState()
+        let stateB = await managerB.currentState()
+        guard stateA.isRelayPermitted && stateB.isRelayPermitted else {
+            print("  FAIL: Both Node A and Node B must have isRelayPermitted == true")
+            return false
+        }
+        
+        // 1. Node A (Group 1, SID 0x1111) generates a packet
+        let envA = CleartextEnvelope(
+            version: PacketConstants.protocolVersion,
+            type: .locationPing,
+            hopLimit: PacketConstants.defaultHopLimit,
+            hopCount: 0,
+            sessionId: 0x1111,
+            sequenceNumber: 101
+        )
+        let wireA = RawWirePacket(envelope: envA, ciphertext: Data(repeating: 0xAA, count: 30), authTag: Data(repeating: 0x01, count: 16))
+        let wireDataA = try! wireA.toWireData()
+        
+        // Node B (Group 2, SID 0x2222) receives Node A's stranger packet
+        guard envA.sessionId != 0x2222 else {
+            print("  FAIL: Packet A should be from different group")
+            return false
+        }
+        guard stateB.isRelayPermitted else {
+            await managerB.recordDropEvent(reason: .policyDisabled)
+            print("  FAIL: Node B dropped stranger packet due to policy")
+            return false
+        }
+        guard envA.hopCount < envA.hopLimit else {
+            await managerB.recordDropEvent(reason: .hopLimitExceeded)
+            return false
+        }
+        
+        // Node B mutates hopCount and enqueues into its stranger relay lane
+        var mutatedA = wireDataA
+        mutatedA[mutatedA.startIndex + 2] = envA.hopCount + 1
+        _ = try! outboxB.enqueue(data: mutatedA, destinationPeerId: "peer-B2", isRelay: true)
+        await managerB.recordForwardEvent(type: envA.type)
+        
+        let teleB = await managerB.snapshot()
+        guard teleB.totalPacketsForwarded == 1, outboxB.relayCount == 1 else {
+            print("  FAIL: Node B failed to forward Node A's stranger packet: forwarded=\(teleB.totalPacketsForwarded), relayCount=\(outboxB.relayCount)")
+            return false
+        }
+        
+        // 2. Node B (Group 2, SID 0x2222) generates a packet
+        let envB = CleartextEnvelope(
+            version: PacketConstants.protocolVersion,
+            type: .sos,
+            hopLimit: PacketConstants.sosHopLimit,
+            hopCount: 0,
+            sessionId: 0x2222,
+            sequenceNumber: 202
+        )
+        let wireB = RawWirePacket(envelope: envB, ciphertext: Data(repeating: 0xBB, count: 30), authTag: Data(repeating: 0x02, count: 16))
+        let wireDataB = try! wireB.toWireData()
+        
+        // Node A (Group 1, SID 0x1111) receives Node B's stranger packet
+        guard envB.sessionId != 0x1111 else {
+            print("  FAIL: Packet B should be from different group")
+            return false
+        }
+        guard stateA.isRelayPermitted else {
+            await managerA.recordDropEvent(reason: .policyDisabled)
+            print("  FAIL: Node A dropped stranger packet due to policy")
+            return false
+        }
+        guard envB.hopCount < envB.hopLimit else {
+            await managerA.recordDropEvent(reason: .hopLimitExceeded)
+            return false
+        }
+        
+        // Node A mutates hopCount and enqueues into its stranger relay lane
+        var mutatedB = wireDataB
+        mutatedB[mutatedB.startIndex + 2] = envB.hopCount + 1
+        _ = try! outboxA.enqueue(data: mutatedB, destinationPeerId: "peer-A2", isRelay: true)
+        await managerA.recordForwardEvent(type: envB.type)
+        
+        let teleA = await managerA.snapshot()
+        guard teleA.totalPacketsForwarded == 1, outboxA.relayCount == 1 else {
+            print("  FAIL: Node A failed to forward Node B's stranger packet: forwarded=\(teleA.totalPacketsForwarded), relayCount=\(outboxA.relayCount)")
+            return false
+        }
+        
+        print("  PASS: Bidirectional cross-group stranger relaying verified. Both Node A and Node B symmetrically forward packets for each other.")
         return true
     }
 }

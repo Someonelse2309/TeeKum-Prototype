@@ -102,6 +102,7 @@ public struct LocationPublishingTests {
         if !(await testEndToEndLocationPublisherPacketSealing()) { passed = false }
         if !(await testMapViewModelIntegration()) { passed = false }
         if !(await testMultiSessionStreamRenewal()) { passed = false }
+        if !(await testStalePeerAcceleratedCadenceAndTwoTierRecovery()) { passed = false }
         
         if passed {
             print("--- [LocationPublishingTests] ALL LOCATION TESTS PASSED SUCCESSFULLY! ---")
@@ -457,7 +458,23 @@ public struct LocationPublishingTests {
             return false
         }
         
-        print("  ✓ Adaptive cadence selection selects correct intervals for moving, stationary, and survival.")
+        // 5. Distant peers detected: accelerates stationary cadence to distantPeerInterval (2.0s)
+        service.hasDistantPeers = true
+        guard abs(service.currentCadenceInterval - 2.0) < 0.001 else {
+            print("FAILED: Distant peer cadence should be 2.0s, got: \(service.currentCadenceInterval)")
+            return false
+        }
+        service.hasDistantPeers = false
+        
+        // 6. Stale peers detected: accelerates stationary cadence to staleRecoveryInterval (2.0s)
+        service.hasStalePeers = true
+        guard abs(service.currentCadenceInterval - 2.0) < 0.001 else {
+            print("FAILED: Stale peer cadence should be 2.0s, got: \(service.currentCadenceInterval)")
+            return false
+        }
+        service.hasStalePeers = false
+        
+        print("  ✓ Adaptive cadence selection selects correct intervals for moving, stationary, survival, distant, and stale peers.")
         return true
     }
     
@@ -774,6 +791,119 @@ public struct LocationPublishingTests {
         service.stopTracking()
         
         print("  ✓ Multi-session stream renewal successfully preserved location sharing across session restarts!")
+        return true
+    }
+    
+    // MARK: - Test 13: Stale Peer Accelerated Cadence & Two-Tier Recovery
+    
+    @MainActor
+    public static func testStalePeerAcceleratedCadenceAndTwoTierRecovery() async -> Bool {
+        print("[Test 13] Stale peer accelerated cadence and two-tier recovery window...")
+        
+        let timing = MeshTimingConfiguration.default
+        let service = LocationService()
+        service.simulateMotionActivity(stationary: true)
+        
+        // 1. Initially stationary without stale peers: interval is 20s
+        guard abs(service.currentCadenceInterval - timing.stationaryInterval) < 0.001 else {
+            print("FAILED: Stationary interval should be \(timing.stationaryInterval), got \(service.currentCadenceInterval)")
+            return false
+        }
+        
+        let now = Date()
+        
+        // 2. Fresh peer (last seen 10s ago)
+        let freshMember = Member(id: "ALX", lastSeen: now.addingTimeInterval(-10.0))
+        guard !freshMember.isWithinStaleRecoveryWindow(now: now) else {
+            print("FAILED: Member seen 10s ago should NOT be within stale recovery window.")
+            return false
+        }
+        guard !freshMember.isEligibleForStaleRouteDiscovery(now: now) else {
+            print("FAILED: Member seen 10s ago should NOT be eligible for route discovery.")
+            return false
+        }
+        
+        // 3. Stage 1 Stale Peer (last seen 35s ago: > 30s threshold but < 45s route discovery delay)
+        let stage1Member = Member(id: "BOB", lastSeen: now.addingTimeInterval(-35.0))
+        guard stage1Member.isWithinStaleRecoveryWindow(now: now) else {
+            print("FAILED: Member seen 35s ago should be within stale recovery window.")
+            return false
+        }
+        guard !stage1Member.isEligibleForStaleRouteDiscovery(now: now) else {
+            print("FAILED: Member seen 35s ago should not yet be eligible for route discovery (< 45s).")
+            return false
+        }
+        
+        // Activate stale peer on location service
+        service.hasStalePeers = true
+        guard abs(service.currentCadenceInterval - timing.staleRecoveryInterval) < 0.001 else {
+            print("FAILED: Stale peer should accelerate cadence to \(timing.staleRecoveryInterval)s, got \(service.currentCadenceInterval)")
+            return false
+        }
+        
+        // 4. Stage 2 Stale Peer (last seen 50s ago: >= 45s and <= 90s)
+        let stage2Member = Member(id: "CAR", lastSeen: now.addingTimeInterval(-50.0))
+        guard stage2Member.isWithinStaleRecoveryWindow(now: now) else {
+            print("FAILED: Member seen 50s ago should be within stale recovery window.")
+            return false
+        }
+        guard stage2Member.isEligibleForStaleRouteDiscovery(now: now) else {
+            print("FAILED: Member seen 50s ago should be eligible for Stage 2 route discovery.")
+            return false
+        }
+        
+        // 5. Timed-out Stale Peer (last seen 95s ago: > 90s (30s threshold + 60s timeout))
+        let expiredMember = Member(id: "DAN", lastSeen: now.addingTimeInterval(-95.0))
+        guard !expiredMember.isWithinStaleRecoveryWindow(now: now) else {
+            print("FAILED: Member seen 95s ago should be expired beyond stale recovery timeout (90s).")
+            return false
+        }
+        guard !expiredMember.isEligibleForStaleRouteDiscovery(now: now) else {
+            print("FAILED: Member seen 95s ago should NOT be eligible for route discovery after timeout.")
+            return false
+        }
+        
+        // When active stale peers expire or recover, cadence backs off to stationary (20s)
+        service.hasStalePeers = false
+        guard abs(service.currentCadenceInterval - timing.stationaryInterval) < 0.001 else {
+            print("FAILED: Cadence should back off to stationary (\(timing.stationaryInterval)s) when stale peer window expires.")
+            return false
+        }
+        
+        // 6. Dynamic provider evaluation
+        var peerRoster: [Member] = [stage1Member]
+        service.hasStalePeersProvider = {
+            let evalNow = Date()
+            return peerRoster.contains { $0.isWithinStaleRecoveryWindow(now: evalNow) }
+        }
+        guard abs(service.currentCadenceInterval - timing.staleRecoveryInterval) < 0.001 else {
+            print("FAILED: Dynamic hasStalePeersProvider should accelerate cadence to 2.0s.")
+            return false
+        }
+        
+        // Stale peer recovers with a fresh update (last seen 2s ago)
+        peerRoster = [Member(id: "BOB", lastSeen: Date().addingTimeInterval(-2.0))]
+        guard abs(service.currentCadenceInterval - timing.stationaryInterval) < 0.001 else {
+            print("FAILED: Cadence should restore to stationary after peer recovery.")
+            return false
+        }
+        
+        // 7. Stale Response Burst (rapid pings on target discovery)
+        var burstPingsCount = 0
+        service.onPublishLocationPing = { _, _ in
+            burstPingsCount += 1
+        }
+        service.simulateLocation(coordinate: CLLocationCoordinate2D(latitude: 33.68, longitude: -116.24), accuracy: 5.0)
+        
+        service.triggerBurstPings(count: 3, interval: 0.05)
+        try? await Task.sleep(nanoseconds: 160_000_000)
+        
+        guard burstPingsCount >= 3 else {
+            print("FAILED: Expected at least 3 burst pings, got \(burstPingsCount).")
+            return false
+        }
+        
+        print("  ✓ Stale peer accelerated cadence, two-tier recovery, and response burst successfully validated!")
         return true
     }
 }

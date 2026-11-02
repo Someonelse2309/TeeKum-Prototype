@@ -17,7 +17,14 @@ public struct MainMapView: View {
     @Bindable var sosViewModel: SOSViewModel
     @Bindable var meetingPointViewModel: MeetingPointViewModel
     var relayPolicyManager: RelayPolicyManager?
+    var peerTransport: PeerTransportService?
     
+    public enum ScreenMode: String, CaseIterable, Sendable {
+        case normal = "Normal"
+        case debugging = "Debugging"
+    }
+    
+    @State private var screenMode: ScreenMode = .normal
     @State private var isShowingDiagnostics: Bool = false
     @State private var isShowingGroupQR: Bool = false
     @State private var isShowingMeetingPoints: Bool = false
@@ -38,35 +45,55 @@ public struct MainMapView: View {
         sessionViewModel: GroupSessionViewModel,
         sosViewModel: SOSViewModel,
         meetingPointViewModel: MeetingPointViewModel,
-        relayPolicyManager: RelayPolicyManager? = nil
+        relayPolicyManager: RelayPolicyManager? = nil,
+        peerTransport: PeerTransportService? = nil
     ) {
         self.mapViewModel = mapViewModel
         self.sessionViewModel = sessionViewModel
         self.sosViewModel = sosViewModel
         self.meetingPointViewModel = meetingPointViewModel
         self.relayPolicyManager = relayPolicyManager
+        self.peerTransport = peerTransport
     }
     
     public var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             
-            // MapKit Offline Venue Preview
-            venueMapView
-            
-            // Floating UI Overlay Controls
-            VStack(spacing: 0) {
-                // Top Status Pill & Session Bar
-                topSessionBar
+            if screenMode == .debugging {
+                MeshDebuggerView(
+                    viewModel: MeshDebuggerViewModel(
+                        peerTransport: peerTransport,
+                        groupSessionViewModel: sessionViewModel,
+                        locationService: mapViewModel.locationService,
+                        relayPolicyManager: relayPolicyManager
+                    ),
+                    onToggleToNormalMode: {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            screenMode = .normal
+                        }
+                    }
+                )
+                .transition(.opacity)
+            } else {
+                // MapKit Offline Venue Preview
+                venueMapView
                 
-                if let alert = sosViewModel.activeIncomingAlert {
-                    incomingSOSBanner(for: alert)
+                // Floating UI Overlay Controls
+                VStack(spacing: 0) {
+                    // Top Status Pill & Session Bar
+                    topSessionBar
+                    
+                    if let alert = sosViewModel.activeIncomingAlert {
+                        incomingSOSBanner(for: alert)
+                    }
+                    
+                    Spacer()
+                    
+                    // Bottom Docked Controls
+                    bottomControlsDock
                 }
-                
-                Spacer()
-                
-                // Bottom Docked Controls
-                bottomControlsDock
+                .transition(.opacity)
             }
         }
         // Sheets
@@ -75,7 +102,8 @@ public struct MainMapView: View {
                 sessionViewModel: sessionViewModel,
                 mapViewModel: mapViewModel,
                 sosViewModel: sosViewModel,
-                relayPolicyManager: relayPolicyManager
+                relayPolicyManager: relayPolicyManager,
+                peerTransport: peerTransport
             )
         }
         .sheet(isPresented: $isShowingRelaySettings) {
@@ -389,6 +417,46 @@ public struct MainMapView: View {
             }
             
             Spacer()
+            
+            // Home Screen Mode Switcher (Normal <-> Debugging)
+            HStack(spacing: 2) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        screenMode = .normal
+                    }
+                } label: {
+                    Text("Map")
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(screenMode == .normal ? Color.green : Color.clear)
+                        .foregroundStyle(screenMode == .normal ? .black : .gray)
+                        .clipShape(Capsule())
+                }
+                
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        screenMode = .debugging
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "waveform.path.badge.gearshape")
+                            .font(.system(size: 9).bold())
+                        Text("Debug")
+                            .font(.caption2.bold())
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(screenMode == .debugging ? Color.yellow : Color.clear)
+                    .foregroundStyle(screenMode == .debugging ? .black : .gray)
+                    .clipShape(Capsule())
+                }
+            }
+            .padding(2)
+            .background(Color.black.opacity(0.7))
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+            .accessibilityLabel("Toggle Debugging and Normal Mode")
             
             // Meeting Point Button
             Button {
