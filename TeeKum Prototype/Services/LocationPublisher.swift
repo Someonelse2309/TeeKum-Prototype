@@ -28,7 +28,7 @@ public final class LocationPublisher {
     // MARK: - Dependencies
     
     public let locationService: LocationServiceProvider
-    private let sessionProvider: @Sendable () -> GroupSession?
+    private let sessionProvider: @MainActor @Sendable () -> GroupSession?
     public let cryptoService: CryptoServiceProvider
     public let transport: PeerTransport
     
@@ -53,7 +53,7 @@ public final class LocationPublisher {
     
     public init(
         locationService: LocationServiceProvider,
-        sessionProvider: @escaping @Sendable () -> GroupSession?,
+        sessionProvider: @escaping @MainActor @Sendable () -> GroupSession?,
         cryptoService: CryptoServiceProvider,
         transport: PeerTransport
     ) {
@@ -98,7 +98,7 @@ public final class LocationPublisher {
     
     // MARK: - Ordinary Location & Status Publishing
     
-    /// Assembles, seals, and broadcasts a 56-byte wire packet carrying location + status.
+    /// Assembles, seals, and broadcasts a 66-byte wire packet carrying location + status.
     /// Strictly suppressed if Live Sharing is disabled.
     public func handleLocationPingReady(location: LocationPin, status: UserStatus) async {
         // Acceptance Criterion 2: Live Sharing OFF prevents ordinary location broadcasting
@@ -150,6 +150,7 @@ public final class LocationPublisher {
             let wirePacket = RawWirePacket(envelope: envelope, ciphertext: sealed.ciphertext, authTag: sealed.authTag)
             let wireData = try wirePacket.toWireData()
             
+            guard !Task.isCancelled, sessionProvider() == session else { return }
             try await transport.broadcastPacket(wireData)
             publishedPingsCount += 1
         } catch {

@@ -21,7 +21,7 @@ public final class MeetingPointViewModel {
     public var localAttendanceStatus: AttendanceStatus?
     
     // MARK: - Injected Dependencies
-    public var sessionProvider: (@Sendable () -> GroupSession?)?
+    public var sessionProvider: (@MainActor @Sendable () -> GroupSession?)?
     public var cryptoService: CryptoServiceProvider?
     public var transport: PeerTransport?
     
@@ -30,7 +30,7 @@ public final class MeetingPointViewModel {
     
     public init(
         activeMeetingPoint: MeetingPoint? = nil,
-        sessionProvider: (@Sendable () -> GroupSession?)? = nil,
+        sessionProvider: (@MainActor @Sendable () -> GroupSession?)? = nil,
         cryptoService: CryptoServiceProvider? = nil,
         transport: PeerTransport? = nil
     ) {
@@ -42,7 +42,7 @@ public final class MeetingPointViewModel {
     
     /// Reconfigures session dependencies.
     public func configure(
-        sessionProvider: (@Sendable () -> GroupSession?)? = nil,
+        sessionProvider: (@MainActor @Sendable () -> GroupSession?)? = nil,
         cryptoService: CryptoServiceProvider? = nil,
         transport: PeerTransport? = nil
     ) {
@@ -119,6 +119,11 @@ public final class MeetingPointViewModel {
     public func applyInboundUpdate(_ update: MeetingUpdatePayload) {
         switch update.action {
         case .propose:
+            if var existing = activeMeetingPoint, existing.id == update.meetingPointId {
+                existing.attendance[update.senderInitials] = update.attendanceStatus
+                activeMeetingPoint = existing
+                return
+            }
             let displayName = VenueLandmark.preset(for: update.landmarkId)?.name ?? update.customLabel ?? "Festival Rendezvous"
             let mp = MeetingPoint(
                 id: update.meetingPointId,
@@ -152,7 +157,7 @@ public final class MeetingPointViewModel {
         }
     }
     
-    /// Assembles, cryptographically seals, and broadcasts a 56-byte meeting wire packet.
+    /// Assembles, cryptographically seals, and broadcasts a 66-byte meeting wire packet.
     /// Setting or updating the meeting point uses a higher TTL (hopLimit = 15) to propagate
     /// across wide multi-kilometer festival grounds.
     public func broadcastMeetingUpdate(action: MeetingAction, meetingPoint: MeetingPoint) async {
@@ -192,6 +197,7 @@ public final class MeetingPointViewModel {
             let wireData = try wirePacket.toWireData()
             
             // Broadcast packet into urgent priority queue
+            guard !Task.isCancelled, sessionProvider?() == session else { return }
             try await transport.broadcastPacket(wireData)
         } catch {
             print("[MeetingPointViewModel] Failed to broadcast meeting update: \(error)")

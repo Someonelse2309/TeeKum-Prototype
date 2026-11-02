@@ -17,7 +17,7 @@ import CoreLocation
 /// - RELAY_ACK
 /// - DELIVERED_TO_FRIEND
 /// - SEARCHING_PEERS
-public enum SOSDeliveryState: Equatable, Sendable {
+nonisolated public enum SOSDeliveryState: Equatable, Sendable {
     case idle
     case countdown(remainingSeconds: Double)
     case localSending
@@ -90,7 +90,7 @@ public enum SOSDeliveryState: Equatable, Sendable {
 }
 
 /// Represents an authenticated emergency SOS received from a verified group member.
-public struct IncomingSOSAlert: Identifiable, Equatable, Sendable {
+nonisolated public struct IncomingSOSAlert: Identifiable, Equatable, Sendable {
     /// 32-bit unique emergency event identifier.
     public let id: UInt32
     

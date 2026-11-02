@@ -31,7 +31,7 @@ public struct PeerTransportTests {
         passed = passed && testPriorityOutboxRetryBudget()
         passed = passed && testTieBreakerLogic()
         passed = passed && testDiagnosticsSnapshot()
-        passed = passed && testZeroHandshakeImmediatePacketFraming()
+        passed = passed && testImmediateApplicationPacketFraming()
         
         if passed {
             print("--- [PeerTransportTests] ALL TRANSPORT TESTS PASSED SUCCESSFULLY! ---")
@@ -41,7 +41,7 @@ public struct PeerTransportTests {
         return passed
     }
     
-    // MARK: - Helper to Generate Valid 54-Byte Packets
+    // MARK: - Helper to Generate Valid 66-Byte Packets
     
     private static func createValidWirePacket(type: PacketType, seq: UInt32 = 1, sid: UInt16 = 0x1234) -> Data {
         let envelope = CleartextEnvelope(
@@ -52,7 +52,7 @@ public struct PeerTransportTests {
             sessionId: sid,
             sequenceNumber: seq
         )
-        let dummyCiphertext = Data(repeating: UInt8(type.rawValue), count: PacketConstants.encryptedPayloadSize)
+        let dummyCiphertext = Data(repeating: UInt8(type.rawValue), count: PacketConstants.sealedPayloadSize)
         let dummyAuthTag = Data(repeating: 0xEE, count: PacketConstants.authTagSize)
         let packet = RawWirePacket(envelope: envelope, ciphertext: dummyCiphertext, authTag: dummyAuthTag)
         return try! packet.toWireData()
@@ -61,7 +61,7 @@ public struct PeerTransportTests {
     // MARK: - Test 1: Framer Exact Packet
     
     public static func testStreamFramerExactPacket() -> Bool {
-        print("[Test 1] StreamMessageFramer: Exact 54-byte packet ingestion...")
+        print("[Test 1] StreamMessageFramer: Exact 66-byte packet ingestion...")
         let framer = StreamMessageFramer()
         let packetData = createValidWirePacket(type: .locationPing)
         
@@ -79,7 +79,7 @@ public struct PeerTransportTests {
                 print("  FAIL: Framer should have 0 unconsumed bytes.")
                 return false
             }
-            print("  PASS: Single 54-byte packet framed accurately.")
+            print("  PASS: Single 66-byte packet framed accurately.")
             return true
         } catch {
             print("  FAIL: Unexpected error: \(error)")
@@ -97,15 +97,15 @@ public struct PeerTransportTests {
         do {
             var extractedFrames: [Data] = []
             
-            // Deliver 54 bytes one single byte at a time
+            // Deliver 66 bytes one single byte at a time
             for (index, byte) in packetData.enumerated() {
                 let chunk = Data([byte])
                 let frames = try framer.processIncomingChunk(chunk)
                 extractedFrames.append(contentsOf: frames)
                 
-                if index < 53 {
+                if index < 65 {
                     guard frames.isEmpty else {
-                        print("  FAIL: Framer extracted a frame before full 54 bytes arrived (at index \(index)).")
+                        print("  FAIL: Framer extracted a frame before full 66 bytes arrived (at index \(index)).")
                         return false
                     }
                     guard framer.unconsumedByteCount == index + 1 else {
@@ -116,7 +116,7 @@ public struct PeerTransportTests {
             }
             
             guard extractedFrames.count == 1 else {
-                print("  FAIL: Expected 1 frame after 54 bytes, got \(extractedFrames.count)")
+                print("  FAIL: Expected 1 frame after 66 bytes, got \(extractedFrames.count)")
                 return false
             }
             guard extractedFrames[0] == packetData else {
@@ -128,7 +128,7 @@ public struct PeerTransportTests {
                 return false
             }
             
-            print("  PASS: Partial stream reassembly succeeded across 54 1-byte chunks.")
+            print("  PASS: Partial stream reassembly succeeded across 66 1-byte chunks.")
             return true
         } catch {
             print("  FAIL: Unexpected error: \(error)")
@@ -149,8 +149,8 @@ public struct PeerTransportTests {
         combined.append(packet1)
         combined.append(packet2)
         combined.append(packet3)
-        guard combined.count == 162 else {
-            print("  FAIL: Combined size should be 162 bytes.")
+        guard combined.count == 198 else {
+            print("  FAIL: Combined size should be 198 bytes.")
             return false
         }
         
@@ -169,7 +169,7 @@ public struct PeerTransportTests {
                 return false
             }
             
-            print("  PASS: 3 coalesced packets (162 bytes) cleanly sliced in single pass.")
+            print("  PASS: 3 coalesced packets (198 bytes) cleanly sliced in single pass.")
             return true
         } catch {
             print("  FAIL: Unexpected error: \(error)")
@@ -187,12 +187,12 @@ public struct PeerTransportTests {
         
         var streamData = Data()
         streamData.append(packet1)
-        streamData.append(packet2) // 108 bytes total
+        streamData.append(packet2) // 132 bytes total
         
-        // Split into chunks of 35, 40, and 33 bytes (arbitrary non-54 multiples)
+        // Split into chunks of 35, 40, and 33 bytes (arbitrary non-66 multiples)
         let chunk1 = streamData.subdata(in: 0..<35)
         let chunk2 = streamData.subdata(in: 35..<75)
-        let chunk3 = streamData.subdata(in: 75..<108)
+        let chunk3 = streamData.subdata(in: 75..<132)
         
         do {
             let f1 = try framer.processIncomingChunk(chunk1)
@@ -206,7 +206,7 @@ public struct PeerTransportTests {
                 print("  FAIL: Chunk 2 (cumulative 75B) should yield packet 1.")
                 return false
             }
-            guard framer.unconsumedByteCount == 21 else { // 75 - 54 = 21 bytes remaining
+            guard framer.unconsumedByteCount == 9 else { // 75 - 66 = 21 bytes remaining
                 print("  FAIL: Expected 21 unconsumed bytes, got \(framer.unconsumedByteCount)")
                 return false
             }
@@ -518,8 +518,8 @@ public struct PeerTransportTests {
     
     // MARK: - Test 13: Zero-Handshake Immediate Packet Framing
     
-    public static func testZeroHandshakeImmediatePacketFraming() -> Bool {
-        print("[Test 13] Zero-handshake immediate 54-byte wire packet framing upon connection...")
+    public static func testImmediateApplicationPacketFraming() -> Bool {
+        print("[Test 13] Post-introduction application 66-byte wire packet framing upon connection...")
         let framer = StreamMessageFramer()
         let validWirePacket = createValidWirePacket(type: .locationPing, seq: 99)
         
@@ -542,7 +542,7 @@ public struct PeerTransportTests {
                 print("  FAIL: Unconsumed bytes should be 0.")
                 return false
             }
-            print("  PASS: Immediate 54-byte location packet extracted cleanly with zero-handshake overhead.")
+            print("  PASS: Immediate 66-byte location packet extracted cleanly with additional application framing overhead.")
             return true
         } catch {
             print("  FAIL: Unexpected error: \(error)")

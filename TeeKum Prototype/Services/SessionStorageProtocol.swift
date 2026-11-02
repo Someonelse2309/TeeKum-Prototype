@@ -7,7 +7,7 @@
 
 import Foundation
 
-public enum SessionStorageError: Error, LocalizedError {
+nonisolated public enum SessionStorageError: Error, LocalizedError {
     case databaseOpenFailed(String)
     case statementExecutionFailed(String)
     case tableCreationFailed(String)

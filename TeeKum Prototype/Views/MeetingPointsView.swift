@@ -221,6 +221,10 @@ public struct MeetingPointsView: View {
                 }
             }
             
+            if userLocation == nil {
+                Text("Waiting for your location. You can also long-press the map to choose a meeting point.")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             // Propose Button
             Button {
                 proposeCurrentMeeting()
@@ -233,6 +237,7 @@ public struct MeetingPointsView: View {
                     .foregroundStyle(.black)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
+            .disabled(userLocation == nil)
         }
         .padding()
         .background(Color(white: 0.1))
@@ -241,7 +246,7 @@ public struct MeetingPointsView: View {
     
     private func proposeCurrentMeeting() {
         guard let session = sessionViewModel.activeSession else { return }
-        let coord = userLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 33.6803, longitude: -116.2366)
+        guard let coord = userLocation?.coordinate else { return }
         
         meetingPointViewModel.proposeMeetingPoint(
             name: selectedLocation,

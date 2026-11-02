@@ -9,7 +9,7 @@ import Foundation
 import CoreLocation
 
 /// Canonical geographic location measurement representation for TeeKum.
-public struct LocationPin: Equatable, Hashable, Sendable {
+nonisolated public struct LocationPin: Equatable, Hashable, Sendable {
     /// Geographical coordinate (64-bit IEEE 754 Double precision degrees).
     public let coordinate: CLLocationCoordinate2D
     
@@ -103,13 +103,13 @@ public struct LocationPin: Equatable, Hashable, Sendable {
 
 // MARK: - CoreLocation Conformance
 
-extension CLLocationCoordinate2D: @retroactive Equatable {
+nonisolated extension CLLocationCoordinate2D: @retroactive Equatable {
     public static func == (lhs: CLLocationCoordinate2D, rhs: CLLocationCoordinate2D) -> Bool {
         lhs.latitude == rhs.latitude && lhs.longitude == rhs.longitude
     }
 }
 
-extension CLLocationCoordinate2D: @retroactive Hashable {
+nonisolated extension CLLocationCoordinate2D: @retroactive Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(latitude)
         hasher.combine(longitude)

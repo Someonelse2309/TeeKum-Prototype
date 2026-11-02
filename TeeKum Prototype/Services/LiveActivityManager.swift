@@ -6,7 +6,7 @@
 //
 
 import Foundation
-import ActivityKit
+@preconcurrency import ActivityKit
 import CoreLocation
 
 /// Protocol governing Live Activity companion lifecycle and dynamic updates.
@@ -106,18 +106,15 @@ public final class LiveActivityManager: LiveActivityManaging {
         
         let content = ActivityContent(state: updatedState, staleDate: nil)
         
-        Task {
-            await activity.update(content)
-        }
+        await activity.update(content)
     }
     
     /// Cleanly dismisses the Live Activity.
     public func endSessionActivity() async {
         guard let activity = currentActivity else { return }
         
+        self.currentActivity = nil
         let finalContent = ActivityContent(state: activity.content.state, staleDate: nil)
         await activity.end(finalContent, dismissalPolicy: .immediate)
-        self.currentActivity = nil
-        print("[LiveActivityManager] Dismissed Live Activity: \(activity.id)")
     }
 }

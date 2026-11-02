@@ -38,7 +38,7 @@ public struct DiagnosticsView: View {
                             LabeledContent("Session ID", value: String(format: "0x%04X", session.sessionId))
                             LabeledContent("Local Initials", value: session.localInitials)
                             LabeledContent("Key Fingerprint") {
-                                Text("0x\(session.symmetricKeyData.prefix(4).map { String(format: "%02hhx", $0) }.joined().uppercased())")
+                                Text("0x\((sessionViewModel.keyFingerprint ?? "Unavailable").uppercased())")
                                     .font(.caption.monospaced())
                                     .foregroundStyle(.green)
                             }
@@ -166,10 +166,11 @@ public struct DiagnosticsView: View {
                     // MARK: - 4. Radio Transport & Packet Counts
                     Section("Radio Telemetry & Packet Statistics") {
                         LabeledContent("Transport Mode", value: "Apple Network.framework P2P")
-                        LabeledContent("Link Layer", value: "AWDL / Wi-Fi Direct & BLE")
+                        LabeledContent("Link Layer", value: "Peer-to-peer Wi-Fi (OS managed)")
                         LabeledContent("Bonjour Service", value: "_teekum._tcp")
-                        LabeledContent("Wire Packet Size", value: "54 Bytes Fixed (Protocol v2)")
+                        LabeledContent("Wire Packet Size", value: "66 Bytes Fixed (Protocol v3)")
                         LabeledContent("Outer Envelope", value: "8 Bytes (Cleartext Routing)")
+                        LabeledContent("Random Nonce", value: "12 Bytes")
                         LabeledContent("Payload Cipher", value: "30 Bytes (ChaCha20-Poly1305)")
                         LabeledContent("Auth Tag (MAC)", value: "16 Bytes (Tamper Detection)")
                     }
@@ -188,14 +189,14 @@ public struct DiagnosticsView: View {
                             HStack {
                                 Image(systemName: "checkmark.shield.fill")
                                     .foregroundStyle(.green)
-                                Text("No Session or Transport Errors")
+                                Text("No session errors reported")
                                     .font(.footnote)
                                     .foregroundStyle(.green)
                             }
                         }
                         
                         LabeledContent("Replay Filter", value: "5-Minute LRU Cache Active")
-                        LabeledContent("Zero-Knowledge Relay", value: "Enabled (Relays cannot read payloads)")
+                        LabeledContent("Relay Scope", value: "Authenticated group packets only")
                     }
                     
                     // MARK: - 6. On-Device Verification

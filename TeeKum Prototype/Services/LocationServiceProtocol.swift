@@ -71,7 +71,7 @@ public protocol LocationServiceProvider: AnyObject {
     /// Latest measured local coordinate, uncertainty accuracy radius, and measurement timestamp.
     var currentLocation: LocationPin? { get }
     
-    /// Latest magnetic compass heading in degrees (0..<360).
+    /// Latest true-north compass heading in degrees (0..<360).
     var currentHeading: CLLocationDirection? { get }
     
     /// Motion coprocessor activity state (`true` if user is standing/dancing in place; `false` if walking).

@@ -9,7 +9,7 @@ import Foundation
 import CryptoKit
 
 /// Decoded details from a serverless share link or QR barcode invite.
-public struct GroupSessionInvite: Equatable, Sendable {
+nonisolated public struct GroupSessionInvite: Equatable, Sendable {
     public let sessionId: UInt16
     public let sessionName: String
     public let keyData: Data
@@ -22,8 +22,8 @@ public struct GroupSessionInvite: Equatable, Sendable {
 }
 
 /// Active ephemeral group session model representing local participation.
-/// Auto-mesh enabled: connects to nearby peers on a shared festival key.
-public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
+/// Connects to nearby peers sharing this private group’s invite key.
+nonisolated public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
     public var id: UInt16 { sessionId }
     
     /// 16-bit session hash identifying the active festival network.
@@ -56,15 +56,12 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
     /// Timestamp when session was established.
     public let createdAt: Date
     
-    /// Default shared festival key for auto-mesh.
-    public static let defaultSymmetricKeyData: Data = {
-        let seed = "TeeKum-Festival-AutoMesh-v2-SecretSeed"
-        return Data(SHA256.hash(data: Data(seed.utf8)))
-    }()
-    
-    /// Default 16-bit session ID for the auto-mesh festival network.
-    public static let defaultSessionId: UInt16 = 0x7E3A
-    
+    /// Each newly created group has its own private key; there is no universal festival secret.
+    public static var defaultSymmetricKeyData: Data {
+        SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+    }
+    public static var defaultSessionId: UInt16 { UInt16.random(in: 1...UInt16.max) }
+
     public init(
         sessionId: UInt16 = GroupSession.defaultSessionId,
         sessionName: String = "Festival Mesh",
@@ -92,11 +89,13 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
         components.scheme = "teekum"
         components.host = "join"
         
-        let keyBase64 = symmetricKeyData.base64EncodedString()
-        let sidHex = String(format: "%04X", sessionId)
-        let safeName = sessionName.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "Group"
-        
-        components.percentEncodedFragment = "key=\(keyBase64)&sid=\(sidHex)&name=\(safeName)"
+        var fragment = URLComponents()
+        fragment.queryItems = [
+            URLQueryItem(name: "key", value: symmetricKeyData.base64EncodedString()),
+            URLQueryItem(name: "sid", value: String(format: "%04X", sessionId)),
+            URLQueryItem(name: "name", value: sessionName)
+        ]
+        components.percentEncodedFragment = fragment.percentEncodedQuery
         return components.url ?? URL(string: "teekum://join")!
     }
     
@@ -173,7 +172,7 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
         }
         
         guard let validKey = keyData, validKey.count == 32,
-              let validSid = sessionId,
+              let validSid = sessionId, validSid != 0,
               let validName = sessionName else {
             return nil
         }

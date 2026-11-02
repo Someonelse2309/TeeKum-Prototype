@@ -40,14 +40,14 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     #endif
     
     /// Injectable date provider for deterministic time-based testing.
-    private let dateProvider: @Sendable () -> Date
+    private let dateProvider: @MainActor @Sendable () -> Date
     
     // MARK: - State Properties
     
     /// Latest measured local coordinate, uncertainty accuracy radius, and measurement timestamp.
     public private(set) var currentLocation: LocationPin?
     
-    /// Latest magnetic compass heading in degrees (0..<360).
+    /// Latest true-north compass heading in degrees (0..<360).
     public private(set) var currentHeading: CLLocationDirection?
     
     /// Motion state (`true` if user is stationary/resting; `false` if walking/moving).
@@ -104,7 +104,7 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         cadenceConfig: CadenceConfiguration = CadenceConfiguration(),
         isLiveSharingEnabled: Bool = true,
         locationManager: CLLocationManager = CLLocationManager(),
-        dateProvider: @escaping @Sendable () -> Date = { Date() }
+        dateProvider: @escaping @MainActor @Sendable () -> Date = { Date() }
     ) {
         self.cadenceConfig = cadenceConfig
         self.isLiveSharingEnabled = isLiveSharingEnabled
@@ -245,14 +245,13 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         isGPSAvailable = (status == .authorizedAlways)
         #endif
         
-        locationManager.startUpdatingLocation()
-        
-        #if os(iOS)
-        if CLLocationManager.headingAvailable() {
-            locationManager.startUpdatingHeading()
+        if isLiveSharingEnabled {
+            locationManager.startUpdatingLocation()
+            #if os(iOS)
+            if CLLocationManager.headingAvailable() { locationManager.startUpdatingHeading() }
+            #endif
         }
-        #endif
-        
+
         startMotionTracking()
         updateBatteryState()
         
@@ -275,6 +274,14 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         stopMotionTracking()
     }
     
+    /// Session teardown removes cached local coordinates as well as stopping hardware.
+    public func clearSessionState() {
+        stopTracking()
+        currentLocation = nil
+        currentHeading = nil
+        currentStatus = UserStatus(code: .available)
+    }
+
     // MARK: - Status Coalescing (Acceptance Criteria 3)
     
     /// Updates local user status immediately.
@@ -299,11 +306,19 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     private func handleLiveSharingToggleChanged() {
         if isLiveSharingEnabled {
             if isTracking {
+                locationManager.startUpdatingLocation()
+                #if os(iOS)
+                if CLLocationManager.headingAvailable() { locationManager.startUpdatingHeading() }
+                #endif
                 startPublishingScheduler()
             }
         } else {
-            // Live Sharing OFF prevents ordinary location broadcasting
+            // Pause hardware collection as well as ordinary broadcasting.
             stopPublishingScheduler()
+            locationManager.stopUpdatingLocation()
+            #if os(iOS)
+            locationManager.stopUpdatingHeading()
+            #endif
         }
     }
     
@@ -418,10 +433,9 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     }
     
     public nonisolated func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        let heading: Double? = newHeading.headingAccuracy >= 0 && newHeading.trueHeading >= 0 ? newHeading.trueHeading : nil
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard newHeading.headingAccuracy >= 0 else { return }
-            self.currentHeading = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+            self?.currentHeading = heading
         }
     }
     
@@ -437,7 +451,7 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
                 self.isGPSAvailable = true
                 self.permissionContinuation?.resume(returning: true)
                 self.permissionContinuation = nil
-                if self.isTracking {
+                if self.isTracking && self.isLiveSharingEnabled {
                     self.locationManager.startUpdatingLocation()
                     if CLLocationManager.headingAvailable() {
                         self.locationManager.startUpdatingHeading()
@@ -448,7 +462,7 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
                 self.isGPSAvailable = true
                 self.permissionContinuation?.resume(returning: true)
                 self.permissionContinuation = nil
-                if self.isTracking {
+                if self.isTracking && self.isLiveSharingEnabled {
                     self.locationManager.startUpdatingLocation()
                 }
             #endif
@@ -531,7 +545,7 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     
     public func applyBatteryLevel(_ level: Float, isLowPower: Bool = false) {
         self.currentBatteryLevel = min(1.0, max(0.0, level))
-        let survival = (currentBatteryLevel < 0.20) || isLowPower
+        let survival = (currentBatteryLevel <= 0.20) || isLowPower
         
         if isSurvivalModeActive != survival {
             self.isSurvivalModeActive = survival

@@ -124,9 +124,9 @@ public actor ReplayProtectionFilter {
 ///
 /// Uses Apple's native `CryptoKit` framework:
 /// - Authenticated Encryption: `ChaCha20-Poly1305` (RFC 8439)
-/// - Deterministic 96-bit Nonce derivation
+/// - Random transmitted 96-bit nonce for every sealing operation
 /// - Hop-count masked Associated Authenticated Data (AAD)
-/// - Hardware-backed Secure Enclave / iOS Keychain key persistence
+/// - iOS Keychain key persistence
 public actor CryptoService: CryptoServiceProvider {
     
     private let keychainService: String = "com.teekum.session"
@@ -144,7 +144,7 @@ public actor CryptoService: CryptoServiceProvider {
     // MARK: - AEAD Sealing & Opening
     
     /// Seals 30 bytes of private inner payload using ChaCha20-Poly1305 authenticated symmetric encryption,
-    /// binding the 10-byte cleartext envelope as Associated Authenticated Data (AAD) with masked hop count.
+    /// binding the 8-byte cleartext envelope as Associated Authenticated Data (AAD) with masked hop count.
     public func seal(
         payload: Data,
         envelope: CleartextEnvelope,
@@ -157,22 +157,21 @@ public actor CryptoService: CryptoServiceProvider {
             )
         }
         
-        let nonceData = envelope.constructNonce()
-        guard let nonce = try? ChaChaPoly.Nonce(data: nonceData) else {
-            throw CryptoServiceError.encryptionFailed("Nonce construction failed: invalid nonce byte length.")
+        guard envelope.version == PacketConstants.protocolVersion else {
+            throw PacketCodecError.unsupportedVersion(envelope.version)
         }
-        
+        let nonce = ChaChaPoly.Nonce()
         let aad = envelope.authenticatedAssociatedData()
         
         do {
             let sealedBox = try ChaChaPoly.seal(payload, using: key, nonce: nonce, authenticating: aad)
-            return (ciphertext: Data(sealedBox.ciphertext), authTag: Data(sealedBox.tag))
+            return (ciphertext: nonce.withUnsafeBytes { Data($0) } + sealedBox.ciphertext, authTag: Data(sealedBox.tag))
         } catch {
             throw CryptoServiceError.encryptionFailed(error.localizedDescription)
         }
     }
     
-    /// Verifies the 16-byte Poly1305 authentication tag against the 10-byte envelope AAD and decrypts the 30-byte payload.
+    /// Verifies the 16-byte Poly1305 authentication tag against the 8-byte envelope AAD and decrypts the 30-byte payload.
     /// Throws `CryptoServiceError.authenticationFailed` if tampered by any third party.
     ///
     /// Plaintext payload is NEVER exposed to application logic if authentication fails.
@@ -182,27 +181,18 @@ public actor CryptoService: CryptoServiceProvider {
         authTag: Data,
         using key: SymmetricKey
     ) throws -> Data {
-        guard ciphertext.count == PacketConstants.encryptedPayloadSize else {
-            throw PacketCodecError.invalidPacketSize(
-                expected: PacketConstants.encryptedPayloadSize,
-                actual: ciphertext.count
-            )
+        guard envelope.version == PacketConstants.protocolVersion else {
+            throw PacketCodecError.unsupportedVersion(envelope.version)
         }
-        guard authTag.count == PacketConstants.authTagSize else {
-            throw PacketCodecError.invalidPacketSize(
-                expected: PacketConstants.authTagSize,
-                actual: authTag.count
-            )
-        }
-        
-        let nonceData = envelope.constructNonce()
-        guard let nonce = try? ChaChaPoly.Nonce(data: nonceData) else {
+        guard ciphertext.count == PacketConstants.sealedPayloadSize,
+              authTag.count == PacketConstants.authTagSize else {
             throw CryptoServiceError.authenticationFailed
         }
-        
+        let nonce = try ChaChaPoly.Nonce(data: ciphertext.prefix(PacketConstants.nonceSize))
+        let encryptedBytes = ciphertext.dropFirst(PacketConstants.nonceSize)
         let aad = envelope.authenticatedAssociatedData()
         
-        guard let sealedBox = try? ChaChaPoly.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: authTag) else {
+        guard let sealedBox = try? ChaChaPoly.SealedBox(nonce: nonce, ciphertext: encryptedBytes, tag: authTag) else {
             throw CryptoServiceError.authenticationFailed
         }
         
@@ -216,7 +206,7 @@ public actor CryptoService: CryptoServiceProvider {
     
     // MARK: - High-Level Packet Helpers
     
-    /// Seals an inner payload and envelope into a complete 56-byte `RawWirePacket`.
+    /// Seals an inner payload and envelope into a complete 66-byte `RawWirePacket`.
     public func sealPacket(
         payload: Data,
         envelope: CleartextEnvelope,
@@ -226,7 +216,7 @@ public actor CryptoService: CryptoServiceProvider {
         return RawWirePacket(envelope: envelope, ciphertext: ciphertext, authTag: authTag)
     }
     
-    /// Opens and verifies a 56-byte `RawWirePacket`, returning the verified envelope and decrypted 30-byte payload.
+    /// Opens and verifies a 66-byte `RawWirePacket`, returning the verified envelope and decrypted 30-byte payload.
     public func openPacket(
         _ packet: RawWirePacket,
         using key: SymmetricKey
@@ -240,7 +230,7 @@ public actor CryptoService: CryptoServiceProvider {
         return (envelope: packet.envelope, payload: plaintext)
     }
     
-    /// Seals an inner payload directly to a 56-byte binary datagram ready for radio transmission.
+    /// Seals an inner payload directly to a 66-byte binary datagram ready for radio transmission.
     public func sealToWireBytes(
         payload: Data,
         envelope: CleartextEnvelope,
@@ -250,7 +240,7 @@ public actor CryptoService: CryptoServiceProvider {
         return try packet.toWireData()
     }
     
-    /// Parses a 56-byte binary datagram from the network, verifies the authentication tag,
+    /// Parses a 66-byte binary datagram from the network, verifies the authentication tag,
     /// and returns the decrypted payload and envelope.
     public func openWireBytes(
         _ wireData: Data,
@@ -280,7 +270,7 @@ public actor CryptoService: CryptoServiceProvider {
         status == -60005 // errAuthorizationDenied in headless/sandbox environments
     }
     
-    /// Persists the symmetric session key into the iOS Keychain backed by the Secure Enclave.
+    /// Persists the symmetric session key into the iOS Keychain protected by Keychain accessibility.
     public func storeKeyInKeychain(_ key: SymmetricKey, forSessionId sessionId: UInt16) throws {
         let keyData = key.withUnsafeBytes { Data($0) }
         guard keyData.count == 32 else {

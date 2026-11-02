@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-/// Communal Mesh Compact Agreement Screen presented before creating or joining any group.
+/// Offline Group Agreement Agreement Screen presented before creating or joining any group.
 /// Mandates explicit user consent to participate as an offline relay node in the festival mesh,
 /// adhering to Decision D5 and User Story 7.
 public struct MeshAgreementView: View {
@@ -23,7 +23,7 @@ public struct MeshAgreementView: View {
             case .join(let name, _):
                 return "Agree & Join \"\(name)\""
             case .autoMesh:
-                return "Agree & Join Open Mesh"
+                return "Agree & Create Private Group"
             }
         }
         
@@ -34,7 +34,7 @@ public struct MeshAgreementView: View {
             case .join(let name, let initials):
                 return "You are connecting to \"\(name)\" with initials [\(initials)]."
             case .autoMesh(let initials):
-                return "You are connecting to the festival open channel with initials [\(initials)]."
+                return "You are creating a private group with initials [\(initials)]."
             }
         }
     }
@@ -78,12 +78,12 @@ public struct MeshAgreementView: View {
                         
                         // Title & Subtitle
                         VStack(spacing: 8) {
-                            Text("Communal Mesh Compact")
+                            Text("Offline Group Agreement")
                                 .font(.title2.bold())
                                 .foregroundStyle(.white)
                                 .multilineTextAlignment(.center)
                             
-                            Text("“Relay for others while others relay for you.”")
+                            Text("“Share location with trusted group members.”")
                                 .font(.subheadline.italic())
                                 .foregroundStyle(.green)
                                 .multilineTextAlignment(.center)
@@ -120,29 +120,29 @@ public struct MeshAgreementView: View {
                             compactItem(
                                 icon: "point.3.connected.trianglepath.dotted",
                                 iconColor: .green,
-                                title: "All-in Community Mesh Relay",
-                                description: "Your phone acts as an offline hop node for your group and nearby attendees, bouncing encrypted signals across crowd dead zones without cell towers or internet."
+                                title: "Group Connections",
+                                description: "Your phone connects directly to nearby phones and can forward authenticated packets within your private group. Stranger relaying is planned for Phase 2."
                             )
                             
                             compactItem(
                                 icon: "lock.shield.fill",
                                 iconColor: .cyan,
-                                title: "100% Zero-Knowledge Privacy",
-                                description: "Every packet is end-to-end encrypted with ChaCha20-Poly1305. Relay nodes only see 4-byte network routing headers—nobody can see your location, status, or identity."
+                                title: "Encrypted Group Data",
+                                description: "Group members holding your invite key can read shared locations and status. Nearby outsiders can observe discovery and routing metadata, but cannot decrypt the packet payload."
                             )
                             
                             compactItem(
                                 icon: "bolt.shield.fill",
                                 iconColor: .yellow,
-                                title: "20% Battery Survival Guarantee",
-                                description: "Relaying is rate-limited to ≤2 pkts/sec. To protect your phone for emergencies, mesh relaying automatically shuts off if battery drops to 20% or in Low Power Mode."
+                                title: "Battery-Aware Sharing",
+                                description: "Location updates slow down in Survival Mode. Turn Live Sharing off to pause normal location broadcasts; SOS can still send immediately."
                             )
                             
                             compactItem(
                                 icon: "iphone.badge.play",
                                 iconColor: .orange,
-                                title: "Pocket Background Execution",
-                                description: "TeeKum stays alive in your pocket via Apple's official location status indicator and Live Activity companion, ensuring you stay tethered with screen locked."
+                                title: "Background Availability",
+                                description: "iOS may suspend networking when your phone is locked or the app is inactive. A Live Activity does not guarantee background packet delivery. Keep the app open for active coordination."
                             )
                         }
                         .padding(.horizontal)

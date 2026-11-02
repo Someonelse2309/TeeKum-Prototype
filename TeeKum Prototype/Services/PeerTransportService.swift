@@ -34,6 +34,8 @@ public actor PeerTransportService: PeerTransport {
         var isOutbound: Bool
         let framer = StreamMessageFramer()
         var retryCount: Int = 0
+        var identityBuffer = Data()
+        var hasIdentified = false
         var lastSeen: Date = Date()
         
         init(
@@ -57,6 +59,7 @@ public actor PeerTransportService: PeerTransport {
     private var serviceType: String = "_teekum._tcp"
     private var isUDP: Bool = false
     private var localPeerId: String = ""
+    private var generation = UUID()
     
     private var listener: NWListener?
     private var browser: NWBrowser?
@@ -165,7 +168,8 @@ public actor PeerTransportService: PeerTransport {
         self.activeSession = session
         self.serviceType = serviceType
         self.isUDP = serviceType.contains("udp")
-        self.localPeerId = session.localInitials
+        self.localPeerId = UUID().uuidString
+        generation = UUID()
         
         logEvent("Starting radio transport (Initials: \(localPeerId), Service: \(serviceType), Mode: \(isUDP ? "UDP" : "TCP")).", level: .info)
         updateState(.starting)
@@ -188,6 +192,9 @@ public actor PeerTransportService: PeerTransport {
     public func stop() async {
         logEvent("Stopping radio transport and releasing sockets.", level: .info)
         
+        generation = UUID()
+        activeSession = nil
+        updateState(.stopped)
         browser?.cancel()
         browser = nil
         
@@ -206,7 +213,7 @@ public actor PeerTransportService: PeerTransport {
         emitPeerUpdates()
     }
     
-    /// Broadcasts a 56-byte wire datagram to all currently connected direct peers.
+    /// Broadcasts a 66-byte wire datagram to all currently connected direct peers.
     public func broadcastPacket(_ data: Data) async throws {
         guard currentState != .stopped, activeSession != nil else {
             throw TransportError.notStarted
@@ -219,7 +226,7 @@ public actor PeerTransportService: PeerTransport {
         triggerOutboxFlush()
     }
     
-    /// Transmits a 56-byte wire datagram to a specific connected peer.
+    /// Transmits a 66-byte wire datagram to a specific connected peer.
     public func sendPacket(_ data: Data, to peerId: String) async throws {
         guard currentState != .stopped, activeSession != nil else {
             throw TransportError.notStarted
@@ -295,7 +302,7 @@ public actor PeerTransportService: PeerTransport {
         // Encode metadata in Bonjour TXT record
         var txtDict: [String: Data] = [:]
         txtDict["sid"] = String(format: "%08X", session.sessionId).data(using: .utf8)
-        txtDict["name"] = session.localMemberName.data(using: .utf8)
+        txtDict["version"] = String(PacketConstants.protocolVersion).data(using: .utf8)
         let txtData = NetService.data(fromTXTRecord: txtDict)
         
         newListener.service = NWListener.Service(
@@ -305,12 +312,13 @@ public actor PeerTransportService: PeerTransport {
             txtRecord: txtData
         )
         
+        let token = generation
         newListener.stateUpdateHandler = { [weak self] state in
-            Task { await self?.handleListenerState(state) }
+            Task { await self?.handleListenerState(state, generation: token) }
         }
         
         newListener.newConnectionHandler = { [weak self] connection in
-            Task { await self?.handleIncomingConnection(connection) }
+            Task { await self?.handleIncomingConnection(connection, generation: token) }
         }
         
         newListener.start(queue: dispatchQueue)
@@ -322,12 +330,13 @@ public actor PeerTransportService: PeerTransport {
         let descriptor = NWBrowser.Descriptor.bonjour(type: serviceType, domain: nil)
         let newBrowser = NWBrowser(for: descriptor, using: params)
         
+        let token = generation
         newBrowser.stateUpdateHandler = { [weak self] state in
-            Task { await self?.handleBrowserState(state) }
+            Task { await self?.handleBrowserState(state, generation: token) }
         }
         
         newBrowser.browseResultsChangedHandler = { [weak self] results, changes in
-            Task { await self?.handleBrowseResults(results, changes: changes) }
+            Task { await self?.handleBrowseResults(results, changes: changes, generation: token) }
         }
         
         newBrowser.start(queue: dispatchQueue)
@@ -360,7 +369,8 @@ public actor PeerTransportService: PeerTransport {
         }
     }
     
-    private func handleListenerState(_ state: NWListener.State) {
+    private func handleListenerState(_ state: NWListener.State, generation token: UUID) {
+        guard isCurrentGeneration(token) else { return }
         switch state {
         case .ready:
             logEvent("NWListener ready on AWDL interface.", level: .info)
@@ -369,9 +379,11 @@ public actor PeerTransportService: PeerTransport {
             logEvent("NWListener failed: \(error)", level: .error)
             if activeSession != nil, currentState != .stopped {
                 logEvent("NWListener failed during active session, scheduling recovery restart...", level: .warning)
+                let token = generation
                 Task { [weak self] in
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    await self?.restartListener()
+                    try? await Task.sleep(for: .seconds(1))
+                    guard let self, await self.isCurrentGeneration(token) else { return }
+                    await self.restartListener()
                 }
             } else {
                 updateState(.failed(err))
@@ -384,7 +396,8 @@ public actor PeerTransportService: PeerTransport {
         }
     }
     
-    private func handleBrowserState(_ state: NWBrowser.State) {
+    private func handleBrowserState(_ state: NWBrowser.State, generation token: UUID) {
+        guard isCurrentGeneration(token) else { return }
         switch state {
         case .ready:
             logEvent("NWBrowser scanning for Bonjour service '\(serviceType)'.", level: .info)
@@ -393,9 +406,11 @@ public actor PeerTransportService: PeerTransport {
             logEvent("NWBrowser failed: \(error)", level: .error)
             if activeSession != nil, currentState != .stopped {
                 logEvent("NWBrowser failed during active session, scheduling recovery restart...", level: .warning)
+                let token = generation
                 Task { [weak self] in
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    await self?.restartBrowser()
+                    try? await Task.sleep(for: .seconds(1))
+                    guard let self, await self.isCurrentGeneration(token) else { return }
+                    await self.restartBrowser()
                 }
             } else {
                 updateState(.failed(err))
@@ -410,7 +425,8 @@ public actor PeerTransportService: PeerTransport {
     
     // MARK: - Discovery & Tie-Breaking
     
-    private func handleBrowseResults(_ results: Set<NWBrowser.Result>, changes: Set<NWBrowser.Result.Change>) {
+    private func handleBrowseResults(_ results: Set<NWBrowser.Result>, changes: Set<NWBrowser.Result.Change>, generation token: UUID) {
+        guard isCurrentGeneration(token) else { return }
         guard let session = activeSession else { return }
         
         var currentDiscovered: [String: (endpoint: NWEndpoint, displayName: String?)] = [:]
@@ -420,10 +436,13 @@ public actor PeerTransportService: PeerTransport {
             let remotePeerId = name
             
             // 1. Prevent connecting to self or loopback ghosts from previous session
-            guard remotePeerId != localPeerId, !remotePeerId.starts(with: localPeerId) else { continue }
+            guard remotePeerId != localPeerId, UUID(uuidString: remotePeerId) != nil else { continue }
             
             // 2. Validate session ID from TXT record if present
             var remoteName: String?
+            guard case let .bonjour(metadata) = result.metadata,
+                  metadata.dictionary["version"] == String(PacketConstants.protocolVersion),
+                  metadata.dictionary["sid"]?.uppercased() == String(format: "%08X", session.sessionId) else { continue }
             if case let .bonjour(txtRecord) = result.metadata {
                 if let sidStr = txtRecord.dictionary["sid"] {
                     let expectedSid = String(format: "%08X", session.sessionId)
@@ -445,11 +464,7 @@ public actor PeerTransportService: PeerTransport {
         // Evaluate connection initiation for discovered peers
         for (remotePeerId, info) in currentDiscovered {
             // Check if connection already exists
-            if let existing = connections[remotePeerId] {
-                if existing.isReady {
-                    continue // Connection is already established and healthy
-                }
-            }
+            if connections[remotePeerId] != nil { continue }
             
             // Deterministic Tie-Breaking:
             // The peer with the smaller peerId initiates the outbound connection.
@@ -466,9 +481,11 @@ public actor PeerTransportService: PeerTransport {
     }
     
     private func scheduleFallbackConnection(to endpoint: NWEndpoint, peerId: String, displayName: String?) {
+        let token = generation
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 3_500_000_000) // 3.5 seconds
+            try? await Task.sleep(for: .milliseconds(3500)) // 3.5 seconds
             guard let self = self else { return }
+            guard await self.isCurrentGeneration(token) else { return }
             await self.checkAndFallbackConnect(to: endpoint, peerId: peerId, displayName: displayName)
         }
     }
@@ -488,8 +505,9 @@ public actor PeerTransportService: PeerTransport {
     // MARK: - Connection Lifecycle
     
     private func initiateOutboundConnection(to endpoint: NWEndpoint, peerId: String, displayName: String?) {
+        guard connections.count < 32 else { return }
         // Prevent duplicate connection attempts
-        if let existing = connections[peerId], existing.isReady {
+        if connections[peerId] != nil {
             return
         }
         
@@ -509,7 +527,9 @@ public actor PeerTransportService: PeerTransport {
         nwConn.start(queue: dispatchQueue)
     }
     
-    private func handleIncomingConnection(_ connection: NWConnection) {
+    private func handleIncomingConnection(_ connection: NWConnection, generation token: UUID) {
+        guard isCurrentGeneration(token) else { connection.cancel(); return }
+        guard activeSession != nil, connections.count < 32 else { connection.cancel(); return }
         // Inbound connection from NWListener
         // Temporary ID until handshake completes
         let tempId = "inbound-\(UUID().uuidString.prefix(6))"
@@ -530,16 +550,29 @@ public actor PeerTransportService: PeerTransport {
     private func setupConnectionHandlers(_ peer: PeerConnection) {
         let conn = peer.connection
         
+        let token = generation
+        Task { [weak self, weak peer] in
+            do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            guard let self, let peer else { return }
+            await self.expireUnidentifiedConnection(peer, generation: token)
+        }
         conn.stateUpdateHandler = { [weak self, weak peer] state in
             guard let self = self, let peer = peer else { return }
             Task { await self.handleConnectionStateChange(peer: peer, state: state) }
         }
     }
     
+    private func expireUnidentifiedConnection(_ peer: PeerConnection, generation token: UUID) {
+        guard isCurrentGeneration(token), !peer.hasIdentified, connections[peer.peerId] === peer else { return }
+        handleDisconnection(peer: peer, error: nil)
+    }
+
     private func handleConnectionStateChange(peer: PeerConnection, state: NWConnection.State) {
+        guard connections[peer.peerId] === peer, activeSession != nil else { return }
         switch state {
         case .ready:
-            peer.isReady = true
+            peer.connection.send(content: Data(localPeerId.utf8), completion: .contentProcessed { _ in })
+            peer.isReady = false
             peer.retryCount = 0
             peer.lastSeen = Date()
             logEvent("Connection to \(peer.peerId) reached READY state.", level: .info)
@@ -569,10 +602,10 @@ public actor PeerTransportService: PeerTransport {
     
     private func handleDisconnection(peer: PeerConnection, error: Error?) {
         let peerId = peer.peerId
+        guard connections[peerId] === peer else { return }
+        connections.removeValue(forKey: peerId)
         peer.isReady = false
         peer.connection.cancel()
-        connections.removeValue(forKey: peerId)
-        
         refreshConnectionState()
         emitPeerUpdates()
         
@@ -581,7 +614,9 @@ public actor PeerTransportService: PeerTransport {
             transportErrorsContinuation?.yield(err)
             
             // Bounded Reconnect Attempt
-            scheduleReconnection(for: peerId, lastEndpoint: peer.endpoint, currentRetry: peer.retryCount)
+            if peer.isOutbound {
+                scheduleReconnection(for: peerId, lastEndpoint: peer.endpoint, currentRetry: peer.retryCount)
+            }
         }
     }
     
@@ -600,17 +635,20 @@ public actor PeerTransportService: PeerTransport {
         let delaySeconds = min(5.0, Double(1 << (nextRetry - 1))) + Double.random(in: 0.1...0.3)
         logEvent("Scheduling reconnection attempt \(nextRetry)/\(maxRetries) to \(peerId) in \(String(format: "%.1f", delaySeconds))s.", level: .info)
         
+        let token = generation
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+            try? await Task.sleep(for: .seconds(delaySeconds))
             guard let self = self else { return }
+            guard await self.isCurrentGeneration(token) else { return }
             await self.attemptReconnection(peerId: peerId, endpoint: lastEndpoint, retryCount: nextRetry)
         }
     }
     
     private func attemptReconnection(peerId: String, endpoint: NWEndpoint, retryCount: Int) {
         guard activeSession != nil, currentState != .stopped else { return }
+        guard connections.count < 32, discoveredEndpoints[peerId] != nil else { return }
         // Ensure no active connection exists before reconnecting
-        if let existing = connections[peerId], existing.isReady {
+        if connections[peerId] != nil {
             return
         }
         
@@ -653,7 +691,43 @@ public actor PeerTransportService: PeerTransport {
             return
         }
         
-        if let data = content, !data.isEmpty {
+        guard connections[peer.peerId] === peer, activeSession != nil else { return }
+        if var data = content, !data.isEmpty {
+            if !peer.hasIdentified {
+                peer.identityBuffer.append(data)
+                guard peer.identityBuffer.count >= 36 else {
+                    if isComplete { handleDisconnection(peer: peer, error: nil) }
+                    else { receiveNextBytes(from: peer) }
+                    return
+                }
+                let bytes = peer.identityBuffer.prefix(36)
+                guard let remoteID = String(data: bytes, encoding: .utf8),
+                      UUID(uuidString: remoteID) != nil, remoteID != localPeerId,
+                      (!peer.isOutbound || peer.peerId == remoteID) else {
+                    handleDisconnection(peer: peer, error: nil)
+                    return
+                }
+                data = Data(peer.identityBuffer.dropFirst(36))
+                peer.identityBuffer.removeAll()
+                if let existing = connections[remoteID], existing !== peer {
+                    let preferOutbound = localPeerId < remoteID
+                    if existing.isOutbound == preferOutbound {
+                        handleDisconnection(peer: peer, error: nil)
+                        return
+                    }
+                    connections.removeValue(forKey: remoteID)
+                    existing.connection.cancel()
+                }
+                connections.removeValue(forKey: peer.peerId)
+                peer.peerId = remoteID
+                peer.displayName = "Nearby phone"
+                peer.hasIdentified = true
+                peer.isReady = true
+                connections[remoteID] = peer
+                refreshConnectionState()
+                emitPeerUpdates()
+                triggerOutboxFlush()
+            }
             peer.lastSeen = Date()
             
             do {
@@ -731,9 +805,11 @@ public actor PeerTransportService: PeerTransport {
     }
     
     private func sendData(_ data: Data, on peer: PeerConnection, outboxItem: OutboxItem) {
+        let token = generation
         peer.connection.send(content: data, completion: .contentProcessed { [weak self, weak peer] error in
             guard let self = self else { return }
             Task {
+                guard await self.isCurrentGeneration(token) else { return }
                 if let error = error {
                     await self.handleSendError(error, on: peer, outboxItem: outboxItem)
                 } else {
@@ -753,7 +829,10 @@ public actor PeerTransportService: PeerTransport {
         logEvent("Transmission error for \(outboxItem.packetType): \(error.localizedDescription)", level: .warning)
         
         // If urgent, requeue if retries remain
-        if outbox.requeueForRetry(outboxItem) {
+        let targeted = OutboxItem(packetData: outboxItem.packetData, packetType: outboxItem.packetType,
+            destinationPeerId: peer?.peerId, attemptCount: outboxItem.attemptCount,
+            maxRetries: outboxItem.maxRetries, isUrgent: outboxItem.isUrgent)
+        if activeSession != nil, peer != nil, outbox.requeueForRetry(targeted) {
             logEvent("Re-queuing urgent packet \(outboxItem.packetType) (attempt \(outboxItem.attemptCount + 1)).", level: .info)
             triggerOutboxFlush()
         } else {
@@ -761,6 +840,8 @@ public actor PeerTransportService: PeerTransport {
         }
     }
     
+    private func isCurrentGeneration(_ token: UUID) -> Bool { generation == token && activeSession != nil }
+
     // MARK: - State Management & Helpers
     
     private func updateState(_ newState: TransportState) {
@@ -822,7 +903,7 @@ public actor PeerTransportService: PeerTransport {
         )
         
         // 30 bytes dummy payload for ping
-        let dummyPayload = Data(repeating: 0xEE, count: PacketConstants.encryptedPayloadSize)
+        let dummyPayload = Data(repeating: 0xEE, count: PacketConstants.sealedPayloadSize)
         // 16 bytes auth tag
         let dummyTag = Data(repeating: 0xFF, count: PacketConstants.authTagSize)
         

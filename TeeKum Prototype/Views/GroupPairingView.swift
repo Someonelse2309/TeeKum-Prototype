@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CryptoKit
 
 /// Comprehensive Group Pairing & Formation View:
 /// - Supports 1 to 3-letter initials (e.g. "D", "AB", "DNA")
@@ -324,9 +325,7 @@ public struct GroupPairingView: View {
     }
     
     private func executeCreateGroup(name: String, initials: String) {
-        var keyBytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, keyBytes.count, &keyBytes)
-        let keyData = Data(keyBytes)
+        let keyData = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
         
         let session = GroupSession(
             sessionId: UInt16.random(in: 1...UInt16.max),
@@ -360,7 +359,7 @@ public struct GroupPairingView: View {
                 .padding(.horizontal)
             } else {
                 VStack(spacing: 12) {
-                    QRScannerView(onCodeScanned: handleScannedCode)
+                    QRScannerView(onCodeScanned: handleScannedCode, isScanning: pendingAgreement == nil)
                         .frame(height: 380)
                         .clipShape(RoundedRectangle(cornerRadius: 16))
                         .overlay(

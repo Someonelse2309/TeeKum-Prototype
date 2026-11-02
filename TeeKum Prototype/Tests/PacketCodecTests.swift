@@ -14,7 +14,7 @@ public enum PacketCodecTests {
     public static func runAllTests() -> Bool {
         var passed = true
         print("========================================")
-        print("RUNNING PROTOCOL V2 PACKET CODEC TEST SUITE (54-BYTE)")
+        print("RUNNING PROTOCOL V3 PACKET CODEC TEST SUITE (66-BYTE)")
         print("========================================")
         
         if !testEnvelopeSerializationRoundtrip() { passed = false }
@@ -76,7 +76,7 @@ public enum PacketCodecTests {
         print("[Test 2] CleartextEnvelope validation and error handling...")
         
         // 1. Buffer underflow (<8 bytes)
-        let shortData = Data([0x21, 0x80, 0x12, 0x34])
+        let shortData = Data([0x31, 0x80, 0x12, 0x34])
         do {
             _ = try CleartextEnvelope.deserialize(from: shortData)
             print("  FAIL: Should have thrown bufferUnderflow for short data.")
@@ -102,7 +102,7 @@ public enum PacketCodecTests {
         }
         
         // 3. Unknown packet type (e.g. 0x0F)
-        let invalidTypeData = Data([0x2F, 0x80, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
+        let invalidTypeData = Data([0x3F, 0x80, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
         do {
             _ = try CleartextEnvelope.deserialize(from: invalidTypeData)
             print("  FAIL: Should have thrown unknownPacketType.")
@@ -115,7 +115,7 @@ public enum PacketCodecTests {
         }
         
         // 4. Invalid hop limit (0)
-        let zeroHopLimitData = Data([0x21, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
+        let zeroHopLimitData = Data([0x31, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
         do {
             _ = try CleartextEnvelope.deserialize(from: zeroHopLimitData)
             print("  FAIL: Should have thrown invalidHopLimit.")
@@ -128,7 +128,7 @@ public enum PacketCodecTests {
         }
         
         // 5. Hop count exceeding hop limit (count=5, limit=3)
-        let hopCountExceededData = Data([0x21, 0x35, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
+        let hopCountExceededData = Data([0x31, 0x35, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01])
         do {
             _ = try CleartextEnvelope.deserialize(from: hopCountExceededData)
             print("  FAIL: Should have thrown hopCountExceededLimit.")
@@ -188,24 +188,24 @@ public enum PacketCodecTests {
         return true
     }
     
-    // MARK: - Test 4: Raw 54-Byte Wire Packet Layout & Size Enforcement
+    // MARK: - Test 4: Raw 66-Byte Wire Packet Layout & Size Enforcement
     
     public static func testWirePacketLayoutAndSizeValidation() -> Bool {
-        print("[Test 4] RawWirePacket 54-byte layout and size validation...")
+        print("[Test 4] RawWirePacket 66-byte layout and size validation...")
         let envelope = CleartextEnvelope(
             type: .sos,
             sessionId: 0x1234,
             sequenceNumber: 42
         )
-        let dummyCiphertext = Data(repeating: 0xAA, count: 30)
+        let dummyCiphertext = Data(repeating: 0xAA, count: PacketConstants.sealedPayloadSize)
         let dummyAuthTag = Data(repeating: 0xBB, count: 16)
         
         let packet = RawWirePacket(envelope: envelope, ciphertext: dummyCiphertext, authTag: dummyAuthTag)
         
         do {
             let wireData = try packet.toWireData()
-            guard wireData.count == 54 else {
-                print("  FAIL: Expected exactly 54 bytes, got \(wireData.count)")
+            guard wireData.count == 66 else {
+                print("  FAIL: Expected exactly 66 bytes, got \(wireData.count)")
                 return false
             }
             
@@ -215,28 +215,28 @@ public enum PacketCodecTests {
                 return false
             }
             
-            // Reject short packet (53 bytes)
-            let shortWire = wireData.prefix(53)
+            // Reject short packet (65 bytes)
+            let shortWire = wireData.prefix(65)
             do {
                 _ = try RawWirePacket.fromWireData(shortWire)
-                print("  FAIL: Should have rejected 53-byte packet.")
+                print("  FAIL: Should have rejected 65-byte packet.")
                 return false
-            } catch PacketCodecError.invalidPacketSize(let exp, let act) where exp == 54 && act == 53 {
+            } catch PacketCodecError.invalidPacketSize(let exp, let act) where exp == 66 && act == 65 {
                 // Expected
             }
             
-            // Reject long packet (55 bytes)
+            // Reject long packet (67 bytes)
             var longWire = wireData
             longWire.append(0x00)
             do {
                 _ = try RawWirePacket.fromWireData(longWire)
-                print("  FAIL: Should have rejected 55-byte packet.")
+                print("  FAIL: Should have rejected 67-byte packet.")
                 return false
-            } catch PacketCodecError.invalidPacketSize(let exp, let act) where exp == 54 && act == 55 {
+            } catch PacketCodecError.invalidPacketSize(let exp, let act) where exp == 66 && act == 67 {
                 // Expected
             }
             
-            print("  PASS: Exact 54-byte wire packet layout enforced.")
+            print("  PASS: Exact 66-byte wire packet layout enforced.")
             return true
         } catch {
             print("  FAIL: Exception caught: \(error)")
@@ -504,12 +504,12 @@ public enum PacketCodecTests {
     public static func testDeterministicTestVector() -> Bool {
         print("[Test 12] Deterministic test vector serialization...")
         // Known fixed inputs:
-        // Envelope: version=2, type=1 (locationPing) -> byte0 = 0x21
+        // Envelope: version=2, type=1 (locationPing) -> byte0 = 0x31
         // hopLimit=8, hopCount=0 -> byte1 = 0x80
         // sessionId = 0x0102 -> bytes 2..3 = [0x01, 0x02]
         // sequenceNumber = 0x0A0B0C0D -> bytes 4..7 = [0x0A, 0x0B, 0x0C, 0x0D]
         let envelope = CleartextEnvelope(
-            version: 0x02,
+            version: PacketConstants.protocolVersion,
             type: .locationPing,
             hopLimit: 8,
             hopCount: 0,
@@ -517,7 +517,7 @@ public enum PacketCodecTests {
             sequenceNumber: 0x0A0B0C0D
         )
         let envBytes = envelope.serialize()
-        let expectedEnvHex = "218001020a0b0c0d"
+        let expectedEnvHex = "318001020a0b0c0d"
         let actualEnvHex = envBytes.map { String(format: "%02x", $0) }.joined()
         guard actualEnvHex == expectedEnvHex else {
             print("  FAIL: Envelope test vector mismatch: expected \(expectedEnvHex), got \(actualEnvHex)")
@@ -532,16 +532,7 @@ public enum PacketCodecTests {
             return false
         }
         
-        // Nonce test vector: sessionId (2B) + sequenceNumber (4B) + byte0 (1B) + "TKM02" (5B)
-        let nonceBytes = envelope.constructNonce()
-        let expectedNonceHex = "01020a0b0c0d21544b4d3032"
-        let actualNonceHex = nonceBytes.map { String(format: "%02x", $0) }.joined()
-        guard actualNonceHex == expectedNonceHex else {
-            print("  FAIL: Nonce test vector mismatch: expected \(expectedNonceHex), got \(actualNonceHex)")
-            return false
-        }
-        
-        print("  PASS: Deterministic envelope, AAD, and Nonce vectors verified bit-for-bit.")
+        print("  PASS: Deterministic envelope and AAD vectors verified bit-for-bit.")
         return true
     }
     

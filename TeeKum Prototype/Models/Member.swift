@@ -10,7 +10,7 @@ import CoreLocation
 
 /// Represents a peer member participating in an active TeeKum group session.
 /// Uniquely identified by their 3-letter Base-26 initials (e.g., "DNA", "ALX").
-public struct Member: Identifiable, Equatable, Hashable, Sendable {
+nonisolated public struct Member: Identifiable, Equatable, Hashable, Sendable {
     /// 3-letter uppercase initials identifying the member.
     public let id: String
     
@@ -20,7 +20,7 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
     /// Initials accessor.
     public var initials: String { id }
     
-    /// Latest local timestamp when a valid authenticated packet was received from this member.
+    /// Measurement timestamp of the latest authenticated location, never refreshed by a relay.
     public var lastSeen: Date
     
     /// Latest reported geographical coordinate.
@@ -35,7 +35,7 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
     /// Latest reported battery percentage (0.0 to 1.0).
     public var batteryLevel: Float?
     
-    /// Latest reported magnetic compass heading in degrees (0..<360).
+    /// Latest reported true-north compass heading in degrees (0..<360).
     public var heading: CLLocationDirection?
     
     /// True if currently discovered within direct 1-hop radio range; false if reached via multi-hop relay.

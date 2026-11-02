@@ -625,7 +625,8 @@ public struct UIStateTests {
     @MainActor
     private static func testSessionTeardownAndCleanUIReset() async -> Bool {
         print("[TEST] testSessionTeardownAndCleanUIReset...")
-        let vm = GroupSessionViewModel()
+        guard let store = try? SessionRecoveryStore(memoryOnly: true) else { return false }
+        let vm = GroupSessionViewModel(recoveryStore: store)
         vm.leaveGroup()
         
         // 1. Enter auto-mesh and verify it persists across simulated relaunch
@@ -635,7 +636,7 @@ public struct UIStateTests {
             return false
         }
         
-        let relaunchVM = GroupSessionViewModel()
+        let relaunchVM = GroupSessionViewModel(recoveryStore: store)
         guard relaunchVM.hasActiveSession, let restored = relaunchVM.activeSession else {
             print("FAILED: Session should persist and restore on simulated relaunch")
             return false
@@ -653,7 +654,7 @@ public struct UIStateTests {
         }
         
         // Verify disk storage is wiped
-        let cleanSlateVM = GroupSessionViewModel()
+        let cleanSlateVM = GroupSessionViewModel(recoveryStore: store)
         guard !cleanSlateVM.hasActiveSession else {
             print("FAILED: Session should not restore after leaveGroup")
             return false

@@ -11,13 +11,13 @@ import Foundation
 /// peer-to-peer connections (such as TCP over AWDL / Wi-Fi Direct).
 ///
 /// Because stream transports do not guarantee packet boundaries, a single read may deliver:
-/// 1. A partial 56-byte packet (e.g. 20 bytes).
+/// 1. A partial 66-byte packet (e.g. 20 bytes).
 /// 2. Multiple coalesced packets (e.g. 112 bytes for 2 packets).
 /// 3. Split packets (e.g. 70 bytes = 1 full packet + 14 bytes of the next).
 ///
-/// `StreamMessageFramer` buffers incomplete chunks, extracts complete 56-byte packets,
+/// `StreamMessageFramer` buffers incomplete chunks, extracts complete 66-byte packets,
 /// scans forward across corrupted bytes to recover synchronization, and prevents memory exhaustion.
-public final class StreamMessageFramer: @unchecked Sendable {
+nonisolated public final class StreamMessageFramer: @unchecked Sendable {
     /// Internal byte buffer accumulating stream data.
     private var buffer = Data()
     
@@ -35,10 +35,10 @@ public final class StreamMessageFramer: @unchecked Sendable {
     }
     
     /// Ingests a raw byte chunk from a stream read, buffers partial packets, and returns
-    /// all extracted, valid 56-byte binary wire frames.
+    /// all extracted, valid 66-byte binary wire frames.
     ///
     /// - Parameter chunk: The newly received bytes from `NWConnection.receive`.
-    /// - Returns: An array of complete 56-byte packet data buffers ready for protocol decoding.
+    /// - Returns: An array of complete 66-byte packet data buffers ready for protocol decoding.
     /// - Throws: `TransportError` if the buffer overflows or encounters unrecoverable corruption.
     public func processIncomingChunk(_ chunk: Data) throws -> [Data] {
         guard !chunk.isEmpty else { return [] }
@@ -58,7 +58,7 @@ public final class StreamMessageFramer: @unchecked Sendable {
             let version = (byte0 >> 4) & 0x0F
             let typeRaw = byte0 & 0x0F
             
-            // Check if Byte 0 contains valid protocol version (0x01) and recognized PacketType (0x01...0x06)
+            // Check the current protocol version and recognized application packet type
             if version == PacketConstants.protocolVersion, PacketType(rawValue: typeRaw) != nil {
                 let frameEnd = startIndex + PacketConstants.wirePacketSize
                 let frameData = buffer.subdata(in: startIndex..<frameEnd)

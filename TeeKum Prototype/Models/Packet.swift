@@ -10,26 +10,27 @@ import CoreLocation
 
 // MARK: - Constants
 
-public enum PacketConstants {
-    public static let wirePacketSize: Int = 54
+nonisolated public enum PacketConstants {
+    public static let wirePacketSize: Int = 66
     public static let cleartextEnvelopeSize: Int = 8
     public static let encryptedPayloadSize: Int = 30
     public static let authTagSize: Int = 16
     public static let nonceSize: Int = 12
+    /// Nonce followed by ciphertext; the authentication tag remains separate.
+    public static let sealedPayloadSize: Int = nonceSize + encryptedPayloadSize
     
-    public static let protocolVersion: UInt8 = 0x02
+    public static let protocolVersion: UInt8 = 0x03
     public static let defaultHopLimit: UInt8 = 8
     public static let maxHopLimit: UInt8 = 15
     public static let meetingPointHopLimit: UInt8 = 15
     public static let sosHopLimit: UInt8 = 15
     
-    /// 5-byte protocol domain tag used in nonce construction: 'T', 'K', 'M', '0', '2'
-    public static let protocolDomainTag: [UInt8] = [0x54, 0x4B, 0x4D, 0x30, 0x32]
+
 }
 
 // MARK: - Packet Type
 
-public enum PacketType: UInt8, CaseIterable, Sendable {
+nonisolated public enum PacketType: UInt8, CaseIterable, Sendable {
     case locationPing  = 0x01
     case sos           = 0x02
     case meetingUpdate = 0x03
@@ -40,7 +41,7 @@ public enum PacketType: UInt8, CaseIterable, Sendable {
 
 // MARK: - Emergency & ACK Enums
 
-public enum SOSType: UInt8, CaseIterable, Sendable {
+nonisolated public enum SOSType: UInt8, CaseIterable, Sendable {
     case general   = 0x00
     case medical   = 0x01
     case separated = 0x02
@@ -56,14 +57,14 @@ public enum SOSType: UInt8, CaseIterable, Sendable {
     }
 }
 
-public enum ACKStatus: UInt8, CaseIterable, Sendable {
+nonisolated public enum ACKStatus: UInt8, CaseIterable, Sendable {
     case deliveredToFriend = 0x01
     case relayedByMeshHop  = 0x02
 }
 
 // MARK: - Errors
 
-public enum PacketCodecError: Error, LocalizedError, Equatable {
+nonisolated public enum PacketCodecError: Error, LocalizedError, Equatable {
     case invalidPacketSize(expected: Int, actual: Int)
     case unsupportedVersion(UInt8)
     case unknownPacketType(UInt8)
@@ -106,7 +107,7 @@ public enum PacketCodecError: Error, LocalizedError, Equatable {
 
 // MARK: - Cleartext Envelope (8 Bytes)
 
-public struct CleartextEnvelope: Equatable, Sendable {
+nonisolated public struct CleartextEnvelope: Equatable, Sendable {
     public var version: UInt8
     public var type: PacketType
     public var hopLimit: UInt8
@@ -204,11 +205,11 @@ public struct CleartextEnvelope: Equatable, Sendable {
         }
         
         let sid = data.subdata(in: (data.startIndex + 2)..<(data.startIndex + 4)).withUnsafeBytes {
-            $0.load(as: UInt16.self).bigEndian
+            $0.loadUnaligned(as: UInt16.self).bigEndian
         }
         
         let seq = data.subdata(in: (data.startIndex + 4)..<(data.startIndex + 8)).withUnsafeBytes {
-            $0.load(as: UInt32.self).bigEndian
+            $0.loadUnaligned(as: UInt32.self).bigEndian
         }
         
         return CleartextEnvelope(
@@ -241,32 +242,14 @@ public struct CleartextEnvelope: Equatable, Sendable {
         return aad
     }
     
-    /// Constructs the deterministic 12-byte (96-bit) AEAD Nonce:
-    /// - Bytes 0..1: sessionId (UInt16 big-endian, 2 bytes)
-    /// - Bytes 2..5: sequenceNumber (UInt32 big-endian, 4 bytes)
-    /// - Byte 6: versionAndType (Byte 0)
-    /// - Bytes 7..11: Protocol Domain Tag "TKM02" ([0x54, 0x4B, 0x4D, 0x30, 0x32])
-    public func constructNonce() -> Data {
-        var nonceData = Data(capacity: PacketConstants.nonceSize)
-        
-        var sidBE = sessionId.bigEndian
-        nonceData.append(Data(bytes: &sidBE, count: 2))
-        
-        var seqBE = sequenceNumber.bigEndian
-        nonceData.append(Data(bytes: &seqBE, count: 4))
-        
-        let byte0 = ((version & 0x0F) << 4) | (type.rawValue & 0x0F)
-        nonceData.append(byte0)
-        
-        nonceData.append(contentsOf: PacketConstants.protocolDomainTag)
-        return nonceData
-    }
+
 }
 
-// MARK: - 54-Byte Wire Packet
+// MARK: - 66-Byte Wire Packet
 
-public struct RawWirePacket: Equatable, Sendable {
+nonisolated public struct RawWirePacket: Equatable, Sendable {
     public var envelope: CleartextEnvelope
+    /// The wire field contains the 12-byte nonce followed by 30 bytes of ciphertext.
     public var ciphertext: Data
     public var authTag: Data
     
@@ -276,14 +259,14 @@ public struct RawWirePacket: Equatable, Sendable {
         self.authTag = authTag
     }
     
-    /// Combines envelope (8B), ciphertext (30B), and auth tag (16B) into exactly 54 bytes.
+    /// Combines envelope (8B), random nonce (12B), ciphertext (30B), and tag (16B).
     public func toWireData() throws -> Data {
         let envData = envelope.serialize()
         guard envData.count == PacketConstants.cleartextEnvelopeSize else {
             throw PacketCodecError.invalidPacketSize(expected: PacketConstants.cleartextEnvelopeSize, actual: envData.count)
         }
-        guard ciphertext.count == PacketConstants.encryptedPayloadSize else {
-            throw PacketCodecError.invalidPacketSize(expected: PacketConstants.encryptedPayloadSize, actual: ciphertext.count)
+        guard ciphertext.count == PacketConstants.sealedPayloadSize else {
+            throw PacketCodecError.invalidPacketSize(expected: PacketConstants.sealedPayloadSize, actual: ciphertext.count)
         }
         guard authTag.count == PacketConstants.authTagSize else {
             throw PacketCodecError.invalidPacketSize(expected: PacketConstants.authTagSize, actual: authTag.count)
@@ -296,7 +279,7 @@ public struct RawWirePacket: Equatable, Sendable {
         return packet
     }
     
-    /// Parses a 54-byte binary datagram from the network.
+    /// Parses a 66-byte binary frame from the network.
     public static func fromWireData(_ data: Data) throws -> RawWirePacket {
         guard data.count == PacketConstants.wirePacketSize else {
             throw PacketCodecError.invalidPacketSize(expected: PacketConstants.wirePacketSize, actual: data.count)
@@ -304,8 +287,8 @@ public struct RawWirePacket: Equatable, Sendable {
         
         let envData = data.subdata(in: 0..<8)
         let envelope = try CleartextEnvelope.deserialize(from: envData)
-        let ciphertext = data.subdata(in: 8..<38)
-        let authTag = data.subdata(in: 38..<54)
+        let ciphertext = data.subdata(in: 8..<50)
+        let authTag = data.subdata(in: 50..<66)
         
         return RawWirePacket(envelope: envelope, ciphertext: ciphertext, authTag: authTag)
     }
@@ -314,7 +297,7 @@ public struct RawWirePacket: Equatable, Sendable {
 // MARK: - Decoded Inner Payloads (30 Bytes Each)
 
 /// Type 1: `0x01` — Location Ping Inner Payload
-public struct LocationPingPayload: Equatable, Sendable {
+nonisolated public struct LocationPingPayload: Equatable, Sendable {
     public var coordinate: CLLocationCoordinate2D
     public var timestamp: Date
     public var accuracy: UInt8
@@ -374,12 +357,12 @@ public struct LocationPingPayload: Equatable, Sendable {
         guard data.count >= PacketConstants.encryptedPayloadSize else {
             throw PacketCodecError.bufferUnderflow
         }
-        let latRaw = data.subdata(in: 0..<4).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
-        let lonRaw = data.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
-        let tsRaw = data.subdata(in: 8..<12).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let latRaw = data.subdata(in: 0..<4).withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
+        let lonRaw = data.subdata(in: 4..<8).withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
+        let tsRaw = data.subdata(in: 8..<12).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         let accuracy = data[12]
         let statusByte = data[13]
-        let targetRaw = data.subdata(in: 14..<18).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let targetRaw = data.subdata(in: 14..<18).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         
         let initialBytes = [data[18], data[19]]
         let initials = InitialsCodec.decode(initialBytes) ?? "UNK"
@@ -413,13 +396,14 @@ public struct LocationPingPayload: Equatable, Sendable {
 }
 
 /// Type 2: `0x02` — SOS Emergency Inner Payload
-public struct SOSPayload: Equatable, Sendable {
+nonisolated public struct SOSPayload: Equatable, Sendable {
     public var coordinate: CLLocationCoordinate2D
     public var timestamp: Date
     public var accuracy: UInt8
     public var sosEventId: UInt32
     public var senderInitials: String // 3 uppercase characters
     public var emergencyType: SOSType
+    public var sentAt: Date
     public var batteryLevel: UInt8
     
     public init(
@@ -429,7 +413,8 @@ public struct SOSPayload: Equatable, Sendable {
         sosEventId: UInt32 = UInt32.random(in: 1...UInt32.max),
         senderInitials: String,
         emergencyType: SOSType = .general,
-        batteryLevel: UInt8
+        batteryLevel: UInt8,
+        sentAt: Date = .now
     ) {
         self.coordinate = coordinate
         self.timestamp = timestamp
@@ -438,6 +423,7 @@ public struct SOSPayload: Equatable, Sendable {
         self.senderInitials = InitialsCodec.sanitize(senderInitials)
         self.emergencyType = emergencyType
         self.batteryLevel = min(batteryLevel, 100)
+        self.sentAt = sentAt
     }
     
     public func serialize() -> Data {
@@ -461,8 +447,10 @@ public struct SOSPayload: Equatable, Sendable {
         data.append(emergencyType.rawValue)
         data.append(min(batteryLevel, 100))
         
-        // 8 bytes reserved padding (30 - 22 = 8)
-        data.append(Data(repeating: 0, count: 8))
+        // Separate transmission time from the GPS measurement's possibly old timestamp.
+        var sent = UInt32(sentAt.timeIntervalSince1970).bigEndian
+        data.append(Data(bytes: &sent, count: 4))
+        data.append(Data(repeating: 0, count: 4))
         return data
     }
     
@@ -470,11 +458,11 @@ public struct SOSPayload: Equatable, Sendable {
         guard data.count >= PacketConstants.encryptedPayloadSize else {
             throw PacketCodecError.bufferUnderflow
         }
-        let latRaw = data.subdata(in: 0..<4).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
-        let lonRaw = data.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
-        let tsRaw = data.subdata(in: 8..<12).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let latRaw = data.subdata(in: 0..<4).withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
+        let lonRaw = data.subdata(in: 4..<8).withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
+        let tsRaw = data.subdata(in: 8..<12).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         let accuracy = data[12]
-        let eventId = data.subdata(in: 14..<18).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let eventId = data.subdata(in: 14..<18).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         
         let initialBytes = [data[18], data[19]]
         let initials = InitialsCodec.decode(initialBytes) ?? "UNK"
@@ -500,13 +488,14 @@ public struct SOSPayload: Equatable, Sendable {
             sosEventId: eventId,
             senderInitials: initials,
             emergencyType: emergency,
-            batteryLevel: min(battery, 100)
+            batteryLevel: min(battery, 100),
+            sentAt: Date(timeIntervalSince1970: TimeInterval(data.subdata(in: 22..<26).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }))
         )
     }
 }
 
 /// Type 3: `0x03` — Meeting Update Inner Payload
-public struct MeetingUpdatePayload: Equatable, Sendable {
+nonisolated public struct MeetingUpdatePayload: Equatable, Sendable {
     public var coordinate: CLLocationCoordinate2D
     public var meetupTime: Date
     public var action: MeetingAction
@@ -574,17 +563,17 @@ public struct MeetingUpdatePayload: Equatable, Sendable {
         guard data.count >= PacketConstants.encryptedPayloadSize else {
             throw PacketCodecError.bufferUnderflow
         }
-        let latRaw = data.subdata(in: 0..<4).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
-        let lonRaw = data.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
-        let tsRaw = data.subdata(in: 8..<12).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let latRaw = data.subdata(in: 0..<4).withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
+        let lonRaw = data.subdata(in: 4..<8).withUnsafeBytes { $0.loadUnaligned(as: Int32.self).bigEndian }
+        let tsRaw = data.subdata(in: 8..<12).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         let actionByte = data[12]
         let attendanceByte = data[13]
-        let mpId = data.subdata(in: 14..<18).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let mpId = data.subdata(in: 14..<18).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         
         let initialBytes = [data[18], data[19]]
         let initials = InitialsCodec.decode(initialBytes) ?? "UNK"
         
-        let landmarkRaw = data.subdata(in: 20..<24).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let landmarkRaw = data.subdata(in: 20..<24).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         
         let lat = Double(latRaw) / 1_000_000.0
         let lon = Double(lonRaw) / 1_000_000.0
@@ -622,7 +611,7 @@ public struct MeetingUpdatePayload: Equatable, Sendable {
 }
 
 /// Type 4: `0x06` — Delivery ACK Inner Payload
-public struct ACKPayload: Equatable, Sendable {
+nonisolated public struct ACKPayload: Equatable, Sendable {
     public var ackedSeqNumber: UInt32
     public var ackedSenderInitials: String // 3 uppercase characters
     public var ackTimestamp: Date
@@ -680,14 +669,14 @@ public struct ACKPayload: Equatable, Sendable {
         guard data.count >= PacketConstants.encryptedPayloadSize else {
             throw PacketCodecError.bufferUnderflow
         }
-        let seq = data.subdata(in: 0..<4).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let seq = data.subdata(in: 0..<4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         let ackedBytes = [data[4], data[5]]
         let ackedInitials = InitialsCodec.decode(ackedBytes) ?? "UNK"
         
-        let tsRaw = data.subdata(in: 6..<10).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let tsRaw = data.subdata(in: 6..<10).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         let statusByte = data[10]
         let rssi = Int8(bitPattern: data[11])
-        let eventId = data.subdata(in: 12..<16).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let eventId = data.subdata(in: 12..<16).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         
         let respBytes = [data[16], data[17]]
         let respInitials = InitialsCodec.decode(respBytes) ?? "UNK"
@@ -708,7 +697,7 @@ public struct ACKPayload: Equatable, Sendable {
 }
 
 /// Type 5: `0x04` — Route Request Inner Payload (Phase 2)
-public struct RouteReqPayload: Equatable, Sendable {
+nonisolated public struct RouteReqPayload: Equatable, Sendable {
     public var originatorInitials: String
     public var targetInitials: String
     public var discoveryNonce: UInt32
@@ -753,14 +742,14 @@ public struct RouteReqPayload: Equatable, Sendable {
         let targetBytes = [data[2], data[3]]
         let target = InitialsCodec.decode(targetBytes) ?? "UNK"
         
-        let nonce = data.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let nonce = data.subdata(in: 4..<8).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         let cost = data[8]
         return RouteReqPayload(originatorInitials: orig, targetInitials: target, discoveryNonce: nonce, routeCost: cost)
     }
 }
 
 /// Type 6: `0x05` — Route Response Inner Payload (Phase 2)
-public struct RouteRespPayload: Equatable, Sendable {
+nonisolated public struct RouteRespPayload: Equatable, Sendable {
     public var originatorInitials: String
     public var targetInitials: String
     public var discoveryNonce: UInt32
@@ -805,7 +794,7 @@ public struct RouteRespPayload: Equatable, Sendable {
         let targetBytes = [data[2], data[3]]
         let target = InitialsCodec.decode(targetBytes) ?? "UNK"
         
-        let nonce = data.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let nonce = data.subdata(in: 4..<8).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian }
         let cost = data[8]
         return RouteRespPayload(originatorInitials: orig, targetInitials: target, discoveryNonce: nonce, routeCost: cost)
     }

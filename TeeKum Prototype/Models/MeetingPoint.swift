@@ -9,7 +9,7 @@ import Foundation
 import CoreLocation
 
 /// Action taken regarding a group rendezvous point.
-public enum MeetingAction: UInt8, CaseIterable, Codable, Sendable {
+nonisolated public enum MeetingAction: UInt8, CaseIterable, Codable, Sendable {
     case propose = 0x01
     case accept  = 0x02
     case decline = 0x03
@@ -17,7 +17,7 @@ public enum MeetingAction: UInt8, CaseIterable, Codable, Sendable {
 }
 
 /// Member attendance state for the single active meeting point.
-public enum AttendanceStatus: UInt8, CaseIterable, Codable, Sendable {
+nonisolated public enum AttendanceStatus: UInt8, CaseIterable, Codable, Sendable {
     case attending      = 0x01
     case cantMakeIt     = 0x02
     case atMeetingPoint = 0x09
@@ -32,7 +32,7 @@ public enum AttendanceStatus: UInt8, CaseIterable, Codable, Sendable {
 }
 
 /// Official venue landmark presets for festival coordination.
-public struct LandmarkPreset: Identifiable, Sendable {
+nonisolated public struct LandmarkPreset: Identifiable, Sendable {
     public let id: UInt32
     public let name: String
     public let coordinate: CLLocationCoordinate2D
@@ -44,7 +44,7 @@ public struct LandmarkPreset: Identifiable, Sendable {
     }
 }
 
-public enum VenueLandmark {
+nonisolated public enum VenueLandmark {
     public static let presets: [LandmarkPreset] = [
         LandmarkPreset(id: 1, name: "Main Stage Sound Booth", coordinate: CLLocationCoordinate2D(latitude: 33.6822, longitude: -116.2355)),
         LandmarkPreset(id: 2, name: "Gate 3 Exit", coordinate: CLLocationCoordinate2D(latitude: 33.6845, longitude: -116.2380)),
@@ -66,7 +66,7 @@ public enum VenueLandmark {
 }
 
 /// Curated premade festival locations available in the meeting point dropdown menu.
-public enum PremadeMeetingLocation {
+nonisolated public enum PremadeMeetingLocation {
     public static let defaultName = "Meeting Point"
     
     public static let allLocations: [String] = [
@@ -90,7 +90,7 @@ public enum PremadeMeetingLocation {
 }
 
 /// Model representing the single active rendezvous point for a group session.
-public struct MeetingPoint: Identifiable, Equatable, Hashable, Sendable {
+nonisolated public struct MeetingPoint: Identifiable, Equatable, Hashable, Sendable {
     /// Unique 32-bit identifier for this meeting instance.
     public let id: UInt32
     

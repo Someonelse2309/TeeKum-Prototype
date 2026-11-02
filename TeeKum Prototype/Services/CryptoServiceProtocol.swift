@@ -8,7 +8,7 @@
 import Foundation
 import CryptoKit
 
-public enum CryptoServiceError: Error, LocalizedError {
+nonisolated public enum CryptoServiceError: Error, LocalizedError {
     case encryptionFailed(String)
     case authenticationFailed
     case keyGenerationFailed
@@ -44,14 +44,15 @@ public enum CryptoServiceError: Error, LocalizedError {
 /// Implemented as a Swift `actor` to safeguard key material in memory.
 public protocol CryptoServiceProvider: Actor {
     /// Seals 30 bytes of private inner payload using authenticated symmetric encryption,
-    /// binding the 10-byte cleartext envelope as Associated Authenticated Data (AAD).
+    /// binding the 8-byte cleartext envelope as Associated Authenticated Data (AAD).
+    /// The returned ciphertext field is a 12-byte random nonce followed by 30 encrypted bytes.
     func seal(
         payload: Data,
         envelope: CleartextEnvelope,
         using key: SymmetricKey
     ) throws -> (ciphertext: Data, authTag: Data)
     
-    /// Verifies the 16-byte Poly1305 / AES-GCM tag against the 10-byte envelope AAD and decrypts the 30-byte payload.
+    /// Verifies the 16-byte Poly1305 / AES-GCM tag against the 8-byte envelope AAD and decrypts the 30-byte payload.
     /// Throws `CryptoServiceError.authenticationFailed` if tampered by a third party.
     func open(
         ciphertext: Data,
@@ -63,7 +64,7 @@ public protocol CryptoServiceProvider: Actor {
     /// Generates a cryptographically secure 256-bit symmetric key.
     func generateSymmetricKey() -> SymmetricKey
     
-    /// Persists the symmetric session key into the iOS Keychain backed by the Secure Enclave.
+    /// Persists the symmetric session key into the iOS Keychain protected by Keychain accessibility.
     func storeKeyInKeychain(_ key: SymmetricKey, forSessionId sessionId: UInt16) throws
     
     /// Reads the symmetric session key from the iOS Keychain.

@@ -14,12 +14,14 @@ import UIKit
 public struct QRScannerView: View {
     public let onCodeScanned: (String) -> Void
     public let onCancel: (() -> Void)?
+    public let isScanning: Bool
     
     @State private var authorizationStatus: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
     @State private var manualLinkInput: String = ""
     @State private var isRequestingPermission: Bool = false
     
-    public init(onCodeScanned: @escaping (String) -> Void, onCancel: (() -> Void)? = nil) {
+    public init(onCodeScanned: @escaping (String) -> Void, onCancel: (() -> Void)? = nil, isScanning: Bool = true) {
+        self.isScanning = isScanning
         self.onCodeScanned = onCodeScanned
         self.onCancel = onCancel
     }
@@ -63,7 +65,7 @@ public struct QRScannerView: View {
     #if !targetEnvironment(simulator)
     private var cameraScannerView: some View {
         ZStack {
-            AVCaptureScannerRepresentable { code in
+            AVCaptureScannerRepresentable(isScanning: isScanning) { code in
                 onCodeScanned(code)
             }
             .ignoresSafeArea()
@@ -308,6 +310,7 @@ public struct QRScannerView: View {
 
 #if !targetEnvironment(simulator)
 struct AVCaptureScannerRepresentable: UIViewControllerRepresentable {
+    let isScanning: Bool
     let onCodeScanned: (String) -> Void
     
     func makeUIViewController(context: Context) -> ScannerViewController {
@@ -317,7 +320,12 @@ struct AVCaptureScannerRepresentable: UIViewControllerRepresentable {
         return controller
     }
     
-    func updateUIViewController(_ uiViewController: ScannerViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: ScannerViewController, context: Context) {
+        if isScanning {
+            context.coordinator.hasScanned = false
+            uiViewController.startScanning()
+        } else { uiViewController.stopScanning() }
+    }
     
     static func dismantleUIViewController(_ uiViewController: ScannerViewController, coordinator: Coordinator) {
         uiViewController.stopScanning()
@@ -330,14 +338,14 @@ struct AVCaptureScannerRepresentable: UIViewControllerRepresentable {
     final class Coordinator: NSObject, ScannerViewControllerDelegate {
         let onCodeScanned: (String) -> Void
         weak var viewController: ScannerViewController?
-        private var hasScanned: Bool = false
+        var hasScanned: Bool = false
         
         init(onCodeScanned: @escaping (String) -> Void) {
             self.onCodeScanned = onCodeScanned
         }
         
         func didScanCode(_ code: String) {
-            guard !hasScanned else { return }
+            guard !hasScanned, GroupSession.parseInvite(from: code) != nil else { return }
             hasScanned = true
             
             viewController?.stopScanning()
@@ -356,10 +364,10 @@ protocol ScannerViewControllerDelegate: AnyObject {
 
 final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
     weak var delegate: ScannerViewControllerDelegate?
-    private let captureSession = AVCaptureSession()
+    private let sessionController = CameraSessionController()
+    private var cameraTask: Task<Void, Never>?
     private var previewLayer: AVCaptureVideoPreviewLayer?
-    private var metadataOutput: AVCaptureMetadataOutput?
-    private let sessionQueue = DispatchQueue(label: "com.teekum.scanner.session")
+
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -374,10 +382,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
     
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        sessionQueue.async { [weak self] in
-            guard let self, !self.captureSession.isRunning else { return }
-            self.captureSession.startRunning()
-        }
+        startScanning()
     }
     
     override func viewWillDisappear(_ animated: Bool) {
@@ -386,49 +391,39 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
     }
     
     public func stopScanning() {
-        metadataOutput?.setMetadataObjectsDelegate(nil, queue: nil)
-        if captureSession.isRunning {
-            captureSession.stopRunning()
+        cameraTask?.cancel()
+        cameraTask = nil
+        Task { await sessionController.stop() }
+    }
+
+    func startScanning() {
+        cameraTask?.cancel()
+        cameraTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await sessionController.configure(delegate: self)
+                guard !Task.isCancelled else { return }
+                await sessionController.start()
+            } catch {
+                guard !Task.isCancelled else { return }
+                let label = UILabel()
+                label.text = "Camera unavailable. Paste an invite link below."
+                label.textColor = .white
+                label.numberOfLines = 0
+                label.frame = view.bounds.insetBy(dx: 24, dy: 24)
+                view.addSubview(label)
+            }
         }
     }
-    
-    deinit {
-        stopScanning()
-    }
-    
+
     private func setupCamera() {
-        guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else { return }
-        
-        let videoInput: AVCaptureDeviceInput
-        do {
-            videoInput = try AVCaptureDeviceInput(device: videoCaptureDevice)
-        } catch {
-            return
-        }
-        
-        if captureSession.canAddInput(videoInput) {
-            captureSession.addInput(videoInput)
-        } else {
-            return
-        }
-        
-        let metaOutput = AVCaptureMetadataOutput()
-        if captureSession.canAddOutput(metaOutput) {
-            captureSession.addOutput(metaOutput)
-            metaOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
-            metaOutput.metadataObjectTypes = [.qr]
-            self.metadataOutput = metaOutput
-        } else {
-            return
-        }
-        
-        let preview = AVCaptureVideoPreviewLayer(session: captureSession)
+        let preview = sessionController.makePreviewLayer()
         preview.frame = view.layer.bounds
         preview.videoGravity = .resizeAspectFill
         view.layer.addSublayer(preview)
-        self.previewLayer = preview
+        previewLayer = preview
     }
-    
+
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
         guard let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
               let stringValue = metadataObject.stringValue else { return }

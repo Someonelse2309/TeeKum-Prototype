@@ -624,7 +624,7 @@ public struct LocationPublishingTests {
             return false
         }
         
-        print("  ✓ LocationPublisher sealed 54-byte wire packets and dispatched both location pings and SOS.")
+        print("  ✓ LocationPublisher sealed 66-byte wire packets and dispatched both location pings and SOS.")
         return true
     }
     

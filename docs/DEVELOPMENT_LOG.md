@@ -5,6 +5,49 @@
 
 ---
 
+
+### [2026-11-02] — Phase 1 SwiftUI, persistence, and connection review
+- **Contributor / Agent:** Codex
+- **Status:** Completed
+- **Target Phase / Milestone:** Phase 1 correctness review
+
+#### 1. Objective & Scope
+Review and revise Phase 1 using swiftui-pro and swiftdata-pro; check connection/authentication/forwarding logic and explain the actual data sent. The renewed user request scopes this work to Phase 1. Phase 2 routing implementation remains deferred.
+
+#### 2. Changes Made & Files Touched
+- `Models/Packet.swift`, `Services/CryptoService.swift`, protocol interfaces and codec tests: security revision v3, fresh transmitted 96-bit nonces, 66-byte application frames, unaligned-safe integer decoding, and authenticated SOS transmission time.
+- `Models/GroupSession.swift`, `ViewModels/GroupSessionViewModel.swift`: private per-group random keys/IDs, SHA-256 diagnostic fingerprints, safe invite-name encoding, migration away from plaintext UserDefaults, twelve-hour expiry, and visible cleanup/recovery failures.
+- New `Models/SessionRecoveryRecord.swift`, `Models/StoredSessionSnapshot.swift`, `Services/SessionRecoveryStore.swift`: encrypted SwiftData recovery, Keychain wrapping key, explicit saves, persisted seen-SOS evidence, and key-first teardown. No CloudKit or location-history database.
+- `Services/PeerTransportService.swift`, `PriorityOutboxQueue.swift`: ephemeral connection UUIDs, 36-byte connection introductions, canonical socket selection, strict session/version discovery, generation/socket guards, identity timeout, connection cap, and bounded socket-specific retries.
+- New `ViewModels/SessionConnectionModel.swift` and simplified `App/TeeKumApp.swift`: authenticated membership and forwarding, ingress exclusion, bounded normalized-frame caches, measurement freshness/heading correction, cancellation-aware session providers, and expiry monitoring.
+- `Views/MainMapView.swift`, `FinderBeaconView.swift`, `SOSButtonView.swift`, `MeetingPointsView.swift`, diagnostics, pairing/agreement views and related models/services: correct friend selection, direct bindings, readable/refreshing freshness badges, accuracy circles, honest GPS/background/relay messaging, disappearing-task cancellation, paused GPS collection, no fabricated meeting coordinates, and merged repeated meeting proposals.
+- New `Services/CameraSessionController.swift` plus scanner revisions: actor-serialized blocking AVFoundation control and rescanning after invalid/declined invites. A narrowly scoped sendable handle bridges the shared AVFoundation session used by the main-thread preview and actor capture control.
+- Project settings and value models: Swift 6 language mode and explicit isolation boundaries; existing iOS 26 minimum retained. ActivityKit uses its compatibility import while updates are awaited directly.
+- New `Tests/Phase1RegressionTests.swift`; existing fixtures and recovery tests updated; aggregate test runner now reports a failing suite instead of ignoring return values.
+- New `docs/PHASE_1_REVIEW.md`: implemented architecture, exact wire/payload fields, migration requirements, privacy and physical-device limitations. Current-implementation notices added to older conflicting specification/report documents.
+
+#### 3. Key Decisions & Rationale
+- Security takes precedence over the historical 54-byte packet target: the old short-slot/resettable-counter nonce can repeat. v3 is 8-byte envelope + 12-byte random nonce + 30-byte ciphertext + 16-byte tag. Phase 1 hop fields stay nibble-sized (maximum 15); the previously proposed Phase 2 expanded-hop sketch is not implemented.
+- Legacy v2 peers are rejected rather than silently mixing incompatible layouts. All phones need the updated build and a newly created/shared private-group invite. Old plaintext saved sessions are discarded.
+- TCP/Bonjour discovery does not authenticate people. Only successfully decrypted group packets populate the roster or enter forwarding. Same-group relays possess the group key; stranger zero-knowledge relaying remains a Phase 2 feature.
+- Keep historical log entries intact; the new review guide takes precedence over conflicting older implementation/background guarantees.
+
+#### 4. Verification & Testing Performed
+- Simulator build: `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -sdk iphonesimulator -destination "generic/platform=iOS Simulator" -derivedDataPath /tmp/teekum-phase1-review build CODE_SIGNING_ALLOWED=NO` — **BUILD SUCCEEDED**.
+- Physical-iPhone compile: corresponding `-sdk iphoneos -destination "generic/platform=iOS" -derivedDataPath /tmp/teekum-phase1-device` — **BUILD SUCCEEDED**, including the camera branch omitted from simulator builds.
+- Both final builds use Swift 6 and have no source-code warnings/errors. Xcode emits its metadata-skipped notice because the app has no AppIntents dependency.
+- Installed the final app on the iPhone 17 / iOS 26.5 simulator (`B3A2E5A3-BA00-494C-9410-AE95B5E8CB5B`) and launched with `-runAllTests`.
+- **92 checks across 8 suites passed:** codec 13; transport 13; crypto 13; location 12; UI/model state 12; SOS 11; Live Activity 5; new Phase 1 regressions 13. Final console marker: `>>> ALL AUTOMATED TESTS PASSED <<<`.
+- Regression checks include restart-safe random nonces, secure recovery/purge/expiry, persisted SOS evidence, forged-packet rejection, unauthenticated discovery exclusion, stale-fix protection, valid relayed decryption, expired-SOS rejection, local-GPS teardown, and legacy-frame rejection.
+- The initial recovery test assumed a global UserDefaults store; corrected it to use a shared in-memory SwiftData store for simulated relaunch, then reran all suites successfully.
+- `git diff --check` passed. Temporary build/test evidence: `/tmp/teekum-phase1-build.log`, `/tmp/teekum-phase1-device-build.log`, `/tmp/teekum-phase1-tests-final.log`.
+
+#### 5. Open Items & Next Steps
+- Physical two-/three-phone AWDL connection, camera, radio-range, background/lock-screen delivery, power use and accessibility/rotation testing remain unverified; simulator success is not radio/physical UX validation.
+- Distinct initials are still required within a group. These are group-key authenticated identities, not individual public-key identities.
+- Packet duplicate caches are bounded and in memory; only SOS evidence persists. Durable replay/conflict handling for every meeting/location message is not claimed.
+- Actual Nearby Interaction/UWB, stranger relay, communal 2-packets/second scheduling, timed approval controls, routing tables and expanded hop bytes remain future work.
+
 ### [2026-10-29 12:22] — Documentation: Phase 1 Development Report & Specification Synchronization
 - **Contributor / Agent:** Agent 0 — Technical Lead Agent
 - **Status:** Completed

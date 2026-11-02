@@ -21,6 +21,7 @@ public struct MainMapView: View {
     @State private var isShowingGroupQR: Bool = false
     @State private var isShowingMeetingPoints: Bool = false
     @State private var isShowingNavigationBeacon: Bool = false
+    @State private var navigationTarget: Member?
     @State private var isShowingLeaveAlert: Bool = false
     @State private var mapCameraPosition: MapCameraPosition = .automatic
     
@@ -54,6 +55,9 @@ public struct MainMapView: View {
                 // Top Status Pill & Session Bar
                 topSessionBar
                 
+                if let error = sessionViewModel.errorMessage {
+                    Text(error).font(.caption).padding(8).background(.black.opacity(0.85))
+                }
                 if let alert = sosViewModel.activeIncomingAlert {
                     incomingSOSBanner(for: alert)
                 }
@@ -108,13 +112,15 @@ public struct MainMapView: View {
                 .presentationDragIndicator(.visible)
             }
         }
-        .sheet(item: $mapViewModel.selectedMember) { member in
+        .sheet(item: $mapViewModel.selectedMember, onDismiss: {
+            isShowingNavigationBeacon = navigationTarget != nil
+        }) { member in
             FriendDetailView(
                 member: member,
                 userLocation: mapViewModel.userLocation,
                 onStartNavigation: {
+                    navigationTarget = member
                     mapViewModel.selectedMember = nil
-                    isShowingNavigationBeacon = true
                 },
                 onDismiss: {
                     mapViewModel.clearNavigationTarget()
@@ -122,13 +128,15 @@ public struct MainMapView: View {
             )
         }
         .fullScreenCover(isPresented: $isShowingNavigationBeacon) {
-            if let targetFriend = sessionViewModel.members.first {
+            if let selected = navigationTarget {
+                let targetFriend = sessionViewModel.members.first(where: { $0.id == selected.id }) ?? selected
                 FinderBeaconView(
                     friend: targetFriend,
                     userLocation: mapViewModel.userLocation,
                     currentHeading: mapViewModel.currentHeading,
                     onDismiss: {
                         isShowingNavigationBeacon = false
+                        navigationTarget = nil
                     }
                 )
             }
@@ -153,11 +161,14 @@ public struct MainMapView: View {
                 // Friend Annotations with Honest Freshness Indicators
                 ForEach(sessionViewModel.members) { member in
                     if let coord = member.coordinate {
+                        if let accuracy = member.horizontalAccuracy, accuracy.isFinite, accuracy > 0, accuracy < 10000 {
+                            MapCircle(center: coord, radius: accuracy).foregroundStyle(.blue.opacity(0.12))
+                        }
                         Annotation("", coordinate: coord) {
-                            friendPinView(for: member)
-                                .onTapGesture {
-                                    mapViewModel.selectMemberForNavigation(member)
-                                }
+                            Button { mapViewModel.selectMemberForNavigation(member) } label: {
+                                friendPinView(for: member)
+                            }
+                            .buttonStyle(.plain)
                         }
                         .annotationTitles(.hidden)
                     }
@@ -204,7 +215,13 @@ public struct MainMapView: View {
     // MARK: - Friend Pin View
     
     private func friendPinView(for member: Member) -> some View {
-        let isStale = member.isStale(threshold: 60)
+        TimelineView(.periodic(from: .now, by: 5)) { context in
+            friendPinContent(for: member, now: context.date)
+        }
+    }
+
+    private func friendPinContent(for member: Member, now: Date) -> some View {
+        let isStale = now.timeIntervalSince(member.lastSeen) > 60
         let isEmergency = member.status.code.isEmergency
         
         return VStack(spacing: 4) {
@@ -250,7 +267,7 @@ public struct MainMapView: View {
                 HStack(spacing: 4) {
                     if isEmergency {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 8).bold())
+                            .font(.caption2.bold())
                             .foregroundStyle(.red)
                     }
                     Text(member.name)
@@ -260,11 +277,11 @@ public struct MainMapView: View {
                 
                 if isEmergency {
                     Text("EMERGENCY")
-                        .font(.system(size: 7).bold())
+                        .font(.caption2.bold())
                         .foregroundStyle(.red)
                 } else if isStale {
                     Text("Stale • \(relativeAge(since: member.lastSeen))")
-                        .font(.system(size: 8).bold())
+                        .font(.caption2.bold())
                         .foregroundStyle(.orange)
                 }
             }
@@ -527,10 +544,7 @@ public struct MainMapView: View {
             
             Spacer()
             
-            Toggle("", isOn: Binding(
-                get: { mapViewModel.isLiveSharingEnabled },
-                set: { _ in mapViewModel.toggleLiveSharing() }
-            ))
+            Toggle("Live Sharing", isOn: $mapViewModel.isLiveSharingEnabled)
             .labelsHidden()
             .tint(.green)
         }

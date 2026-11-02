@@ -48,7 +48,7 @@ public final class MapViewModel {
         locationService?.currentStatus ?? _localStatus
     }
     
-    /// Current magnetic compass heading in degrees (0..<360).
+    /// Current true-north compass heading in degrees (0..<360).
     public var currentHeading: CLLocationDirection? {
         locationService?.currentHeading ?? userLocation?.heading
     }

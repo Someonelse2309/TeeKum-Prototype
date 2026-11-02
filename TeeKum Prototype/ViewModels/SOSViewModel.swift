@@ -33,7 +33,7 @@ public final class SOSViewModel {
     // MARK: - Dependencies
     
     public var locationService: LocationServiceProvider?
-    public var sessionProvider: (@Sendable () -> GroupSession?)?
+    public var sessionProvider: (@MainActor @Sendable () -> GroupSession?)?
     public var cryptoService: CryptoServiceProvider?
     public var transport: PeerTransport?
     public var audioAlerter: SOSAudioAlerting?
@@ -115,7 +115,7 @@ public final class SOSViewModel {
     
     public init(
         locationService: LocationServiceProvider? = nil,
-        sessionProvider: (@Sendable () -> GroupSession?)? = nil,
+        sessionProvider: (@MainActor @Sendable () -> GroupSession?)? = nil,
         cryptoService: CryptoServiceProvider? = nil,
         transport: PeerTransport? = nil,
         audioAlerter: SOSAudioAlerting? = nil,
@@ -132,7 +132,7 @@ public final class SOSViewModel {
     /// Reconfigures dependencies.
     public func configure(
         locationService: LocationServiceProvider? = nil,
-        sessionProvider: (@Sendable () -> GroupSession?)? = nil,
+        sessionProvider: (@MainActor @Sendable () -> GroupSession?)? = nil,
         cryptoService: CryptoServiceProvider? = nil,
         transport: PeerTransport? = nil,
         audioAlerter: SOSAudioAlerting? = nil,
@@ -221,7 +221,7 @@ public final class SOSViewModel {
         startRetryTask(eventId: eventId, emergencyType: emergencyType, session: session)
     }
     
-    /// Assembles, cryptographically seals, and broadcasts a 56-byte SOS packet.
+    /// Assembles, cryptographically seals, and broadcasts a 66-byte SOS packet.
     private func broadcastSOSWirePacket(eventId: UInt32, emergencyType: SOSType, session: GroupSession) async {
         guard let cryptoService, let transport else { return }
         
@@ -276,6 +276,7 @@ public final class SOSViewModel {
             let wireData = try wirePacket.toWireData()
             
             // Broadcast packet (queued into urgent priority lane)
+            guard !Task.isCancelled, sessionProvider?() == session else { return }
             try await transport.broadcastPacket(wireData)
         } catch {
             // Radio transport errors
@@ -390,7 +391,11 @@ public final class SOSViewModel {
         inboundListeningTask = nil
     }
     
-    /// Ingests an inbound 56-byte packet through the 6-step verification and deduplication pipeline.
+    /// Ingests an inbound 66-byte packet through the 6-step verification and deduplication pipeline.
+    func restoreSeenEvents(_ events: Set<UInt32>) {
+        seenSOSEventIds = events
+    }
+
     public func processInboundPacket(_ inbound: InboundPacket) async {
         guard let session = sessionProvider?(), let cryptoService else { return }
         
@@ -437,6 +442,10 @@ public final class SOSViewModel {
     ) async {
         guard let payload = try? SOSPayload.deserialize(from: decryptedData) else { return }
         
+        // Transmission age, not GPS age, determines whether an emergency is current.
+        // A relay cannot change this encrypted timestamp to revive an expired alarm.
+        let age = dateProvider().timeIntervalSince(payload.sentAt)
+        guard age >= -300, age <= 300 else { return }
         // Sender validation: cannot alert self
         guard payload.senderInitials != session.localInitials else { return }
         
@@ -543,6 +552,7 @@ public final class SOSViewModel {
             let wireData = try wirePacket.toWireData()
             
             // Broadcast ACK via Urgent Lane
+            guard !Task.isCancelled, sessionProvider?() == session else { return }
             try await transport.broadcastPacket(wireData)
             totalEmittedAcksCount += 1
         } catch {

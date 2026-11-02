@@ -16,6 +16,8 @@ public struct FinderBeaconView: View {
     public let currentHeading: CLLocationDirection?
     public let onDismiss: () -> Void
     
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isStrobeActive: Bool = false
     @State private var strobeColorIndex: Int = 0
     @State private var strobeTask: Task<Void, Never>?
@@ -43,6 +45,8 @@ public struct FinderBeaconView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onDisappear { stopStrobe() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { stopStrobe() } }
     }
     
     // MARK: - Normal Compass Navigation View
@@ -72,6 +76,7 @@ public struct FinderBeaconView: View {
                             .font(.title2)
                             .foregroundStyle(.gray)
                     }
+                    .accessibilityLabel("Close friend finder")
                 }
                 .padding(.horizontal)
                 .padding(.top, 16)
@@ -106,8 +111,9 @@ public struct FinderBeaconView: View {
                         Spacer()
                     }
                     .frame(height: 200)
-                    .rotationEffect(.degrees(relativeAngle))
-                    .animation(.spring(response: 0.35, dampingFraction: 0.7), value: relativeAngle)
+                    .rotationEffect(.degrees(relativeAngle ?? 0))
+                    .opacity(relativeAngle == nil ? 0 : 1)
+                    .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.7), value: relativeAngle)
                     
                     // Center Distance Badge
                     VStack(spacing: 4) {
@@ -117,7 +123,7 @@ public struct FinderBeaconView: View {
                                 .foregroundStyle(dist < 8.0 ? .yellow : .white)
                             
                             if dist < 8.0 {
-                                Text("Within UWB Range (<8m)")
+                                Text("GPS estimate • Look for your friend")
                                     .font(.caption2.bold())
                                     .foregroundStyle(.yellow)
                             }
@@ -133,8 +139,10 @@ public struct FinderBeaconView: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel("Compass pointing toward \(friend.name)")
-                .accessibilityValue(distance != nil ? "\(Int(distance!)) meters away" : "Distance unknown")
+                .accessibilityValue(distance != nil ? "\(Int(distance ?? 0)) meters away" : "Distance unknown")
                 
+                if relativeAngle == nil { Text("Waiting for a valid location and compass heading").font(.caption).foregroundStyle(.orange) }
+                Text("GPS guidance only; precision UWB finding is not implemented.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 
                 // Bottom Strobe Beacon Button
@@ -219,9 +227,10 @@ public struct FinderBeaconView: View {
     private func startStrobe() {
         isStrobeActive = true
         strobeTask?.cancel()
+        guard !reduceMotion else { return }
         strobeTask = Task { @MainActor in
             while isStrobeActive && !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 200_000_000) // 5Hz blink
+                try? await Task.sleep(for: .milliseconds(500))
                 guard isStrobeActive, !Task.isCancelled else { break }
                 strobeColorIndex = (strobeColorIndex + 1) % strobeColors.count
             }
@@ -243,10 +252,10 @@ public struct FinderBeaconView: View {
         return uLoc.distance(from: fLoc)
     }
     
-    private func computeRelativeBearing() -> Double {
-        guard let userLoc = userLocation, let friendCoord = friend.coordinate else { return 0.0 }
+    private func computeRelativeBearing() -> Double? {
+        guard let userLoc = userLocation, let friendCoord = friend.coordinate,
+              let heading = currentHeading, heading >= 0 else { return nil }
         let bearingToTarget = userLoc.bearing(to: friendCoord)
-        let heading = currentHeading ?? 0.0
         let relative = bearingToTarget - heading
         return (relative + 360.0).truncatingRemainder(dividingBy: 360.0)
     }

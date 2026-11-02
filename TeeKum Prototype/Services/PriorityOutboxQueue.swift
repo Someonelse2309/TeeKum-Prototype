@@ -8,7 +8,7 @@
 import Foundation
 
 /// An item queued in the radio transmission outbox.
-public struct OutboxItem: Identifiable, Sendable {
+nonisolated public struct OutboxItem: Identifiable, Sendable {
     public let id: UUID
     public let packetData: Data
     public let packetType: PacketType
@@ -44,7 +44,7 @@ public struct OutboxItem: Identifiable, Sendable {
 /// 2. Coalesces normal periodic location pings so that newer GPS fixes immediately overwrite
 ///    older, unsent fixes, preventing radio saturation and obsolete coordinate flooding.
 /// 3. Enforces bounded capacity limits to prevent out-of-memory under network congestion.
-public final class PriorityOutboxQueue: @unchecked Sendable {
+nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Bounded capacity for the high-priority urgent lane.
     public let maxUrgentCapacity: Int
     
@@ -80,7 +80,7 @@ public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Enqueues a packet for transmission.
     ///
     /// - Parameters:
-    ///   - data: Exactly 56 bytes of binary wire data.
+    ///   - data: Exactly 66 bytes of binary wire data.
     ///   - destinationPeerId: Destination peer ID or nil for broadcast.
     /// - Returns: The created `OutboxItem`.
     /// - Throws: `TransportError.invalidPacketSize` or `TransportError.queueFull`.
@@ -150,7 +150,7 @@ public final class PriorityOutboxQueue: @unchecked Sendable {
     
     /// Re-queues an item that encountered a transient transmission failure, if retries remain.
     public func requeueForRetry(_ item: OutboxItem) -> Bool {
-        guard item.isUrgent, item.attemptCount < item.maxRetries else {
+        guard urgentLane.count < maxUrgentCapacity, item.isUrgent, item.attemptCount < item.maxRetries else {
             return false
         }
         

@@ -1,5 +1,8 @@
 # TeeKum — 54-Byte Wire Protocol & Payload Developer Guide
 
+> **Current implementation — 2026-11-02:** Read [Phase 1 review and connection/data guide](PHASE_1_REVIEW.md) before using the historical specifications below. The reviewed app uses Protocol v3 with 66-byte frames (8-byte envelope + 12-byte random nonce + 30-byte ciphertext + 16-byte tag), private per-group keys, and encrypted SwiftData recovery. Phase 2 expanded hops/stranger relaying remain deferred. All phones must use the revised build. The guide takes precedence over conflicting older implementation/background-execution claims.
+
+
 > **Audience:** iOS Developers, Protocol Engineers, and System Designers working on TeeKum.  
 > **Scope:** Byte-level wire format, field quantization algorithms, AEAD cryptographic boundaries, and worked concrete festival scenarios.  
 > **Current Version:** Protocol v2 (Active Phase 1 Implementation) with Protocol v3 Evolution Roadmap (Phase 2).  

@@ -10,6 +10,7 @@ import SwiftUI
 /// Pure MVVM View providing the prominent 3-second continuous hold emergency SOS trigger
 /// with visible circular progress ring, early release cancellation, and honest delivery feedback.
 public struct SOSButtonView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @Bindable var sosViewModel: SOSViewModel
     
     @State private var isPressing: Bool = false
@@ -29,6 +30,7 @@ public struct SOSButtonView: View {
             
             // SOS Trigger Button
             HStack(spacing: 12) {
+                HStack(spacing: 12) {
                 ZStack {
                     // Background Progress Track
                     Circle()
@@ -63,6 +65,20 @@ public struct SOSButtonView: View {
                 
                 Spacer()
                 
+                }
+                .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !isPressing && (sosViewModel.deliveryState == .idle || sosViewModel.deliveryState == .searchingPeers) {
+                            startContinuousPress()
+                        }
+                    }
+                    .onEnded { _ in
+                        cancelContinuousPress()
+                    }
+            )
+
                 if case .idle = sosViewModel.deliveryState {
                     Menu {
                         ForEach(SOSType.allCases, id: \.self) { type in
@@ -107,24 +123,15 @@ public struct SOSButtonView: View {
             .background(buttonBackgroundColor)
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .shadow(color: isPressing ? Color.red.opacity(0.5) : Color.clear, radius: 10)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if !isPressing && (sosViewModel.deliveryState == .idle || sosViewModel.deliveryState == .searchingPeers) {
-                            startContinuousPress()
-                        }
-                    }
-                    .onEnded { _ in
-                        cancelContinuousPress()
-                    }
-            )
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Emergency SOS button")
             .accessibilityValue(sosViewModel.deliveryState.title)
             .accessibilityHint("Touch and hold continuously for 3 seconds to broadcast emergency SOS. Release early to cancel.")
         }
+        .onDisappear { cancelContinuousPress() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { cancelContinuousPress() } }
     }
-    
+
     // MARK: - Banner
     
     private var deliveryStateBanner: some View {
@@ -163,7 +170,7 @@ public struct SOSButtonView: View {
         pressTask = Task { @MainActor in
             let startDate = Date()
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms tick
+                try? await Task.sleep(for: .milliseconds(50))
                 guard !Task.isCancelled, isPressing else { break }
                 
                 let elapsed = Date().timeIntervalSince(startDate)

@@ -8,7 +8,7 @@
 import Foundation
 
 /// Information regarding an active peer discovered over the radio link.
-public struct PeerInfo: Identifiable, Equatable, Sendable {
+nonisolated public struct PeerInfo: Identifiable, Equatable, Sendable {
     public let id: String
     public let displayName: String
     public let rssi: Int8?
@@ -30,8 +30,8 @@ public struct PeerInfo: Identifiable, Equatable, Sendable {
     }
 }
 
-/// An incoming 56-byte packet received from the peer-to-peer radio transport.
-public struct InboundPacket: Sendable {
+/// An incoming 66-byte packet received from the peer-to-peer radio transport.
+nonisolated public struct InboundPacket: Sendable {
     public let rawPacket: RawWirePacket
     public let sourcePeerId: String
     public let receivedRssi: Int8?
@@ -51,7 +51,7 @@ public struct InboundPacket: Sendable {
 }
 
 /// Transport-specific errors.
-public enum TransportError: Error, LocalizedError, Equatable {
+nonisolated public enum TransportError: Error, LocalizedError, Equatable {
     case notStarted
     case listenerFailed(String)
     case browserFailed(String)
@@ -75,7 +75,7 @@ public enum TransportError: Error, LocalizedError, Equatable {
         case let .sendFailed(reason):
             return "Packet transmission failed: \(reason)"
         case .invalidPacketSize:
-            return "Wire packet size must be exactly 56 bytes."
+            return "Wire packet size must be exactly 66 bytes."
         case let .peerNotFound(id):
             return "Target peer '\(id)' is not currently reachable."
         case let .queueFull(reason):
@@ -87,7 +87,7 @@ public enum TransportError: Error, LocalizedError, Equatable {
 }
 
 /// Connection lifecycle and operational states of the peer-to-peer transport.
-public enum TransportState: Equatable, Sendable {
+nonisolated public enum TransportState: Equatable, Sendable {
     case stopped
     case starting
     case discovering
@@ -111,7 +111,7 @@ public enum TransportState: Equatable, Sendable {
 }
 
 /// A timestamped diagnostic event recording transport-level operations.
-public struct DiagnosticEvent: Identifiable, Sendable {
+nonisolated public struct DiagnosticEvent: Identifiable, Sendable {
     public let id: UUID
     public let timestamp: Date
     public let message: String
@@ -178,7 +178,7 @@ nonisolated public struct TransportDiagnostics: Sendable {
 /// Authoritative contract for the low-level Apple Peer-to-Peer transport service (`Network.framework`).
 /// Must be implemented as a Swift `actor` to guarantee thread-safe radio access.
 public protocol PeerTransport: Actor {
-    /// Live asynchronous stream of inbound 56-byte binary datagrams.
+    /// Live asynchronous stream of inbound 66-byte binary datagrams.
     var inboundPackets: AsyncStream<InboundPacket> { get }
     
     /// Live asynchronous stream of active peer updates.
@@ -196,10 +196,10 @@ public protocol PeerTransport: Actor {
     /// Stops all listeners, connections, and advertising, releasing radio resources.
     func stop() async
     
-    /// Broadcasts a 56-byte datagram to all currently connected direct peers.
+    /// Broadcasts a 66-byte datagram to all currently connected direct peers.
     func broadcastPacket(_ data: Data) async throws
     
-    /// Transmits a 56-byte datagram to a specific connected peer.
+    /// Transmits a 66-byte datagram to a specific connected peer.
     func sendPacket(_ data: Data, to peerId: String) async throws
     
     /// Returns the number of direct peer connections currently established.

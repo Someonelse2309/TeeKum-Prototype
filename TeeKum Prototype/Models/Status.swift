@@ -9,7 +9,7 @@ import Foundation
 
 /// 1-byte compact coded status hash transmitted over the air.
 /// Localized display strings and icons are rendered entirely on the receiver.
-public enum StatusCode: UInt8, CaseIterable, Codable, Sendable {
+nonisolated public enum StatusCode: UInt8, CaseIterable, Codable, Sendable {
     /// Default idle state / green indicator
     case available       = 0x00
     /// Urgent emergency siren / high-priority event
@@ -106,7 +106,7 @@ public enum StatusCode: UInt8, CaseIterable, Codable, Sendable {
 }
 
 /// Represents the active user status with an optional target entity reference.
-public struct UserStatus: Equatable, Hashable, Codable, Sendable {
+nonisolated public struct UserStatus: Equatable, Hashable, Codable, Sendable {
     /// 1-byte status hash.
     public var code: StatusCode
     

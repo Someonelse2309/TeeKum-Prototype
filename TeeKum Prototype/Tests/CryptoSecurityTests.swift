@@ -75,7 +75,7 @@ public struct CryptoSecurityTests {
         
         do {
             let (ciphertext, authTag) = try await cryptoService.seal(payload: plainBytes, envelope: envelope, using: key)
-            guard ciphertext.count == 30 else {
+            guard ciphertext.count == PacketConstants.sealedPayloadSize else {
                 print("  FAIL: Ciphertext must be exactly 30 bytes, got \(ciphertext.count)")
                 return false
             }
@@ -180,7 +180,7 @@ public struct CryptoSecurityTests {
         let cryptoService = CryptoService()
         let key = cryptoService.generateSymmetricKey()
         let envelope = CleartextEnvelope(
-            version: 0x02,
+            version: PacketConstants.protocolVersion,
             type: .locationPing,
             hopLimit: 8,
             hopCount: 0,
@@ -327,30 +327,22 @@ public struct CryptoSecurityTests {
     public static func testNonceUniquenessAcrossMembers() async -> Bool {
         print("[Test 7] Nonce uniqueness and collision prevention across group members...")
         
-        // Two members in same session with same counter (counter = 1)
-        let sessionId: UInt16 = 0x9876
-        let seqMember0 = CleartextEnvelope.makeSequenceNumber(memberSlot: 0, counter: 1)
-        let seqMember1 = CleartextEnvelope.makeSequenceNumber(memberSlot: 1, counter: 1)
-        
-        let env0 = CleartextEnvelope(type: .locationPing, sessionId: sessionId, sequenceNumber: seqMember0)
-        let env1 = CleartextEnvelope(type: .locationPing, sessionId: sessionId, sequenceNumber: seqMember1)
-        
-        let nonce0 = env0.constructNonce()
-        let nonce1 = env1.constructNonce()
-        
-        guard nonce0.count == 12 && nonce1.count == 12 else {
-            print("  FAIL: Nonces must be strictly 12 bytes.")
-            return false
-        }
-        guard nonce0 != nonce1 else {
-            print("  FAIL: Nonces for different member slots must NEVER collide!")
-            return false
-        }
-        
-        print("  PASS: Nonces are guaranteed unique across group members under shared key.")
-        return true
+        let crypto = CryptoService()
+        let key = SymmetricKey(size: .bits256)
+        let envelope = CleartextEnvelope(type: .locationPing, sessionId: 123, sequenceNumber: 1)
+        let payload = Data(repeating: 7, count: PacketConstants.encryptedPayloadSize)
+        do {
+            // Identical counters can occur on restart or with colliding member slots.
+            let first = try await crypto.seal(payload: payload, envelope: envelope, using: key)
+            let restarted = try await CryptoService().seal(payload: payload, envelope: envelope, using: key)
+            guard first.ciphertext.prefix(12) != restarted.ciphertext.prefix(12) else { return false }
+            let opened = try await crypto.open(ciphertext: restarted.ciphertext, envelope: envelope, authTag: restarted.authTag, using: key)
+            guard opened == payload else { return false }
+            print("  PASS: Reusing an envelope across service restarts produces distinct random nonces and valid decryption.")
+            return true
+        } catch { print("  FAIL: Random nonce regression: \(error)"); return false }
     }
-    
+
     // MARK: - Test 8: Duplicate Packet Rejection (5-Minute LRU Filter)
     
     public static func testDuplicatePacketRejection() async -> Bool {
@@ -530,7 +522,7 @@ public struct CryptoSecurityTests {
     // MARK: - Test 13: End-to-End Wire Datagram Codec
     
     public static func testEndToEndWireDatagramCodec() async -> Bool {
-        print("[Test 13] End-to-end 54-byte wire datagram seal and open...")
+        print("[Test 13] End-to-end 66-byte wire datagram seal and open...")
         let cryptoService = CryptoService()
         let key = cryptoService.generateSymmetricKey()
         
@@ -552,14 +544,14 @@ public struct CryptoSecurityTests {
         let plainBytes = sosPayload.serialize()
         
         do {
-            // Seal to exact 54 wire bytes
+            // Seal to exact 66 wire bytes
             let wireData = try await cryptoService.sealToWireBytes(payload: plainBytes, envelope: envelope, using: key)
-            guard wireData.count == 54 else {
-                print("  FAIL: Wire data must be exactly 54 bytes, got \(wireData.count)")
+            guard wireData.count == 66 else {
+                print("  FAIL: Wire data must be exactly 66 bytes, got \(wireData.count)")
                 return false
             }
             
-            // Open 54 wire bytes
+            // Open 66 wire bytes
             let (unpackedEnvelope, decryptedPayload) = try await cryptoService.openWireBytes(wireData, using: key)
             guard unpackedEnvelope == envelope else {
                 print("  FAIL: Unpacked envelope mismatch.")
@@ -578,7 +570,7 @@ public struct CryptoSecurityTests {
                 return false
             }
             
-            print("  PASS: End-to-end 54-byte datagram sealed, parsed, and verified.")
+            print("  PASS: End-to-end 66-byte datagram sealed, parsed, and verified.")
             return true
         } catch {
             print("  FAIL: End-to-end wire error: \(error)")
