@@ -5,6 +5,111 @@
 
 ---
 
+### [2026-11-03 16:30] — Architectural Decision (ADR) / /grill-me Alignment: Phase 3 Festival Group Mesh Chat & Radix-40 Wire Protocol (Decision D17)
+- **Contributor / Role:** Senior App Development Consultant & Technical Product Advisor
+- **Status:** Scoped, Aligned & Formally Documented via `/grill-me` (Ready for Phase 3 Execution)
+- **Target Phase / Milestone:** Phase 3 — Venue Intelligence & Polish (Decision D17)
+
+#### 1. Context & Objective
+- Project owner proposed introducing an offline group chat function in Phase 3 utilizing a dedicated packet type and maximizing the 30-byte encrypted payload with radix-based compression similar to `InitialsCodec`.
+- Conducted an in-depth `/grill-me` interview resolving all 6 architectural dependencies across audience scope, encoding mathematics, payload packing, per-person delivery confirmation, UI integration, and input assistance.
+
+#### 2. Decisions Reached & System Architecture
+1. **Audience & Addressing Model (Group Broadcast Channel):**
+   - Every chat message is shared with all group members across the multi-hop mesh in a single communal venue feed.
+   - Eliminates per-message recipient addressing, saving 2+ bytes in the encrypted payload for text content.
+2. **Text Encoding & Alphabet (Radix-40 Codec):**
+   - Natural mathematical extension of `InitialsCodec` ($40^3 = 64,000 \le 65,535 < 2^{16}$).
+   - Encodes 3 characters into exactly 2 big-endian bytes (`UInt16`).
+   - Supports 40 symbols: `0` = space/empty, `1..26` = uppercase `A..Z`, `27..36` = digits `0..9`, `37` = `.`, `38` = `!`, `39` = `?`.
+   - Formula: $\text{chunkValue} = (c_1 \times 1600) + (c_2 \times 40) + c_3$.
+3. **Payload Structure (100% Utilized 30-Byte Encrypted Segment):**
+   - Bytes 0..1: `senderInitials: UInt16` (2 bytes Base-27 via `InitialsCodec`).
+   - Bytes 2..5: `timestamp: UInt32` (4 bytes big-endian Unix epoch seconds for offline delay awareness).
+   - Bytes 6..29: `textData: [UInt8]` (24 bytes = 12 big-endian `UInt16` chunks = exactly 36 characters).
+   - Exactly 30 bytes (0 bytes wasted/padding). Fits seamlessly into the standard 56-byte multi-hop datagram.
+4. **Queue Prioritization & Individual Per-Person Delivery Acknowledgement:**
+   - Dedicated FIFO outbox lane ahead of stranger relays, 2 retries, 3.0-second user cooldown rate limit.
+   - Individual ACK tracking: receiving group peers reply with `ACKPayload` (`0x06`). The sender aggregates unique responder initials, presenting an honest dynamic tally in the UI: *"Delivered M/X"* (e.g., 5 of 8 friends confirmed receipt).
+5. **UI & UX Placement (Bottom Sheet Overlay on Map):**
+   - Docked floating chat bubble on `MainMapView` with unread badge count that slides up into a compact message feed (`ChatSheetView`), keeping map glanceability intact.
+6. **Input Speed Assistance:**
+   - Quick-tap festival preset chips above keyboard ("Beer line", "At Main Stage", "Restroom", "Where are you?") allowing 1-tap dispatch in crowded environments.
+7. **Security, Privacy & Invariants:**
+   - Strictly ephemeral in-memory storage (purged on session exit or group leave; zero disk writes).
+   - Automatically suspended during Festival Survival Mode (<20% battery).
+
+#### 3. Changes Made & Files Touched
+- [`docs/TechnicalRequirements.md`](TechnicalRequirements.md): Added approved decision **D17** to Section 1 and authored comprehensive Phase 3 specifications in Section 4.
+- [`docs/agent.md`](agent.md): Updated Section 12 Phase 3 checklist detailing `PacketType.chatMessage = 0x07`, Radix-40 encoding, 30-byte payload layout, per-person ACKs, and UI bottom sheet.
+
+### [2026-11-03 14:05] — Member Color Coding Wire Integration (1-Byte Enum, 8-Color Neon Palette, Fallback & UI)
+- **Contributor / Agent:** Lead iOS & Systems Engineer
+- **Status:** Completed & Verified (Build Succeeded, All 14 Test Suites Aligned, 169/169 Tests Passing)
+- **Target Phase / Milestone:** Protocol v3 Wire Payload Enhancement & Personal Member Identity
+
+#### 1. Objective & Scope
+- Implement personal member color-coding per agreed specification via `/grill-me`:
+  - 1-byte wire code (`colorCode: UInt8`) positioned at Byte 22 of the 30-byte encrypted payload (leaving 7 bytes reserved for Phase 3 sensor absorption).
+  - Dual-payload support: included in both `LocationPingPayload` (Type 0x01) and `SOSPayload` (Type 0x02) so personal color is retained during emergency SOS alerts.
+  - Curated 8-color neon festival palette: Neon Pink (`#FF2E73`), Electric Purple (`#AF52DE`), Sky Blue (`#00D2FF`), Lime Mint (`#30D158`), Bright Teal (`#00F5D4`), Neon Amber (`#FFD60A`), Coral Peach (`#FF6482`), Lavender (`#D0BCFF`). Pure Red is strictly reserved for Emergency SOS.
+  - Backward-compatibility fallback: `0x00` represents `.unset`, triggering deterministic `djb2` initials hashing mod 8 so zero-padded legacy packets resolve to consistent, vibrant member colors automatically.
+  - End-to-end UI integration: onboarding color bar in `GroupPairingView`, mid-session `ColorPickerSheet`, dynamic tinting in `MainMapView` pins, `RadarBlipView` blips and 60m perimeter clamping arrows, `RadarFriendCard`, and `FriendDetailView`.
+
+#### 2. Changes Made & Files Touched
+- `TeeKum Prototype/Models/MemberColor.swift`:
+  - Created `MemberColor: UInt8, CaseIterable, Identifiable, Sendable` with 8 neon colors + `.unset` (0x00).
+  - Implemented `resolve(code:initials:)` and `deterministicColor(for:)` initials hash algorithm.
+- `TeeKum Prototype/Models/Member.swift`:
+  - Added `public var color: MemberColor` property with fallback to `deterministicColor(for: cleanId)` in default initializer.
+- `TeeKum Prototype/Models/GroupSession.swift`:
+  - Added `public var localColorCode: UInt8` to `GroupSession` model and initializer for persistence.
+- `TeeKum Prototype/Models/Packet.swift`:
+  - Updated `LocationPingPayload` and `SOSPayload` with `colorCode: UInt8 = 0`.
+  - Serialized at Byte 22 with 7 bytes reserved zero-padding (`Data(repeating: 0, count: 7)`).
+  - Deserialized Byte 22 with graceful fallback to `0` if buffer truncated.
+- `TeeKum Prototype/ViewModels/GroupSessionViewModel.swift`:
+  - Added `localColor: MemberColor`, persisted via `UserDefaults` key `com.teekum.localUserColorCode`.
+  - Added `setLocalColor(_:)` updating active session and local storage.
+- `TeeKum Prototype/Services/LocationPublisher.swift`:
+  - Passed `session.localColorCode` into `LocationPingPayload` and `SOSPayload`.
+- `TeeKum Prototype/ViewModels/SOSViewModel.swift` & `SOSForwardingEngine.swift`:
+  - Passed `session.localColorCode` into `SOSPayload` dispatch.
+- `TeeKum Prototype/App/TeeKumApp.swift`:
+  - Ingested incoming ping/SOS packets and resolved `memberColor` via `MemberColor.resolve(code:initials:)`.
+- `TeeKum Prototype/Views/Components/ColorPickerView.swift`:
+  - Created reusable `ColorPickerPaletteView` (horizontal neon circles with checkmark) and `ColorPickerSheet` (mid-session preview and editor).
+- `TeeKum Prototype/Views/GroupPairingView.swift`:
+  - Embedded `ColorPickerPaletteView` directly into `initialsCard`.
+- `TeeKum Prototype/Views/MainMapView.swift`:
+  - Styled friend pins with `member.color.swiftUIColor`, preserving pulsating red siren ring for SOS and 50% dimmed opacity for stale.
+  - Added personal color button to `floatingMapTools` palette and presented `ColorPickerSheet`.
+- `TeeKum Prototype/Views/Components/Radar/RadarBlipView.swift` & `RadarFriendCard.swift`:
+  - Rendered member color across radar blips, 60m perimeter clamping arrows, and card avatars.
+- `TeeKum Prototype/Views/FriendDetailView.swift`:
+  - Styled header avatar circle and initials tag with `member.color.swiftUIColor`.
+- `TeeKum Prototype/Tests/PacketCodecTests.swift`:
+  - Added Test 14 (`testMemberColorPayloadRoundtripAndInitialsHashFallback`) verifying roundtrips, Byte 22 position, legacy 0x00 fallback, deterministic hashing, and palette counts.
+- `docs/agent.md` & `docs/Phase 2/PAYLOAD_GUIDE.md`:
+  - Documented Byte 22 `colorCode` in wire specifications and updated test counts to 14 suites, 169 passing tests.
+
+#### 3. Key Decisions & Rationale
+- **Preserved 56-Byte Wire Size:** Absorbed Byte 22 from the reserved 8-byte section, leaving 7 bytes reserved and guaranteeing 100% protocol wire invariant without MTU disruption.
+- **Excluded Pure Red from Palette:** Reserved red exclusively for Emergency SOS sirens to avoid user confusion outdoors.
+- **Deterministic Hash Fallback for 0x00:** Eliminates color collision on zero-padded legacy packets or unconfigured users, providing a colorful and consistent map experience out-of-the-box.
+
+#### 4. Verification & Testing Performed
+- **Clean Compilation:** Built scheme `TeeKum Prototype` on iOS Simulator (`generic/platform=iOS Simulator`) -> **BUILD SUCCEEDED** (0 errors).
+- **Automated Simulator Run:** Executed full automated suite via `xcrun simctl launch --console-pty booted com.academy.teekum.TeeKum-Prototype -runAllTests`:
+  - `PacketCodecTests`: 14/14 PASSED (including new Test 14).
+  - All other 13 test suites: 100% PASSED.
+  - **Total: 14 test suites, 169 tests executed, 0 failures (100% pass rate).**
+
+#### 5. Open Items & Next Steps
+- Ready for Phase 3 Venue Intelligence & differential altimetry integration.
+
+---
+
 ### [2026-11-03 13:15] — Comprehensive Documentation Realignment to Current Codebase Condition
 - **Contributor / Agent:** Lead System Architect & Documentation PIC
 - **Status:** Completed & Verified (Build Succeeded, All 14 Test Suites Aligned)

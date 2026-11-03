@@ -17,7 +17,7 @@
 > - [56-Byte Wire Protocol & Payload Developer Guide (docs/Phase 2/PAYLOAD_GUIDE.md)](Phase%202/PAYLOAD_GUIDE.md)
 > - [Development Log (docs/DEVELOPMENT_LOG.md)](docs/DEVELOPMENT_LOG.md)
 > 
-> *Last Verified via /grill-me:* 2026-11-03 (Phase 2 Multi-Hop Mesh Architecture, 56-Byte Wire Protocol, 24-Bit Session ID, 7-Byte Deduplication Key, Hybrid AODV & Flooding, TXT relay: 1/0 Peering, Dual-Lane Rate Limiting, 5-State Delivery UX, 3-Mode Relay Policy, Tactical Radar Multi-Peer Forward-Up Polar Projection, Dynamic Adaptive Accuracy Engine, Stale Peer Accelerated Cadence & Response Burst, Mesh Debugger & Virtual Mesh Lab, 14 Test Suites / 168 Tests Confirmed)
+> *Last Verified via /grill-me:* 2026-11-03 (Phase 2 Multi-Hop Mesh Architecture, 56-Byte Wire Protocol, 24-Bit Session ID, 7-Byte Deduplication Key, Hybrid AODV & Flooding, TXT relay: 1/0 Peering, Dual-Lane Rate Limiting, 5-State Delivery UX, 3-Mode Relay Policy, Tactical Radar Multi-Peer Forward-Up Polar Projection, Dynamic Adaptive Accuracy Engine, Stale Peer Accelerated Cadence & Response Burst, Mesh Debugger & Virtual Mesh Lab, Member Color Coding Wire Integration, 14 Test Suites / 169 Tests Confirmed)
 
 ---
 
@@ -250,7 +250,7 @@ tiny binary size, zero supply-chain risk, and instant build times.
 -   **Observability & Diagnostics:**
     -   Built-in On-Device Diagnostics Sheet (Debug HUD) showing live RSSI (dBm), connected peers, GPS accuracy, and packet delivery logs.
     -   Integrated On-Device Mesh Debugger & Diagnostic Lab (`MeshDebuggerView`) with 1-tap automated triage, live 56-byte packet inspector, synthetic/fault packet injector, and virtual multi-node topology sandbox.
--   **Testing:** Automated multi-layer test suite (14 suites, 168 passing tests) + Physical Device Testing on real iPhones in wireless environments.
+-   **Testing:** Automated multi-layer test suite (14 suites, 169 passing tests) + Physical Device Testing on real iPhones in wireless environments.
 
 ---
 
@@ -327,95 +327,128 @@ flowchart TD
 ### Folder Structure
 
 ```text
-TeeKum Prototype/
-├── App/
-│   └── TeeKumApp.swift                   // Entry point, root state switcher, supervisor loop & deep-link router
-├── Models/
-│   ├── GroupSession.swift                // Ephemeral session model, QR / URL fragment link encoder
-│   ├── InitialsCodec.swift               // 2-byte Base-27 initials compressor (1..3 chars A-Z, 18,278 keys)
-│   ├── LocationPin.swift                 // CoreLocation Coordinate (Double), accuracy, ~11cm Int32 quantization
-│   ├── MeetingPoint.swift                // Single active rendezvous point model & PremadeMeetingLocation options
-│   ├── Member.swift                      // Member identity, initials, lastSeen, status, battery, heading, stale helpers
-│   ├── Packet.swift                      // 56-byte binary wire packet (Protocol v3), envelope, payloads, codecs
-│   ├── SessionActivityAttributes.swift   // ActivityKit Live Activity attributes for Lock Screen & Dynamic Island
-│   ├── SOSDeliveryState.swift            // Honest UX delivery state machine
-│   └── Status.swift                      // 1-byte compact festival activity status hash enum & target references
-├── Views/
-│   ├── MainMapView.swift                 // MapKit view, friend pins, long-press rendezvous drop, Live Sharing toggle
-│   ├── GroupPairingView.swift            // QR barcode display/scanner, URL share, clipboard paste, mesh compact gate
-│   ├── StatusPickerView.swift            // One-handed horizontal status chips carousel
-│   ├── SOSButtonView.swift               // 3-second hold emergency button & visual circular progress ring
-│   ├── FinderBeaconView.swift            // Tactical Radar container, HUD banner, strobe torch & UWB transition
-│   ├── MeetingPointsView.swift           // Meeting point proposal sheet, attendance cards, dropdown menu
-│   ├── FriendDetailView.swift            // Friend inspection sheet (battery, distance, bearing, track in radar)
-│   ├── DiagnosticsView.swift             // On-device Debug HUD sheet (live RSSI dBm, peer count, packet counters)
-│   ├── MeshDebuggerView.swift            // Diagnostic lab, 1-tap triage, 56B packet inspector, injector & sandbox
-│   └── Components/
-│       ├── QRCodeView.swift              // CoreImage CIFilter QR generator with ShareLink template
-│       ├── QRScannerView.swift           // AVFoundation camera scanner with viewport overlay
-│       ├── SetMeetingPointSheet.swift    // Compact bottom sheet with curated location dropdown menu
-│       ├── MeshAgreementView.swift       // Communal Mesh Compact agreement consent modal
-│       ├── RelaySettingsSheet.swift      // Communal mesh relay mode picker (Always, Timed 30m, Disabled)
-│       └── Radar/
-│           ├── RadarView.swift           // Forward-up polar projection, clamping at 60m, dual selection
-│           ├── RadarGridBackground.swift // Radial gradient background, concentric rings (15m, 30m, 60m), ticks
-│           ├── RadarBlipView.swift       // Friend avatar blip, activity status emoji, SOS pulse, clamped edge arrow
-│           ├── RadarFriendCard.swift     // Bottom carousel card with clock direction ("Ahead", "2 o'clock")
-│           ├── RadarCenterMarker.swift   // User position indicator aligned with forward device heading
-│           └── RadarTheme.swift          // AMOLED dark palette, radial scaling constants, polar-to-Cartesian math
-├── ViewModels/
-│   ├── GroupSessionViewModel.swift       // Group session lifecycle, QR/Link pairing, pendingInvite agreement
-│   ├── MapViewModel.swift                // Map viewport state, friend pins, offline filtering, Live Sharing, radar
-│   ├── MeetingPointViewModel.swift       // Single active meeting point state & attendance sync
-│   ├── MeshDebuggerViewModel.swift       // Triage engine, live packet logging, injection, virtual mesh simulation
-│   └── SOSViewModel.swift                // 3-second hold countdown & honest delivery status
-├── Services/
-│   ├── PeerTransport.swift               // Authoritative actor protocol, state streams & diagnostics
-│   ├── PeerTransportService.swift        // Network.framework P2P datagram actor (AWDL Bonjour _teekum._tcp)
-│   ├── MeshProtocols.swift               // Phase 2 multi-hop mesh protocol interfaces, MeshClock & PacketKey
-│   ├── StreamMessageFramer.swift         // 56-byte binary stream delimiter, chunk reconstruction, resynchronization
-│   ├── PriorityOutboxQueue.swift         // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting) + coalesced Location
-│   ├── CryptoServiceProtocol.swift       // Cryptographic service interface
-│   ├── CryptoService.swift               // ChaChaPoly AEAD, AAD envelope binding & Keychain store (actor)
-│   ├── SessionStorageProtocol.swift      // Ephemeral SQLite crash recovery storage interface
-│   ├── LocationServiceProtocol.swift     // Location service contract & dynamic accuracy interface
-│   ├── LocationService.swift             // CoreLocation wrapper, CoreMotion adaptive cadence & dynamic accuracy
-│   ├── LocationPublisher.swift           // Periodic publishing scheduler & SOS immediate preemption
-│   ├── SOSAudioAlert.swift               // Emergency siren & haptic notification generator
-│   ├── NeighborTable.swift               // Phase 2 neighbor table actor, link RSSI tracking & eviction
-│   ├── RoutingTable.swift                // Phase 2 AODV routing table actor, forward/reverse path caching
-│   ├── PacketForwarder.swift             // Phase 2 blind zero-knowledge relay actor (8-hop ceiling, AAD invariant)
-│   ├── RouteDiscoveryService.swift       // Phase 2 on-demand AODV discovery engine (RREQ/RREP, target reached)
-│   ├── RelayPolicyManager.swift          // Phase 2 relay policy manager (Always Active, Timed 30m, Disabled, 20% cutoff)
-│   ├── ForwardingRateLimiter.swift       // Dual-lane token bucket rate limiter (2 pkts/s ordinary, 4 pkts/s SOS)
-│   ├── SeenPacketCache.swift             // 7-byte composite key LRU deduplication cache (1,024 entries, 5m TTL)
-│   ├── SOSForwardingEngine.swift         // Phase 2 multi-hop SOS immediate preemption & reverse-route ACK routing
-│   ├── MeshTopologySimulator.swift       // In-memory virtual mesh simulator (linear & star topologies, fault injection)
-│   ├── SimulatedMeshTransport.swift      // Virtual mock transport for deterministic testing & sandbox
-│   ├── LiveActivityManager.swift         // ActivityKit Live Activity presenter & Lock Screen relay intent handler
-│   ├── MeshTimingConfiguration.swift     // Centralized timing configuration for cadence, AODV & stale recovery
-│   └── MeshDiagnostics.swift            // Phase 2 diagnostic metrics, counters & telemetry aggregation
-├── docs/
-│   ├── TechnicalRequirements.md          // Technical system requirements specification
-│   ├── agent.md                          // Master agent instructions and product principles
-│   ├── DEVELOPMENT_LOG.md                // Chronological development log, agent changes & verification records
-│   ├── Phase 1/                          // Historical Phase 1 specifications, networking report & test checklists
-│   └── Phase 2/                          // Phase 2 specifications (Architecture, Protocols, Acceptance Report, Tests)
-└── Tests/
-    ├── PacketCodecTests.swift            // 13 automated tests: 56-byte codec, InitialsCodec, Int32 quantization
-    ├── CryptoSecurityTests.swift         // 13 automated tests: ChaChaPoly, AAD tamper, replays, Keychain
-    ├── PeerTransportTests.swift          // 14 automated tests: 56B framer chunks, outbox priority, tie-breaking
-    ├── LocationPublishingTests.swift     // 14 automated tests: Live Sharing, cadence, dynamic adaptive accuracy
-    ├── SOSEndToEndTests.swift            // 11 automated tests: 3s hold, preemption, ACKs, duplicate sirens
-    ├── MultiHopSOSTests.swift            // 11 automated tests: Multi-hop flooding, hopCount increment, reverse ACK
-    ├── UIStateTests.swift                // 13 automated tests: pairing, freshness, dropdown, tactical radar projection
-    ├── RoutingForwardingTests.swift      // 12 automated tests: blind relay, 8-hop limit, rate limiting, deduplication
-    ├── RouteDiscoveryTests.swift         // 14 automated tests: AODV RREQ/RREP, stale peer two-tier discovery, burst
-    ├── NeighborDiscoveryTests.swift      // 13 automated tests: Bonjour _teekum._tcp peering, TXT relay flag, RSSI
-    ├── RelayPolicyTests.swift            // 12 automated tests: 3 modes, hard 20% cutoff, survival mode, Live Activity
-    ├── LiveActivityTests.swift           // 6 automated tests: ActivityKit lifecycle, dynamic island, lock screen toggle
-    ├── MeshFailureIntegrationTests.swift // 12 automated tests: link breakage, partitions, loops, corruption resync
-    └── MeshDebuggerTests.swift           // 10 automated tests: 1-tap triage, 56B packet inspector, injection, sandbox
+TeeKum Prototype/ (Root Repository)
+├── TeeKum Prototype/                    // Primary iOS App Target
+│   ├── App/
+│   │   └── TeeKumApp.swift              // Entry point, root state switcher, supervisor loop & deep-link router
+│   ├── Models/
+│   │   ├── GroupSession.swift           // Ephemeral session model, QR / URL fragment link encoder
+│   │   ├── InitialsCodec.swift          // 2-byte Base-27 initials compressor (1..3 chars A-Z, 18,278 keys)
+│   │   ├── LocationPin.swift            // CoreLocation Coordinate (Double), accuracy, ~11cm Int32 quantization
+│   │   ├── MeetingPoint.swift           // Single active rendezvous point model & PremadeMeetingLocation options
+│   │   ├── Member.swift                 // Member identity, initials, lastSeen, status, battery, heading, stale helpers
+│   │   ├── MemberColor.swift            // 1-byte personal color enum, 8 neon colors, deterministic hash fallback
+│   │   ├── Packet.swift                 // 56-byte binary wire packet (Protocol v3), envelope, payloads, codecs
+│   │   ├── SessionActivityAttributes.swift // ActivityKit Live Activity attributes for Lock Screen & Dynamic Island
+│   │   ├── SOSDeliveryState.swift       // Honest UX delivery state machine
+│   │   └── Status.swift                 // 1-byte compact festival activity status hash enum & target references
+│   ├── Views/
+│   │   ├── MainMapView.swift            // MapKit view, friend pins, long-press rendezvous drop, Live Sharing toggle
+│   │   ├── GroupPairingView.swift       // QR barcode display/scanner, URL share, clipboard paste, mesh compact gate
+│   │   ├── StatusPickerView.swift       // One-handed horizontal status chips carousel
+│   │   ├── SOSButtonView.swift          // 3-second hold emergency button & visual circular progress ring
+│   │   ├── FinderBeaconView.swift       // Tactical Radar container, HUD banner, strobe torch & UWB transition
+│   │   ├── MeetingPointsView.swift      // Meeting point proposal sheet, attendance cards, dropdown menu
+│   │   ├── FriendDetailView.swift       // Friend inspection sheet (battery, distance, bearing, track in radar)
+│   │   ├── DiagnosticsView.swift        // On-device Debug HUD sheet (live RSSI dBm, peer count, packet counters)
+│   │   ├── MeshDebuggerView.swift       // Diagnostic lab, 1-tap triage, 56B packet inspector, injector & sandbox
+│   │   └── Components/
+│   │       ├── QRCodeView.swift         // CoreImage CIFilter QR generator with ShareLink template
+│   │       ├── QRScannerView.swift      // AVFoundation camera scanner with viewport overlay
+│   │       ├── ColorPickerView.swift    // Reusable 8-color neon palette bar & personal color picker sheet
+│   │       ├── SetMeetingPointSheet.swift // Compact bottom sheet with curated location dropdown menu
+│   │       ├── MeshAgreementView.swift  // Communal Mesh Compact agreement consent modal
+│   │       ├── RelaySettingsSheet.swift // Communal mesh relay mode picker (Always, Timed 30m, Disabled)
+│   │       └── Radar/
+│   │           ├── RadarView.swift      // Forward-up polar projection, clamping at 60m, dual selection
+│   │           ├── RadarGridBackground.swift // Radial gradient background, concentric rings (15m, 30m, 60m), ticks
+│   │           ├── RadarBlipView.swift  // Friend avatar blip, activity status emoji, SOS pulse, clamped edge arrow
+│   │           ├── RadarFriendCard.swift // Bottom carousel card with clock direction ("Ahead", "2 o'clock")
+│   │           ├── RadarCenterMarker.swift // User position indicator aligned with forward device heading
+│   │           └── RadarTheme.swift     // AMOLED dark palette, radial scaling constants, polar-to-Cartesian math
+│   ├── ViewModels/
+│   │   ├── GroupSessionViewModel.swift  // Group session lifecycle, QR/Link pairing, pendingInvite agreement
+│   │   ├── MapViewModel.swift           // Map viewport state, friend pins, offline filtering, Live Sharing, radar
+│   │   ├── MeetingPointViewModel.swift  // Single active meeting point state & attendance sync
+│   │   ├── MeshDebuggerViewModel.swift  // Triage engine, live packet logging, injection, virtual mesh simulation
+│   │   └── SOSViewModel.swift           // 3-second hold countdown & honest delivery status
+│   ├── Services/
+│   │   ├── PeerTransport.swift          // Authoritative actor protocol, state streams & diagnostics
+│   │   ├── PeerTransportService.swift   // Network.framework P2P datagram actor (AWDL Bonjour _teekum._tcp)
+│   │   ├── MeshProtocols.swift          // Phase 2 multi-hop mesh protocol interfaces, MeshClock & PacketKey
+│   │   ├── StreamMessageFramer.swift    // 56-byte binary stream delimiter, chunk reconstruction, resynchronization
+│   │   ├── PriorityOutboxQueue.swift    // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting) + coalesced Location
+│   │   ├── CryptoServiceProtocol.swift  // Cryptographic service interface
+│   │   ├── CryptoService.swift          // ChaChaPoly AEAD, AAD envelope binding & Keychain store (actor)
+│   │   ├── SessionStorageProtocol.swift // Ephemeral SQLite crash recovery storage interface
+│   │   ├── LocationServiceProtocol.swift // Location service contract & dynamic accuracy interface
+│   │   ├── LocationService.swift        // CoreLocation wrapper, CoreMotion adaptive cadence & dynamic accuracy
+│   │   ├── LocationPublisher.swift      // Periodic publishing scheduler & SOS immediate preemption
+│   │   ├── SOSAudioAlert.swift          // Emergency siren & haptic notification generator
+│   │   ├── NeighborTable.swift          // Phase 2 neighbor table actor, link RSSI tracking & eviction
+│   │   ├── RoutingTable.swift           // Phase 2 AODV routing table actor, forward/reverse path caching
+│   │   ├── PacketForwarder.swift        // Phase 2 blind zero-knowledge relay actor (8-hop ceiling, AAD invariant)
+│   │   ├── RouteDiscoveryService.swift  // Phase 2 on-demand AODV discovery engine (RREQ/RREP, target reached)
+│   │   ├── RelayPolicyManager.swift     // Phase 2 relay policy manager (Always Active, Timed 30m, Disabled, 20% cutoff)
+│   │   ├── ForwardingRateLimiter.swift  // Dual-lane token bucket rate limiter (2 pkts/s ordinary, 4 pkts/s SOS)
+│   │   ├── SeenPacketCache.swift        // 7-byte composite key LRU deduplication cache (1,024 entries, 5m TTL)
+│   │   ├── SOSForwardingEngine.swift    // Phase 2 multi-hop SOS immediate preemption & reverse-route ACK routing
+│   │   ├── MeshTopologySimulator.swift  // In-memory virtual mesh simulator (linear & star topologies, fault injection)
+│   │   ├── SimulatedMeshTransport.swift // Virtual mock transport for deterministic testing & sandbox
+│   │   ├── LiveActivityManager.swift    // ActivityKit Live Activity presenter & Lock Screen relay intent handler
+│   │   ├── MeshTimingConfiguration.swift // Centralized timing configuration for cadence, AODV & stale recovery
+│   │   └── MeshDiagnostics.swift       // Phase 2 diagnostic metrics, counters & telemetry aggregation
+│   ├── Tests/
+│   │   ├── PacketCodecTests.swift       // 14 automated tests: 56-byte codec, MemberColor, InitialsCodec, Int32 quantization
+│   │   ├── CryptoSecurityTests.swift    // 13 automated tests: ChaChaPoly, AAD tamper, replays, Keychain
+│   │   ├── PeerTransportTests.swift     // 14 automated tests: 56B framer chunks, outbox priority, tie-breaking
+│   │   ├── LocationPublishingTests.swift // 14 automated tests: Live Sharing, cadence, dynamic adaptive accuracy
+│   │   ├── SOSEndToEndTests.swift       // 11 automated tests: 3s hold, preemption, ACKs, duplicate sirens
+│   │   ├── MultiHopSOSTests.swift       // 11 automated tests: Multi-hop flooding, hopCount increment, reverse ACK
+│   │   ├── UIStateTests.swift           // 13 automated tests: pairing, freshness, dropdown, tactical radar projection
+│   │   ├── RoutingForwardingTests.swift // 12 automated tests: blind relay, 8-hop limit, rate limiting, deduplication
+│   │   ├── RouteDiscoveryTests.swift    // 14 automated tests: AODV RREQ/RREP, stale peer two-tier discovery, burst
+│   │   ├── NeighborDiscoveryTests.swift // 13 automated tests: Bonjour _teekum._tcp peering, TXT relay flag, RSSI
+│   │   ├── RelayPolicyTests.swift       // 12 automated tests: 3 modes, hard 20% cutoff, survival mode, Live Activity
+│   │   ├── LiveActivityTests.swift      // 6 automated tests: ActivityKit lifecycle, dynamic island, lock screen toggle
+│   │   ├── MeshFailureIntegrationTests.swift // 12 automated tests: link breakage, partitions, loops, corruption resync
+│   │   └── MeshDebuggerTests.swift      // 10 automated tests: 1-tap triage, 56B packet inspector, injection, sandbox
+│   └── Assets.xcassets                  // App icons, accent colors & visual assets
+├── TeeKumWidgets/                       // ActivityKit Widget Extension Target
+│   ├── SessionActivityAttributes.swift  // Shared ActivityKit attributes contract
+│   ├── SessionActivityWidget.swift      // Lock Screen & Dynamic Island widget configuration
+│   ├── SessionLiveActivityView.swift    // Dynamic Island leading/trailing/expanded views
+│   └── TeeKumWidgetBundle.swift         // Widget bundle entry point
+├── Config/                              // Build & Security Configuration
+│   ├── Info.plist                       // Main target permissions (AWDL, Location, Bonjour)
+│   └── Widgets-Info.plist               // Widget extension configuration
+├── docs/                                // Comprehensive System Documentation
+│   ├── TechnicalRequirements.md         // Technical system requirements specification
+│   ├── agent.md                         // Master agent instructions and product principles
+│   ├── DEVELOPMENT_LOG.md               // Chronological development log, agent changes & verification records
+│   ├── Phase 1/                         // Historical Phase 1 specifications, networking report & test checklists
+│   │   ├── NETWORKING.md
+│   │   ├── P2P_TRANSPORT_REPORT.md
+│   │   ├── PAYLOAD_GUIDE.md
+│   │   ├── PHASE_1_DEVELOPMENT_REPORT.md
+│   │   ├── PHYSICAL_DEVICE_SOS_VALIDATION.md
+│   │   ├── PHYSICAL_DEVICE_TEST_CHECKLIST.md
+│   │   ├── POC_ACCEPTANCE_REPORT.md
+│   │   └── POC_IMPLEMENTATION_PLAN.md
+│   └── Phase 2/                         // Phase 2 specifications (Architecture, Protocols, Acceptance Report, Tests)
+│       ├── BATTERY_AND_BACKGROUND_POLICY.md
+│       ├── PAYLOAD_GUIDE.md
+│       ├── PHASE2_ACCEPTANCE_REPORT.md
+│       ├── PHASE2_ARCHITECTURE.md
+│       ├── PHASE2_PROTOCOL_DECISIONS.md
+│       ├── PHASE2_SECURITY_SPECIFICATION.md
+│       ├── PHASE2_TEST_PLAN.md
+│       ├── PHASE2_TEST_RESULTS.md
+│       ├── PHYSICAL_DEVICE_MESH_TRANSPORT_TEST.md
+│       ├── PHYSICAL_DEVICE_SOS_MULTIHOP_TEST.md
+│       ├── PROTOCOL_SPECIFICATION.md
+│       └── ROUTING_DESIGN_AND_LIMITATIONS.md
+└── Screenshot/                          // Visual UI verification captures & UX references
 ```
 
 ### Architectural Rules
@@ -616,7 +649,8 @@ Every packet is strictly **56 bytes** total. Below are the exact byte layouts fo
 | **28..29** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of transmitting member. |
 | **30** | `batteryLevel` | `UInt8` | `Float` | Sender battery percentage (`0` to `100`%). |
 | **31** | `heading` | `UInt8` | `CLLocationDirection` (`Double`) | Compass heading (`0–255` representing 0–360°, `degrees * 255 / 360`). |
-| **32..39** | `reserved` | `8 Bytes` | `Data` | Reserved for future expansion (padded with `0x0000000000000000`). |
+| **32** | `colorCode` | `UInt8` | `MemberColor` (`enum: UInt8`) | 1-byte personal neon color code (`0x00` unset/hash, `0x01`..`0x08` palette). |
+| **33..39** | `reserved` | `7 Bytes` | `Data` | Reserved for future expansion (padded with `0x00000000000000`). |
 | **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM MAC tag sealing payload + envelope AAD. |
 
 #### Type 2: `0x02` — `SOS` (Urgent Emergency Alert)
@@ -638,7 +672,8 @@ Every packet is strictly **56 bytes** total. Below are the exact byte layouts fo
 | **28..29** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of member in distress. |
 | **30** | `emergencyType` | `UInt8` | `SOSType` (`enum: UInt8`) | `0x01` Medical, `0x02` Lost/Separated, `0x03` Harassment/Security, `0x00` General. |
 | **31** | `batteryLevel` | `UInt8` | `Float` | Current battery % of sender's phone (`0` to `100`%). |
-| **32..39** | `reserved` | `8 Bytes` | `Data` | Reserved padding (`0x0000000000000000`). |
+| **32** | `colorCode` | `UInt8` | `MemberColor` (`enum: UInt8`) | 1-byte personal neon color code (`0x00` unset/hash, `0x01`..`0x08` palette). |
+| **33..39** | `reserved` | `7 Bytes` | `Data` | Reserved padding (`0x00000000000000`). |
 | **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit MAC tag verifying group signature (prevents stranger fake alarms). |
 
 #### Type 3: `0x03` — `MEETING_UPDATE` (Rendezvous Landmark & Attendance)
@@ -805,8 +840,8 @@ Use a **Hybrid AODV-inspired on-demand routing approach** with bounded flooding 
     -   Live 56-byte packet log capturing inbound, outbound, and relayed traffic with packet type filters (SOS, Ping, ACK, Route, Dropped).
     -   Packet injection suite for valid pings, emergency SOS alerts, ACKs, and fault injection (corrupted Poly1305 MAC tags, sequence replays).
     -   Virtual Mesh Topology Sandbox simulating 3-node and 4-node topologies with real-time link breaking and route convergence.
--   **Automated Unit & Integration Test Suites (14 Suites, 168 Passing Tests):**
-    -   Deterministic, self-contained automated tests executable on Simulator and on-device via `runAllTests()`, verifying 56-byte codecs, CryptoKit AEAD, AODV route discovery, blind relaying, neighbor discovery, dual-lane rate limiting, 5-stage SOS delivery, tactical radar projection, and failure recovery.
+-   **Automated Unit & Integration Test Suites (14 Suites, 169 Passing Tests):**
+    -   Deterministic, self-contained automated tests executable on Simulator and on-device via `runAllTests()`, verifying 56-byte codecs, CryptoKit AEAD, AODV route discovery, blind relaying, neighbor discovery, dual-lane rate limiting, 5-stage SOS delivery, tactical radar projection, failure recovery, and 1-byte member color coding.
 
 ---
 
@@ -843,10 +878,19 @@ Use a **Hybrid AODV-inspired on-demand routing approach** with bounded flooding 
 -   [x] **Milestone 2.8:** Festival Tactical Radar & Forward-Up Polar Projection (`RadarView.swift`, `RadarGridBackground.swift`, `RadarBlipView.swift`, `RadarFriendCard.swift`, `RadarTheme.swift`, `RadarCenterMarker.swift`, `FinderBeaconView.swift`).
 -   [x] **Milestone 2.9:** Dynamic Adaptive CoreLocation Accuracy Engine (Option B: `kCLLocationAccuracyBestForNavigation` dual-frequency GPS when radar active, power scaling down when stationary or <20% battery).
 -   [x] **Milestone 2.10:** UI Layout Priority Protection & Top Bar Squishing Resolution (`.fixedSize(horizontal: true, vertical: false)`, `.layoutPriority(2)`).
--   [x] **Final Integration & Acceptance:** Official Phase 2 Integration & Security Audit Report published ([docs/Phase 2/PHASE2_ACCEPTANCE_REPORT.md](Phase%202/PHASE2_ACCEPTANCE_REPORT.md)) with 100% test pass rate across 14 test suites (168 tests).
+-   [x] **Final Integration & Acceptance:** Official Phase 2 Integration & Security Audit Report published ([docs/Phase 2/PHASE2_ACCEPTANCE_REPORT.md](Phase%202/PHASE2_ACCEPTANCE_REPORT.md)) with 100% test pass rate across 14 test suites (169 tests).
 
 ### Phase 3 --- Venue Intelligence & Polish
 -   [ ] Custom venue event vector overlays (stages, medical, water stations).
+-   [ ] **Festival Group Mesh Chat & Radix-40 Text Engine (Decision D17):**
+    -   [ ] New packet type `PacketType.chatMessage = 0x07` fitting within 56-byte multi-hop datagram format.
+    -   [ ] Maximize 30-byte encrypted payload: `senderInitials: UInt16` (2B Base-27) + `timestamp: UInt32` (4B Unix epoch seconds) + `textData: [UInt8]` (24B Radix-40 text = 36 characters) = exactly 30 bytes (0 bytes padding/wasted).
+    -   [ ] Radix-40 Codec mapping 40 symbols (0 = space/empty, 1..26 = A..Z, 27..36 = 0..9, 37 = `.`, 38 = `!`, 39 = `?`) into 16-bit integers via $(c_1 \times 1600) + (c_2 \times 40) + c_3 \le 63,999 \le 65,535$.
+    -   [ ] Dedicated FIFO outbox transmission lane preempting stranger relays, 2 retries, and 3.0-second cooldown rate limit.
+    -   [ ] Individual per-person delivery acknowledgement (`ACKPayload` Type `0x06`) displaying dynamic UI tally: *"Delivered M/X"* (e.g. 5 of 8 friends confirmed).
+    -   [ ] Map-docked floating chat bubble and bottom sheet message feed (`ChatSheetView`) preserving glanceable map context.
+    -   [ ] Quick-tap festival preset chips above keyboard ("Beer line", "At Main Stage", "Restroom", "Where are you?") for high-speed typing in noisy crowds.
+    -   [ ] Strictly ephemeral in-memory message history (purged on session exit) with automatic shutoff at <20% battery (Festival Survival Mode).
 -   [ ] **Multi-Floor & Multi-Story Venue Intelligence (Decision D12):**
     -   [ ] Absorb 3 bytes into inner payload reserved padding: `floorLevel: Int8` (Byte 22, range -128..+126, 0x7F=Auto/Unknown) and `barometricPressure: UInt16` (Bytes 23..24, centi-hPa `(hPa - 800) * 100`, 0.01 hPa / ~8cm resolution), retaining 5 reserved bytes and 56-byte wire format.
     -   [ ] Peer-to-peer differential barometry via `CMAltimeter` ($\Delta h \approx 8.43 \times \Delta P$) providing sub-meter vertical separation between co-located phones without cloud/IMDF dependency.
