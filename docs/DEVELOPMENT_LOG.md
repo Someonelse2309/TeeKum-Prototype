@@ -5,43 +5,43 @@
 
 ---
 
-### [2026-11-03 16:30] — Architectural Decision (ADR) / /grill-me Alignment: Phase 3 Festival Group Mesh Chat & Radix-40 Wire Protocol (Decision D17)
+### [2026-11-03 16:32] — Architectural Decision (ADR) Update: Phase 3 Festival Group Mesh Chat Simplified to Max 20 Characters (Decision D17)
 - **Contributor / Role:** Senior App Development Consultant & Technical Product Advisor
-- **Status:** Scoped, Aligned & Formally Documented via `/grill-me` (Ready for Phase 3 Execution)
+- **Status:** Scoped, Updated & Formally Documented (Ready for Phase 3 Execution)
 - **Target Phase / Milestone:** Phase 3 — Venue Intelligence & Polish (Decision D17)
 
 #### 1. Context & Objective
-- Project owner proposed introducing an offline group chat function in Phase 3 utilizing a dedicated packet type and maximizing the 30-byte encrypted payload with radix-based compression similar to `InitialsCodec`.
-- Conducted an in-depth `/grill-me` interview resolving all 6 architectural dependencies across audience scope, encoding mathematics, payload packing, per-person delivery confirmation, UI integration, and input assistance.
+- Project owner requested simplification of the chat specification: replace Radix-40 radix compression with a straightforward maximum 20-character limit using standard 1-byte character mapping.
+- Re-architected the 30-byte encrypted payload layout to cleanly accommodate 20 bytes of direct UTF-8/ASCII text with an explicit 1-byte length field and 3 reserved padding bytes, eliminating radix codec complexity while unlocking full lowercase, numbers, and standard punctuation.
 
-#### 2. Decisions Reached & System Architecture
+#### 2. Updated System Architecture (Decision D17)
 1. **Audience & Addressing Model (Group Broadcast Channel):**
    - Every chat message is shared with all group members across the multi-hop mesh in a single communal venue feed.
-   - Eliminates per-message recipient addressing, saving 2+ bytes in the encrypted payload for text content.
-2. **Text Encoding & Alphabet (Radix-40 Codec):**
-   - Natural mathematical extension of `InitialsCodec` ($40^3 = 64,000 \le 65,535 < 2^{16}$).
-   - Encodes 3 characters into exactly 2 big-endian bytes (`UInt16`).
-   - Supports 40 symbols: `0` = space/empty, `1..26` = uppercase `A..Z`, `27..36` = digits `0..9`, `37` = `.`, `38` = `!`, `39` = `?`.
-   - Formula: $\text{chunkValue} = (c_1 \times 1600) + (c_2 \times 40) + c_3$.
-3. **Payload Structure (100% Utilized 30-Byte Encrypted Segment):**
+   - Eliminates per-message recipient addressing, saving byte overhead.
+2. **Text Encoding & Character Support (Direct UTF-8 / ASCII):**
+   - Replaced Radix-40 with direct 1-byte UTF-8 / ASCII encoding.
+   - Full keyboard support: lowercase (`a-z`), uppercase (`A-Z`), digits (`0-9`), space, and common punctuation (`,`, `.`, `!`, `?`, `-`, `/`, `&`).
+   - Maximum text length capped at 20 characters.
+3. **Payload Structure (Clean 30-Byte Encrypted Segment):**
    - Bytes 0..1: `senderInitials: UInt16` (2 bytes Base-27 via `InitialsCodec`).
-   - Bytes 2..5: `timestamp: UInt32` (4 bytes big-endian Unix epoch seconds for offline delay awareness).
-   - Bytes 6..29: `textData: [UInt8]` (24 bytes = 12 big-endian `UInt16` chunks = exactly 36 characters).
-   - Exactly 30 bytes (0 bytes wasted/padding). Fits seamlessly into the standard 56-byte multi-hop datagram.
+   - Bytes 2..5: `timestamp: UInt32` (4 bytes big-endian Unix epoch seconds).
+   - Byte 6: `textLength: UInt8` (1 byte, exact length $0 \dots 20$).
+   - Bytes 7..26: `textContent: [UInt8]` (20 bytes standard UTF-8 text, zero-padded for unused bytes).
+   - Bytes 27..29: `reserved: [UInt8]` (3 bytes zero padding).
+   - Exactly 30 bytes. Fits cleanly within standard 56-byte multi-hop datagram format (`PacketType.chatMessage = 0x07`).
 4. **Queue Prioritization & Individual Per-Person Delivery Acknowledgement:**
    - Dedicated FIFO outbox lane ahead of stranger relays, 2 retries, 3.0-second user cooldown rate limit.
-   - Individual ACK tracking: receiving group peers reply with `ACKPayload` (`0x06`). The sender aggregates unique responder initials, presenting an honest dynamic tally in the UI: *"Delivered M/X"* (e.g., 5 of 8 friends confirmed receipt).
+   - Individual ACK tracking: receiving group peers reply with `ACKPayload` (`0x06`). Sender aggregates unique responder initials, showing: *"Delivered M/X"* (e.g. 5 of 8 friends confirmed).
 5. **UI & UX Placement (Bottom Sheet Overlay on Map):**
-   - Docked floating chat bubble on `MainMapView` with unread badge count that slides up into a compact message feed (`ChatSheetView`), keeping map glanceability intact.
-6. **Input Speed Assistance:**
-   - Quick-tap festival preset chips above keyboard ("Beer line", "At Main Stage", "Restroom", "Where are you?") allowing 1-tap dispatch in crowded environments.
-7. **Security, Privacy & Invariants:**
+   - Docked floating chat bubble on `MainMapView` with unread badge count sliding up into `ChatSheetView`, preserving map glanceability.
+   - Text input bar features a 20-character counter and quick-tap festival preset chips ("Beer line", "At Main Stage", "Restroom", "Where are you?").
+6. **Security, Privacy & Invariants:**
    - Strictly ephemeral in-memory storage (purged on session exit or group leave; zero disk writes).
    - Automatically suspended during Festival Survival Mode (<20% battery).
 
 #### 3. Changes Made & Files Touched
-- [`docs/TechnicalRequirements.md`](TechnicalRequirements.md): Added approved decision **D17** to Section 1 and authored comprehensive Phase 3 specifications in Section 4.
-- [`docs/agent.md`](agent.md): Updated Section 12 Phase 3 checklist detailing `PacketType.chatMessage = 0x07`, Radix-40 encoding, 30-byte payload layout, per-person ACKs, and UI bottom sheet.
+- [`docs/TechnicalRequirements.md`](TechnicalRequirements.md): Updated approved decision **D17** in Section 1 and Section 4 to reflect direct UTF-8 encoding and the 20-character payload structure.
+- [`docs/agent.md`](agent.md): Updated Section 12 Phase 3 checklist detailing `PacketType.chatMessage = 0x07`, UTF-8 direct byte layout (20 chars max), per-person ACKs, and UI bottom sheet.
 
 ### [2026-11-03 14:05] — Member Color Coding Wire Integration (1-Byte Enum, 8-Color Neon Palette, Fallback & UI)
 - **Contributor / Agent:** Lead iOS & Systems Engineer

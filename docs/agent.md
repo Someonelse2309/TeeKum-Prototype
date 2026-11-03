@@ -882,14 +882,14 @@ Use a **Hybrid AODV-inspired on-demand routing approach** with bounded flooding 
 
 ### Phase 3 --- Venue Intelligence & Polish
 -   [ ] Custom venue event vector overlays (stages, medical, water stations).
--   [ ] **Festival Group Mesh Chat & Radix-40 Text Engine (Decision D17):**
+-   [ ] **Festival Group Mesh Chat & 20-Character Text Engine (Decision D17):**
     -   [ ] New packet type `PacketType.chatMessage = 0x07` fitting within 56-byte multi-hop datagram format.
-    -   [ ] Maximize 30-byte encrypted payload: `senderInitials: UInt16` (2B Base-27) + `timestamp: UInt32` (4B Unix epoch seconds) + `textData: [UInt8]` (24B Radix-40 text = 36 characters) = exactly 30 bytes (0 bytes padding/wasted).
-    -   [ ] Radix-40 Codec mapping 40 symbols (0 = space/empty, 1..26 = A..Z, 27..36 = 0..9, 37 = `.`, 38 = `!`, 39 = `?`) into 16-bit integers via $(c_1 \times 1600) + (c_2 \times 40) + c_3 \le 63,999 \le 65,535$.
+    -   [ ] 30-byte encrypted payload layout: `senderInitials: UInt16` (2B Base-27) + `timestamp: UInt32` (4B Unix epoch seconds) + `textLength: UInt8` (1B, $0 \dots 20$) + `textContent: [UInt8]` (20B UTF-8/ASCII bytes) + `reserved: [UInt8]` (3B padding) = 30 bytes.
+    -   [ ] Standard direct UTF-8 / ASCII encoding: supports lowercase, uppercase, digits, space, and standard punctuation without radix lookup tables or compression complexity.
     -   [ ] Dedicated FIFO outbox transmission lane preempting stranger relays, 2 retries, and 3.0-second cooldown rate limit.
     -   [ ] Individual per-person delivery acknowledgement (`ACKPayload` Type `0x06`) displaying dynamic UI tally: *"Delivered M/X"* (e.g. 5 of 8 friends confirmed).
     -   [ ] Map-docked floating chat bubble and bottom sheet message feed (`ChatSheetView`) preserving glanceable map context.
-    -   [ ] Quick-tap festival preset chips above keyboard ("Beer line", "At Main Stage", "Restroom", "Where are you?") for high-speed typing in noisy crowds.
+    -   [ ] Quick-tap festival preset chips above keyboard ("Beer line", "At Main Stage", "Restroom", "Where are you?") for high-speed typing in noisy crowds, with a 20-character counter.
     -   [ ] Strictly ephemeral in-memory message history (purged on session exit) with automatic shutoff at <20% battery (Festival Survival Mode).
 -   [ ] **Multi-Floor & Multi-Story Venue Intelligence (Decision D12):**
     -   [ ] Absorb 3 bytes into inner payload reserved padding: `floorLevel: Int8` (Byte 22, range -128..+126, 0x7F=Auto/Unknown) and `barometricPressure: UInt16` (Bytes 23..24, centi-hPa `(hPa - 800) * 100`, 0.01 hPa / ~8cm resolution), retaining 5 reserved bytes and 56-byte wire format.
