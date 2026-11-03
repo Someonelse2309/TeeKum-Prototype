@@ -19,6 +19,7 @@ public struct GroupPairingView: View {
     
     @State private var selectedTab: PairingTab = .create
     @State private var initialsInput: String = ""
+    @State private var selectedColor: MemberColor = .skyBlue
     @State private var groupNameInput: String = "Festival Crew"
     @State private var createdSession: GroupSession?
     @State private var pendingAgreement: PendingAgreementAction? = nil
@@ -176,6 +177,11 @@ public struct GroupPairingView: View {
                 if !sessionViewModel.localUserName.isEmpty && initialsInput.isEmpty {
                     initialsInput = sessionViewModel.localUserName
                 }
+                if sessionViewModel.localColor != .unset {
+                    selectedColor = sessionViewModel.localColor
+                } else if !initialsInput.isEmpty {
+                    selectedColor = MemberColor.deterministicColor(for: initialsInput)
+                }
             }
             .sheet(item: $pendingAgreement) { action in
                 MeshAgreementView(
@@ -269,7 +275,8 @@ public struct GroupPairingView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14)
-                        .stroke(isInitialsValid ? Color.green : Color(white: 0.25), lineWidth: 2)
+                        .stroke(isInitialsValid ? selectedColor.swiftUIColor : Color(white: 0.25), lineWidth: 2)
+                        .shadow(color: isInitialsValid ? selectedColor.swiftUIColor.opacity(0.4) : Color.clear, radius: 6)
                 )
                 .onChange(of: initialsInput) { _, newValue in
                     let filtered = newValue.uppercased().filter { $0 >= "A" && $0 <= "Z" }
@@ -278,7 +285,27 @@ public struct GroupPairingView: View {
                     } else {
                         initialsInput = filtered
                     }
+                    if sessionViewModel.localColor == .unset && !filtered.isEmpty {
+                        selectedColor = MemberColor.deterministicColor(for: filtered)
+                    }
                 }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("YOUR COLOR")
+                        .font(.caption.bold())
+                        .foregroundStyle(.gray)
+                        .tracking(1.2)
+                    Spacer()
+                    Text(selectedColor.name)
+                        .font(.caption.bold())
+                        .foregroundStyle(selectedColor.swiftUIColor)
+                }
+                ColorPickerPaletteView(selectedColor: $selectedColor) { newColor in
+                    sessionViewModel.setLocalColor(newColor)
+                }
+            }
+            .padding(.top, 4)
             
             Text("Your initials will be visible to nearby friends on radars and maps without cell service.")
                 .font(.caption2)

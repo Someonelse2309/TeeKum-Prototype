@@ -126,7 +126,8 @@ public final class LocationPublisher {
             targetRefId: status.targetRefId,
             senderInitials: session.localInitials,
             batteryLevel: batteryPct,
-            heading: headingByte
+            heading: headingByte,
+            colorCode: session.localColorCode
         )
         
         let payloadData = payload.serialize()
@@ -198,7 +199,8 @@ public final class LocationPublisher {
             sosEventId: UInt32.random(in: 1...UInt32.max),
             senderInitials: session.localInitials,
             emergencyType: emergencyType,
-            batteryLevel: batteryPct
+            batteryLevel: batteryPct,
+            colorCode: session.localColorCode
         )
         
         let payloadData = sosPayload.serialize()

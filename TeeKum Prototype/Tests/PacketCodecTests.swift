@@ -30,6 +30,7 @@ public enum PacketCodecTests {
         if !testRouteRespPayloadRoundtrip() { passed = false }
         if !testDeterministicTestVector() { passed = false }
         if !testInitialsCodecBase26() { passed = false }
+        if !testMemberColorPayloadRoundtripAndInitialsHashFallback() { passed = false }
         
         print("========================================")
         print(passed ? "ALL CODEC TESTS PASSED SUCCESSFULLY!" : "CODEC TESTS FAILED!")
@@ -612,6 +613,150 @@ public enum PacketCodecTests {
         guard InitialsCodec.sanitize(" d-n.a! ") == "DNA" else { return false }
         
         print("  PASS: InitialsCodec 1, 2, and 3-letter arithmetic, bounds, and roundtrips verified.")
+        return true
+    }
+    
+    // MARK: - Test 14: MemberColor Payload Serialization & Deterministic Initials Fallback
+    
+    public static func testMemberColorPayloadRoundtripAndInitialsHashFallback() -> Bool {
+        print("[Test 14] MemberColor 1-byte wire serialization and deterministic hash fallback...")
+        
+        // 1. LocationPingPayload roundtrip with explicit MemberColor
+        let coord = CLLocationCoordinate2D(latitude: 37.774929, longitude: -122.419416)
+        let ping = LocationPingPayload(
+            coordinate: coord,
+            timestamp: Date(timeIntervalSince1970: 1730000000),
+            accuracy: 8,
+            statusCode: .available,
+            targetRefId: nil,
+            senderInitials: "NIC",
+            batteryLevel: 88,
+            heading: 120,
+            colorCode: MemberColor.neonPink.rawValue
+        )
+        
+        let pingData = ping.serialize()
+        guard pingData.count == 30 else {
+            print("  FAIL: LocationPing serialized count must be exactly 30 bytes, got \(pingData.count)")
+            return false
+        }
+        
+        // Byte 22 must contain MemberColor.neonPink.rawValue (0x01)
+        guard pingData[22] == MemberColor.neonPink.rawValue else {
+            print("  FAIL: Byte 22 expected \(MemberColor.neonPink.rawValue), got \(pingData[22])")
+            return false
+        }
+        
+        do {
+            let decodedPing = try LocationPingPayload.deserialize(from: pingData)
+            guard decodedPing.colorCode == MemberColor.neonPink.rawValue else {
+                print("  FAIL: Decoded ping colorCode expected \(MemberColor.neonPink.rawValue), got \(decodedPing.colorCode)")
+                return false
+            }
+            let resolvedColor = MemberColor.resolve(code: decodedPing.colorCode, initials: decodedPing.senderInitials)
+            guard resolvedColor == .neonPink else {
+                print("  FAIL: Resolved MemberColor expected .neonPink, got \(resolvedColor)")
+                return false
+            }
+        } catch {
+            print("  FAIL: Deserialization of LocationPing with color failed: \(error)")
+            return false
+        }
+        
+        // 2. SOSPayload roundtrip with explicit MemberColor
+        let sos = SOSPayload(
+            coordinate: coord,
+            timestamp: Date(timeIntervalSince1970: 1730000010),
+            accuracy: 5,
+            sosEventId: 0xCAFEBABE,
+            senderInitials: "ALX",
+            emergencyType: .medical,
+            batteryLevel: 65,
+            colorCode: MemberColor.electricPurple.rawValue
+        )
+        
+        let sosData = sos.serialize()
+        guard sosData.count == 30 else {
+            print("  FAIL: SOS serialized count must be exactly 30 bytes, got \(sosData.count)")
+            return false
+        }
+        guard sosData[22] == MemberColor.electricPurple.rawValue else {
+            print("  FAIL: SOS Byte 22 expected \(MemberColor.electricPurple.rawValue), got \(sosData[22])")
+            return false
+        }
+        
+        do {
+            let decodedSOS = try SOSPayload.deserialize(from: sosData)
+            guard decodedSOS.colorCode == MemberColor.electricPurple.rawValue else {
+                print("  FAIL: Decoded SOS colorCode expected \(MemberColor.electricPurple.rawValue), got \(decodedSOS.colorCode)")
+                return false
+            }
+            let resolvedColor = MemberColor.resolve(code: decodedSOS.colorCode, initials: decodedSOS.senderInitials)
+            guard resolvedColor == .electricPurple else {
+                print("  FAIL: Resolved SOS color expected .electricPurple, got \(resolvedColor)")
+                return false
+            }
+        } catch {
+            print("  FAIL: Deserialization of SOS with color failed: \(error)")
+            return false
+        }
+        
+        // 3. Backward Compatibility: Legacy zero-padded packet (colorCode == 0x00)
+        let legacyPing = LocationPingPayload(
+            coordinate: coord,
+            timestamp: Date(timeIntervalSince1970: 1730000000),
+            accuracy: 8,
+            statusCode: .available,
+            targetRefId: nil,
+            senderInitials: "DNA",
+            batteryLevel: 90,
+            heading: 0,
+            colorCode: 0 // Legacy 0x00
+        )
+        let legacyData = legacyPing.serialize()
+        guard legacyData[22] == 0x00 else {
+            print("  FAIL: Legacy ping Byte 22 should be 0x00")
+            return false
+        }
+        
+        do {
+            let decodedLegacy = try LocationPingPayload.deserialize(from: legacyData)
+            guard decodedLegacy.colorCode == 0 else {
+                print("  FAIL: Legacy color code expected 0")
+                return false
+            }
+            // Must deterministically resolve based on initials "DNA"
+            let resolvedLegacy = MemberColor.resolve(code: decodedLegacy.colorCode, initials: decodedLegacy.senderInitials)
+            let expectedDNAColor = MemberColor.deterministicColor(for: "DNA")
+            guard resolvedLegacy == expectedDNAColor && resolvedLegacy != .unset else {
+                print("  FAIL: Legacy resolution expected \(expectedDNAColor), got \(resolvedLegacy)")
+                return false
+            }
+        } catch {
+            print("  FAIL: Legacy deserialization failed: \(error)")
+            return false
+        }
+        
+        // 4. Deterministic Hashing Invariance & Stability
+        let color1 = MemberColor.deterministicColor(for: "NIC")
+        let color2 = MemberColor.deterministicColor(for: "NIC")
+        guard color1 == color2 else {
+            print("  FAIL: Deterministic hashing is non-deterministic for 'NIC'")
+            return false
+        }
+        
+        // 5. Selectable Palette Integrity (8 distinct colors, pure Red excluded)
+        let selectable = MemberColor.selectableColors
+        guard selectable.count == 8 else {
+            print("  FAIL: Expected exactly 8 selectable colors, got \(selectable.count)")
+            return false
+        }
+        guard !selectable.contains(.unset) else {
+            print("  FAIL: Selectable palette should not contain .unset")
+            return false
+        }
+        
+        print("  PASS: MemberColor payload roundtrip, legacy backward compatibility, and deterministic hashing verified.")
         return true
     }
 }

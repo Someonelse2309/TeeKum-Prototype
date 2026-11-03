@@ -38,6 +38,9 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
     /// Local user's 3-letter initials (e.g. "DNA").
     public var localInitials: String
     
+    /// Local user's preferred 1-byte color code (MemberColor).
+    public var localColorCode: UInt8
+    
     /// Backward-compatibility alias for display name.
     public var localMemberName: String { localInitials }
     
@@ -70,6 +73,7 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
         sessionName: String = "Festival Mesh",
         symmetricKeyData: Data = GroupSession.defaultSymmetricKeyData,
         localInitials: String,
+        localColorCode: UInt8 = 0x00,
         memberSlot: UInt8? = nil,
         isHost: Bool = true,
         createdAt: Date = Date()
@@ -78,6 +82,7 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
         self.sessionName = sessionName
         self.symmetricKeyData = symmetricKeyData
         self.localInitials = InitialsCodec.sanitize(localInitials)
+        self.localColorCode = localColorCode
         self.isHost = isHost
         self.createdAt = createdAt
     }

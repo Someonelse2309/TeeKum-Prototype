@@ -22,6 +22,9 @@ public final class GroupSessionViewModel {
     /// User's chosen 1 to 3-letter initials.
     public var localUserName: String = ""
     
+    /// User's chosen personal member color.
+    public var localColor: MemberColor = .unset
+    
     /// User's draft group name when creating a new group.
     public var newGroupName: String = ""
     
@@ -50,10 +53,14 @@ public final class GroupSessionViewModel {
     
     private static let activeSessionStorageKey = "com.teekum.activeSession"
     private static let localUserNameStorageKey = "com.teekum.localUserName"
+    private static let localUserColorStorageKey = "com.teekum.localUserColorCode"
     
     public init(activeSession: GroupSession? = nil) {
         let storedUser = UserDefaults.standard.string(forKey: Self.localUserNameStorageKey) ?? ""
         self.localUserName = storedUser
+        
+        let storedColorCode = UInt8(UserDefaults.standard.integer(forKey: Self.localUserColorStorageKey))
+        self.localColor = MemberColor(rawValue: storedColorCode) ?? .unset
         
         if let activeSession {
             self.activeSession = activeSession
@@ -62,8 +69,19 @@ public final class GroupSessionViewModel {
         }
     }
     
+    /// Sets the local user's personal member color, updates active session, and persists preference.
+    public func setLocalColor(_ color: MemberColor) {
+        self.localColor = color
+        UserDefaults.standard.set(Int(color.rawValue), forKey: Self.localUserColorStorageKey)
+        if var session = activeSession {
+            session.localColorCode = color.rawValue
+            self.activeSession = session
+            saveStoredSession(session)
+        }
+    }
+    
     /// Enters the festival auto-mesh network using 1 to 3 uppercase initials.
-    public func enterAutoMesh(initials: String) {
+    public func enterAutoMesh(initials: String, colorCode: UInt8? = nil) {
         let cleanInitials = initials.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard cleanInitials.count >= 1 && cleanInitials.count <= 3,
               cleanInitials.allSatisfy({ $0 >= "A" && $0 <= "Z" }) else {
@@ -71,7 +89,8 @@ public final class GroupSessionViewModel {
             return
         }
         
-        let session = GroupSession(localInitials: cleanInitials)
+        let color = colorCode ?? localColor.rawValue
+        let session = GroupSession(localInitials: cleanInitials, localColorCode: color)
         self.activeSession = session
         self.localUserName = cleanInitials
         self.errorMessage = nil
@@ -80,7 +99,7 @@ public final class GroupSessionViewModel {
     }
     
     /// Creates a private group with a newly generated 256-bit key, custom name, and initials (1–3 letters).
-    public func createGroup(name: String, localName: String) {
+    public func createGroup(name: String, localName: String, colorCode: UInt8? = nil) {
         let cleanInitials = InitialsCodec.sanitize(localName)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let sessionName = trimmedName.isEmpty ? "Festival Group" : trimmedName
@@ -89,11 +108,13 @@ public final class GroupSessionViewModel {
         _ = SecRandomCopyBytes(kSecRandomDefault, keyBytes.count, &keyBytes)
         let keyData = Data(keyBytes)
         
+        let color = colorCode ?? localColor.rawValue
         let session = GroupSession(
             sessionId: UInt16.random(in: 1...UInt16.max),
             sessionName: sessionName,
             symmetricKeyData: keyData,
             localInitials: cleanInitials,
+            localColorCode: color,
             isHost: true
         )
         self.activeSession = session
@@ -104,13 +125,15 @@ public final class GroupSessionViewModel {
     }
     
     /// Joins an existing group using decoded invite parameters and custom initials (1–3 letters).
-    public func joinGroup(invite: GroupSessionInvite, localName: String) {
+    public func joinGroup(invite: GroupSessionInvite, localName: String, colorCode: UInt8? = nil) {
         let cleanInitials = InitialsCodec.sanitize(localName)
+        let color = colorCode ?? localColor.rawValue
         let session = GroupSession(
             sessionId: invite.sessionId,
             sessionName: invite.sessionName,
             symmetricKeyData: invite.keyData,
             localInitials: cleanInitials,
+            localColorCode: color,
             isHost: false
         )
         self.activeSession = session

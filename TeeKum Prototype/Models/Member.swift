@@ -44,6 +44,9 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
     /// Signal strength observed on the direct link in dBm (e.g. -65 dBm), if directly connected.
     public var rssi: Int8?
     
+    /// Chosen or deterministically resolved personal member color.
+    public var color: MemberColor
+    
     public init(
         id: String,
         name: String? = nil,
@@ -54,7 +57,8 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
         batteryLevel: Float? = nil,
         heading: CLLocationDirection? = nil,
         isDirectPeer: Bool = false,
-        rssi: Int8? = nil
+        rssi: Int8? = nil,
+        color: MemberColor? = nil
     ) {
         let cleanId = InitialsCodec.sanitize(id)
         self.id = cleanId
@@ -67,6 +71,7 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
         self.heading = heading
         self.isDirectPeer = isDirectPeer
         self.rssi = rssi
+        self.color = color ?? MemberColor.deterministicColor(for: cleanId)
     }
     
     /// Determines whether the member's last seen time is older than the given threshold.

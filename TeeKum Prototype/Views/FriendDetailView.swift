@@ -85,8 +85,11 @@ public struct FriendDetailView: View {
         HStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .fill(member.status.code.isEmergency ? Color.red.opacity(0.3) : Color.green.opacity(0.2))
+                    .fill(member.status.code.isEmergency ? Color.red.opacity(0.3) : member.color.swiftUIColor.opacity(0.2))
                     .frame(width: 60, height: 60)
+                    .overlay(
+                        Circle().stroke(member.color.swiftUIColor, lineWidth: 2)
+                    )
                 
                 Text(member.status.code.emoji)
                     .font(.system(size: 32))
@@ -100,7 +103,7 @@ public struct FriendDetailView: View {
                 HStack(spacing: 8) {
                     Text("Initials: \(member.id)")
                         .font(.caption2.monospaced().bold())
-                        .foregroundStyle(.green)
+                        .foregroundStyle(member.color.swiftUIColor)
                     
                     if let battery = member.batteryLevel {
                         HStack(spacing: 3) {

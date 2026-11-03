@@ -290,7 +290,8 @@ public final class SOSViewModel {
             sosEventId: eventId,
             senderInitials: session.localInitials,
             emergencyType: emergencyType,
-            batteryLevel: batteryPct
+            batteryLevel: batteryPct,
+            colorCode: session.localColorCode
         )
         
         let payloadData = sosPayload.serialize()

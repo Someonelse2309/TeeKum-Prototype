@@ -344,6 +344,7 @@ public struct LocationPingPayload: Equatable, Sendable {
     public var senderInitials: String // 3 uppercase characters A-Z
     public var batteryLevel: UInt8    // 0...100
     public var heading: UInt8         // 0...255 representing 0..<360 degrees
+    public var colorCode: UInt8       // 0x00...0x08 MemberColor code
     
     public init(
         coordinate: CLLocationCoordinate2D,
@@ -353,7 +354,8 @@ public struct LocationPingPayload: Equatable, Sendable {
         targetRefId: UInt32? = nil,
         senderInitials: String,
         batteryLevel: UInt8,
-        heading: UInt8 = 0
+        heading: UInt8 = 0,
+        colorCode: UInt8 = 0
     ) {
         self.coordinate = coordinate
         self.timestamp = timestamp
@@ -363,6 +365,7 @@ public struct LocationPingPayload: Equatable, Sendable {
         self.senderInitials = InitialsCodec.sanitize(senderInitials)
         self.batteryLevel = min(batteryLevel, 100)
         self.heading = heading
+        self.colorCode = colorCode
     }
     
     public func serialize() -> Data {
@@ -385,9 +388,10 @@ public struct LocationPingPayload: Equatable, Sendable {
         
         data.append(min(batteryLevel, 100))
         data.append(heading)
+        data.append(colorCode)
         
-        // 8 bytes reserved zero padding (30 - 22 = 8)
-        data.append(Data(repeating: 0, count: 8))
+        // 7 bytes reserved zero padding (30 - 23 = 7)
+        data.append(Data(repeating: 0, count: 7))
         return data
     }
     
@@ -407,6 +411,7 @@ public struct LocationPingPayload: Equatable, Sendable {
         
         let battery = data[20]
         let heading = data[21]
+        let colorCode = data.count > 22 ? data[22] : 0
         
         let lat = Double(latRaw) / 1_000_000.0
         let lon = Double(lonRaw) / 1_000_000.0
@@ -428,7 +433,8 @@ public struct LocationPingPayload: Equatable, Sendable {
             targetRefId: target,
             senderInitials: initials,
             batteryLevel: min(battery, 100),
-            heading: heading
+            heading: heading,
+            colorCode: colorCode
         )
     }
 }
@@ -442,6 +448,7 @@ public struct SOSPayload: Equatable, Sendable {
     public var senderInitials: String // 3 uppercase characters
     public var emergencyType: SOSType
     public var batteryLevel: UInt8
+    public var colorCode: UInt8       // 0x00...0x08 MemberColor code
     
     public init(
         coordinate: CLLocationCoordinate2D,
@@ -450,7 +457,8 @@ public struct SOSPayload: Equatable, Sendable {
         sosEventId: UInt32 = UInt32.random(in: 1...UInt32.max),
         senderInitials: String,
         emergencyType: SOSType = .general,
-        batteryLevel: UInt8
+        batteryLevel: UInt8,
+        colorCode: UInt8 = 0
     ) {
         self.coordinate = coordinate
         self.timestamp = timestamp
@@ -459,6 +467,7 @@ public struct SOSPayload: Equatable, Sendable {
         self.senderInitials = InitialsCodec.sanitize(senderInitials)
         self.emergencyType = emergencyType
         self.batteryLevel = min(batteryLevel, 100)
+        self.colorCode = colorCode
     }
     
     public func serialize() -> Data {
@@ -481,9 +490,10 @@ public struct SOSPayload: Equatable, Sendable {
         
         data.append(emergencyType.rawValue)
         data.append(min(batteryLevel, 100))
+        data.append(colorCode)
         
-        // 8 bytes reserved padding (30 - 22 = 8)
-        data.append(Data(repeating: 0, count: 8))
+        // 7 bytes reserved padding (30 - 23 = 7)
+        data.append(Data(repeating: 0, count: 7))
         return data
     }
     
@@ -502,6 +512,7 @@ public struct SOSPayload: Equatable, Sendable {
         
         let emergencyByte = data[20]
         let battery = data[21]
+        let colorCode = data.count > 22 ? data[22] : 0
         
         let lat = Double(latRaw) / 1_000_000.0
         let lon = Double(lonRaw) / 1_000_000.0
@@ -521,7 +532,8 @@ public struct SOSPayload: Equatable, Sendable {
             sosEventId: eventId,
             senderInitials: initials,
             emergencyType: emergency,
-            batteryLevel: min(battery, 100)
+            batteryLevel: min(battery, 100),
+            colorCode: colorCode
         )
     }
 }

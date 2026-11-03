@@ -194,7 +194,8 @@ Every wire datagram is composed of:
 | Bytes 28..29: senderInitials (UInt16 big-endian, Base-27 compressed initials)         |
 | Byte 30: batteryLevel (UInt8, percentage 0..100)                                      |
 | Byte 31: heading (UInt8, compass degrees * 255 / 360)                                 |
-| Bytes 32..39: reserved (8 bytes padding, 0x0000000000000000)                         |
+| Byte 32: colorCode (UInt8, MemberColor code 0x00..0x08, 0x00=unset/initials hash)    |
+| Bytes 33..39: reserved (7 bytes padding, 0x00000000000000)                             |
 +---------------------------------------------------------------------------------------+
 | Bytes 40..55: authTag (16 bytes Poly1305 MAC)                                         |
 +---------------------------------------------------------------------------------------+
@@ -222,7 +223,8 @@ Every wire datagram is composed of:
 | Bytes 28..29: senderInitials (UInt16 big-endian, Base-27 initials of distressed)     |
 | Byte 30: emergencyType (UInt8: 0x00 General, 0x01 Medical, 0x02 Separated, 0x03 Sec) |
 | Byte 31: batteryLevel (UInt8, sender battery percentage 0..100)                       |
-| Bytes 32..39: reserved (8 bytes padding, 0x0000000000000000)                         |
+| Byte 32: colorCode (UInt8, MemberColor code 0x00..0x08, 0x00=unset/initials hash)    |
+| Bytes 33..39: reserved (7 bytes padding, 0x00000000000000)                             |
 +---------------------------------------------------------------------------------------+
 | Bytes 40..55: authTag (16 bytes Poly1305 MAC)                                         |
 +---------------------------------------------------------------------------------------+

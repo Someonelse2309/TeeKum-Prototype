@@ -326,8 +326,10 @@
 				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "TeeKum scans QR codes in person to securely join private offline groups without internet.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "TeeKum uses the local network to discover and connect with nearby friends at concerts without internet.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "TeeKum keeps you connected to your festival group and active meeting point while your iPhone is locked in your pocket.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "TeeKum shares your relative location with group members at festivals without cellular service.";
 				INFOPLIST_KEY_NSMotionUsageDescription = "TeeKum uses motion activity to optimize battery life by reducing GPS sampling when you are resting or watching performances.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -338,7 +340,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
@@ -370,8 +372,10 @@
 				INFOPLIST_FILE = Config/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "TeeKum scans QR codes in person to securely join private offline groups without internet.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "TeeKum uses the local network to discover and connect with nearby friends at concerts without internet.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "TeeKum keeps you connected to your festival group and active meeting point while your iPhone is locked in your pocket.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "TeeKum shares your relative location with group members at festivals without cellular service.";
 				INFOPLIST_KEY_NSMotionUsageDescription = "TeeKum uses motion activity to optimize battery life by reducing GPS sampling when you are resting or watching performances.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -382,7 +386,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 27.0;

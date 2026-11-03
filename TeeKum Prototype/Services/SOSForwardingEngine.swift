@@ -134,7 +134,8 @@ public actor SOSForwardingEngine: SOSForwardingManaging {
             sosEventId: eventId,
             senderInitials: session.localInitials,
             emergencyType: emergencyType,
-            batteryLevel: batteryPct
+            batteryLevel: batteryPct,
+            colorCode: session.localColorCode
         )
         self.lastDispatchedPayload = payload
         

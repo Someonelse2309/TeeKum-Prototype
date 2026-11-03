@@ -31,6 +31,7 @@ public struct MainMapView: View {
     @State private var isShowingNavigationBeacon: Bool = false
     @State private var isShowingLeaveAlert: Bool = false
     @State private var isShowingRelaySettings: Bool = false
+    @State private var isShowingColorPicker: Bool = false
     @State private var radarInitialMember: Member? = nil
     @State private var relayState: RelayPolicyState?
     @State private var mapCameraPosition: MapCameraPosition = .automatic
@@ -176,6 +177,18 @@ public struct MainMapView: View {
                 }
             )
         }
+        .sheet(isPresented: $isShowingColorPicker) {
+            ColorPickerSheet(
+                selectedColor: Binding(
+                    get: { sessionViewModel.localColor },
+                    set: { sessionViewModel.setLocalColor($0) }
+                ),
+                userInitials: sessionViewModel.localUserName,
+                onSave: { newColor in
+                    sessionViewModel.setLocalColor(newColor)
+                }
+            )
+        }
         .fullScreenCover(isPresented: $isShowingNavigationBeacon) {
             FinderBeaconView(
                 members: sessionViewModel.members,
@@ -276,6 +289,7 @@ public struct MainMapView: View {
     private func friendPinView(for member: Member) -> some View {
         let isStale = member.isStale(threshold: 60)
         let isEmergency = member.status.code.isEmergency
+        let memberColor = member.color.swiftUIColor
         
         return VStack(spacing: 4) {
             ZStack {
@@ -288,13 +302,14 @@ public struct MainMapView: View {
                 
                 Circle()
                     .stroke(
-                        isEmergency ? Color.red : (isStale ? Color.orange : Color.green),
+                        isEmergency ? Color.red : (isStale ? memberColor.opacity(0.6) : memberColor),
                         lineWidth: isEmergency ? 3 : 2
                     )
                     .frame(width: 44, height: 44)
                     .background(
                         Circle().fill(Color.black.opacity(0.8))
                     )
+                    .shadow(color: isEmergency ? Color.red.opacity(0.8) : memberColor.opacity(0.4), radius: 4)
                 
                 Text(member.status.code.emoji)
                     .font(.system(size: 22))
@@ -325,7 +340,7 @@ public struct MainMapView: View {
                     }
                     Text(member.name)
                         .font(.caption2.bold())
-                        .foregroundStyle(isEmergency ? .red : .white)
+                        .foregroundStyle(isEmergency ? .red : memberColor)
                 }
                 
                 if isEmergency {
@@ -343,7 +358,7 @@ public struct MainMapView: View {
             .background(Color.black.opacity(0.85))
             .clipShape(Capsule())
             .overlay(
-                Capsule().stroke(isEmergency ? Color.red.opacity(0.7) : (isStale ? Color.orange.opacity(0.5) : Color.clear), lineWidth: 1)
+                Capsule().stroke(isEmergency ? Color.red.opacity(0.7) : (isStale ? Color.orange.opacity(0.5) : memberColor.opacity(0.4)), lineWidth: 1)
             )
         }
         .accessibilityElement(children: .combine)
@@ -520,6 +535,25 @@ public struct MainMapView: View {
                     .shadow(color: .cyan.opacity(0.4), radius: 6)
             }
             .accessibilityLabel("Open Festival Tactical Radar")
+            
+            // Personal Color Selector Button
+            Button {
+                isShowingColorPicker = true
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(Color.black.opacity(0.75))
+                        .frame(width: 40, height: 40)
+                    Circle()
+                        .fill(sessionViewModel.localColor.swiftUIColor)
+                        .frame(width: 22, height: 22)
+                        .shadow(color: sessionViewModel.localColor.swiftUIColor.opacity(0.6), radius: 4)
+                    Circle()
+                        .stroke(sessionViewModel.localColor.swiftUIColor.opacity(0.7), lineWidth: 1.5)
+                        .frame(width: 40, height: 40)
+                }
+            }
+            .accessibilityLabel("Change personal color")
             
             // Meeting Point Button
             Button {

@@ -436,6 +436,7 @@ struct TeeKumApp: App {
                 guard sos.senderInitials != session.localInitials else { return }
                 
                 let resolvedName = sos.senderInitials
+                let memberColor = MemberColor.resolve(code: sos.colorCode, initials: sos.senderInitials)
                 
                 let member = Member(
                     id: sos.senderInitials,
@@ -447,7 +448,8 @@ struct TeeKumApp: App {
                     batteryLevel: Float(sos.batteryLevel) / 100.0,
                     heading: sessionViewModel.members.first(where: { $0.id == sos.senderInitials })?.heading,
                     isDirectPeer: envelope.hopCount == 0,
-                    rssi: inbound.receivedRssi
+                    rssi: inbound.receivedRssi,
+                    color: memberColor
                 )
                 sessionViewModel.updateMember(member)
                 
@@ -466,6 +468,7 @@ struct TeeKumApp: App {
             guard ping.senderInitials != session.localInitials else { return }
             
             let resolvedName = ping.senderInitials
+            let memberColor = MemberColor.resolve(code: ping.colorCode, initials: ping.senderInitials)
             
             let member = Member(
                 id: ping.senderInitials,
@@ -477,7 +480,8 @@ struct TeeKumApp: App {
                 batteryLevel: Float(ping.batteryLevel) / 100.0,
                 heading: CLLocationDirection(ping.heading),
                 isDirectPeer: envelope.hopCount == 0,
-                rssi: inbound.receivedRssi
+                rssi: inbound.receivedRssi,
+                color: memberColor
             )
             sessionViewModel.updateMember(member)
             

@@ -46,6 +46,10 @@ public struct RadarBlipView: View {
         member.isStale(threshold: 60)
     }
     
+    private var memberBaseColor: Color {
+        member.color.swiftUIColor
+    }
+    
     private var markerColor: Color {
         if isEmergency {
             return theme.emergencyBlipColor
@@ -54,7 +58,7 @@ public struct RadarBlipView: View {
         } else if isStale {
             return theme.staleBlipColor
         } else {
-            return theme.normalBlipColor
+            return memberBaseColor
         }
     }
     
@@ -88,14 +92,14 @@ public struct RadarBlipView: View {
                     .frame(width: theme.blipSize, height: theme.blipSize)
                     .overlay(
                         Circle()
-                            .stroke(markerColor, lineWidth: isSelected ? 2.5 : 1.5)
+                            .stroke(isSelected ? theme.selectedBlipColor : (isEmergency ? theme.emergencyBlipColor : (isStale ? memberBaseColor.opacity(0.6) : memberBaseColor)), lineWidth: isSelected ? 2.5 : 1.5)
                     )
-                    .shadow(color: markerColor.opacity(isSelected ? 0.6 : 0.25), radius: isSelected ? 8 : 4)
+                    .shadow(color: (isSelected ? theme.selectedBlipColor : memberBaseColor).opacity(isSelected ? 0.6 : 0.35), radius: isSelected ? 8 : 4)
                 
                 // Member initials
                 Text(member.initials)
                     .font(theme.initialsFont)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(isEmergency ? theme.emergencyBlipColor : (isSelected ? theme.selectedBlipColor : memberBaseColor))
                     .lineLimit(1)
                 
                 // MARK: - Status Badge Corner Overlay

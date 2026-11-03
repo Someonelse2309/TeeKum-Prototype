@@ -60,12 +60,15 @@ public struct RadarFriendCard: View {
                 // Initials Avatar with Status Emoji
                 ZStack {
                     Circle()
-                        .fill(isEmergency ? theme.emergencyBlipColor : (isSelected ? theme.selectedBlipColor : Color.white.opacity(0.1)))
+                        .fill(isEmergency ? theme.emergencyBlipColor : (isSelected ? theme.selectedBlipColor : member.color.swiftUIColor.opacity(0.2)))
                         .frame(width: 38, height: 38)
+                        .overlay(
+                            Circle().stroke(member.color.swiftUIColor, lineWidth: isSelected ? 2 : 1)
+                        )
                     
                     Text(member.initials)
                         .font(.system(size: 13, weight: .black, design: .rounded))
-                        .foregroundStyle(isSelected || isEmergency ? .black : .white)
+                        .foregroundStyle(isEmergency ? .white : (isSelected ? .black : member.color.swiftUIColor))
                     
                     // Emoji overlay
                     VStack {
