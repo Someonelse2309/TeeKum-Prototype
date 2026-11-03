@@ -31,6 +31,7 @@ public struct MainMapView: View {
     @State private var isShowingNavigationBeacon: Bool = false
     @State private var isShowingLeaveAlert: Bool = false
     @State private var isShowingRelaySettings: Bool = false
+    @State private var radarInitialMember: Member? = nil
     @State private var relayState: RelayPolicyState?
     @State private var mapCameraPosition: MapCameraPosition = .automatic
     
@@ -86,6 +87,12 @@ public struct MainMapView: View {
                     
                     if let alert = sosViewModel.activeIncomingAlert {
                         incomingSOSBanner(for: alert)
+                    }
+                    
+                    // Right Floating Map Tools Palette
+                    HStack {
+                        Spacer()
+                        floatingMapTools
                     }
                     
                     Spacer()
@@ -160,6 +167,7 @@ public struct MainMapView: View {
                 member: member,
                 userLocation: mapViewModel.userLocation,
                 onStartNavigation: {
+                    radarInitialMember = member
                     mapViewModel.selectedMember = nil
                     isShowingNavigationBeacon = true
                 },
@@ -169,15 +177,22 @@ public struct MainMapView: View {
             )
         }
         .fullScreenCover(isPresented: $isShowingNavigationBeacon) {
-            if let targetFriend = sessionViewModel.members.first {
-                FinderBeaconView(
-                    friend: targetFriend,
-                    userLocation: mapViewModel.userLocation,
-                    currentHeading: mapViewModel.currentHeading,
-                    onDismiss: {
-                        isShowingNavigationBeacon = false
-                    }
-                )
+            FinderBeaconView(
+                members: sessionViewModel.members,
+                initialSelectedMember: radarInitialMember,
+                userLocation: mapViewModel.userLocation,
+                currentHeading: mapViewModel.currentHeading,
+                locationService: mapViewModel.locationService,
+                onDismiss: {
+                    radarInitialMember = nil
+                    isShowingNavigationBeacon = false
+                }
+            )
+            .onAppear {
+                mapViewModel.setTacticalRadarActive(true)
+            }
+            .onDisappear {
+                mapViewModel.setTacticalRadarActive(false)
             }
         }
         .alert("Leave Group Session?", isPresented: $isShowingLeaveAlert) {
@@ -391,13 +406,14 @@ public struct MainMapView: View {
     // MARK: - Top Session Bar
     
     private var topSessionBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(sessionViewModel.activeSession?.sessionName ?? "Festival Group")
                         .font(.headline.bold())
                         .foregroundStyle(.white)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                     
                     Text("(\(sessionViewModel.members.count + 1))")
                         .font(.caption.bold())
@@ -413,50 +429,97 @@ public struct MainMapView: View {
                     Text(mapViewModel.statusPillMessage)
                         .font(.caption2.bold())
                         .foregroundStyle(statusPillColor)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             
-            Spacer()
-            
-            // Home Screen Mode Switcher (Normal <-> Debugging)
-            HStack(spacing: 2) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        screenMode = .normal
-                    }
-                } label: {
-                    Text("Map")
-                        .font(.caption2.bold())
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(screenMode == .normal ? Color.green : Color.clear)
-                        .foregroundStyle(screenMode == .normal ? .black : .gray)
-                        .clipShape(Capsule())
-                }
-                
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        screenMode = .debugging
-                    }
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "waveform.path.badge.gearshape")
-                            .font(.system(size: 9).bold())
-                        Text("Debug")
+            // Right Side Controls: Mode Switcher + Leave Button
+            HStack(spacing: 8) {
+                // Home Screen Mode Switcher (Normal <-> Debugging)
+                HStack(spacing: 2) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            screenMode = .normal
+                        }
+                    } label: {
+                        Text("Map")
                             .font(.caption2.bold())
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(screenMode == .normal ? Color.green : Color.clear)
+                            .foregroundStyle(screenMode == .normal ? .black : .gray)
+                            .clipShape(Capsule())
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(screenMode == .debugging ? Color.yellow : Color.clear)
-                    .foregroundStyle(screenMode == .debugging ? .black : .gray)
-                    .clipShape(Capsule())
+                    
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            screenMode = .debugging
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "waveform.path.badge.gearshape")
+                                .font(.system(size: 9).bold())
+                            Text("Debug")
+                                .font(.caption2.bold())
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(screenMode == .debugging ? Color.yellow : Color.clear)
+                        .foregroundStyle(screenMode == .debugging ? .black : .gray)
+                        .clipShape(Capsule())
+                    }
                 }
+                .padding(2)
+                .background(Color.black.opacity(0.7))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                .accessibilityLabel("Toggle Debugging and Normal Mode")
+                
+                // Leave Group Button
+                Button {
+                    isShowingLeaveAlert = true
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.bold())
+                        .frame(width: 32, height: 32)
+                        .background(Color.black.opacity(0.6))
+                        .foregroundStyle(.white)
+                        .clipShape(Circle())
+                }
+                .accessibilityLabel("Leave group session")
             }
-            .padding(2)
-            .background(Color.black.opacity(0.7))
-            .clipShape(Capsule())
-            .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
-            .accessibilityLabel("Toggle Debugging and Normal Mode")
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(2)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+    }
+    
+    // MARK: - Right Floating Map Tools Palette
+    
+    private var floatingMapTools: some View {
+        VStack(spacing: 8) {
+            // Festival Tactical Radar Button (Glowing Cyan)
+            Button {
+                radarInitialMember = nil
+                isShowingNavigationBeacon = true
+            } label: {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.subheadline.bold())
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.75))
+                    .foregroundStyle(.cyan)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.cyan.opacity(0.5), lineWidth: 1.5))
+                    .shadow(color: .cyan.opacity(0.4), radius: 6)
+            }
+            .accessibilityLabel("Open Festival Tactical Radar")
             
             // Meeting Point Button
             Button {
@@ -464,10 +527,11 @@ public struct MainMapView: View {
             } label: {
                 Image(systemName: meetingPointViewModel.activeMeetingPoint != nil ? "mappin.circle.fill" : "mappin.circle")
                     .font(.subheadline.bold())
-                    .padding(8)
-                    .background(Color.black.opacity(0.6))
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.75))
                     .foregroundStyle(meetingPointViewModel.activeMeetingPoint != nil ? .yellow : .white)
                     .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
             }
             .accessibilityLabel("Meeting points")
             
@@ -477,10 +541,11 @@ public struct MainMapView: View {
             } label: {
                 Image(systemName: "qrcode")
                     .font(.subheadline.bold())
-                    .padding(8)
-                    .background(Color.black.opacity(0.6))
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.75))
                     .foregroundStyle(.white)
                     .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
             }
             .accessibilityLabel("Group QR Code")
             
@@ -491,10 +556,11 @@ public struct MainMapView: View {
                 } label: {
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.subheadline.bold())
-                        .padding(8)
-                        .background(Color.black.opacity(0.6))
+                        .frame(width: 40, height: 40)
+                        .background(Color.black.opacity(0.75))
                         .foregroundStyle(relayButtonColor)
                         .clipShape(Circle())
+                        .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
                 }
                 .accessibilityLabel("Communal Relay Settings")
             }
@@ -505,31 +571,15 @@ public struct MainMapView: View {
             } label: {
                 Image(systemName: "waveform.path.ecg")
                     .font(.subheadline.bold())
-                    .padding(8)
-                    .background(Color.black.opacity(0.6))
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.75))
                     .foregroundStyle(.white)
                     .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
             }
             .accessibilityLabel("Diagnostics HUD")
-            
-            // Leave Group Button
-            Button {
-                isShowingLeaveAlert = true
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.subheadline.bold())
-                    .padding(8)
-                    .background(Color.black.opacity(0.6))
-                    .foregroundStyle(.white)
-                    .clipShape(Circle())
-            }
-            .accessibilityLabel("Leave group session")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .padding(.horizontal, 12)
+        .padding(.trailing, 12)
         .padding(.top, 8)
     }
     

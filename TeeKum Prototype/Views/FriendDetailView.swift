@@ -309,7 +309,7 @@ public struct FriendDetailView: View {
             Button {
                 onStartNavigation()
             } label: {
-                Label("Start Directional Finding", systemImage: "location.north.line.fill")
+                Label("Track in Radar", systemImage: "scope")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding()
@@ -317,8 +317,8 @@ public struct FriendDetailView: View {
                     .foregroundStyle(.black)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
-            .accessibilityLabel("Start directional finding toward \(member.name)")
-            .accessibilityHint("Opens 360 degree compass arrow and crowd finding beacon.")
+            .accessibilityLabel("Track \(member.name) in Tactical Radar")
+            .accessibilityHint("Opens 360 degree tactical radar and crowd finding beacon.")
         }
         .padding()
         .background(Color(white: 0.1))

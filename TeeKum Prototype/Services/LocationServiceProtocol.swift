@@ -132,6 +132,15 @@ public protocol LocationServiceProvider: AnyObject {
     /// True if the current location measurement is older than the staleness threshold.
     var isLocationStale: Bool { get }
     
+    /// True if Core Location authorization has full accuracy (Precise Location: ON).
+    var isPreciseLocationAuthorized: Bool { get }
+    
+    /// True if the user is actively viewing the Tactical Radar or navigating.
+    var isTacticalRadarActive: Bool { get }
+    
+    /// Enables or disables high-precision navigation mode (kCLLocationAccuracyBestForNavigation).
+    func setTacticalRadarActive(_ active: Bool)
+    
     /// Time elapsed in seconds since the current location was measured by hardware GPS (nil if no fix acquired yet).
     var locationAge: TimeInterval? { get }
     
@@ -174,6 +183,9 @@ public protocol LocationServiceProvider: AnyObject {
 }
 
 extension LocationServiceProvider {
+    public var isPreciseLocationAuthorized: Bool { true }
+    public var isTacticalRadarActive: Bool { false }
+    public func setTacticalRadarActive(_ active: Bool) {}
     public func resetPublishedPingsStream() {}
     public func triggerCadenceEvaluation() {}
     public func triggerBurstPings(count: Int, interval: TimeInterval) {}

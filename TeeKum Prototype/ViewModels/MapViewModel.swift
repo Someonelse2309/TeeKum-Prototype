@@ -91,20 +91,20 @@ public final class MapViewModel {
     /// Non-intrusive status pill message displayed at the top of the map.
     public var statusPillMessage: String {
         guard let locationService else {
-            return isLiveSharingEnabled ? "Live Sharing Active" : "Live Sharing Paused (Battery Saved)"
+            return isLiveSharingEnabled ? "Live Sharing Active" : "Live Sharing Paused"
         }
         
         let auth = locationService.authorizationStatus
         if auth == .denied || auth == .restricted {
-            return "Location Permission Denied"
+            return "Permission Denied"
         }
         
         if locationService.isSurvivalModeActive {
-            return "Festival Survival Mode (<20% Battery)"
+            return "Survival Mode (<20%)"
         }
         
         if !isLiveSharingEnabled {
-            return "Live Sharing Paused (Battery Saved)"
+            return "Live Sharing Paused"
         }
         
         if !locationService.isGPSAvailable || locationService.isLocationStale {
@@ -129,7 +129,7 @@ public final class MapViewModel {
         isLiveSharingEnabled.toggle()
     }
     
-    /// Selects a friend to initiate directed compass / UWB navigation.
+    /// Selects a friend to initiate directed radar / navigation.
     public func selectMemberForNavigation(_ member: Member) {
         self.selectedMember = member
     }
@@ -137,6 +137,11 @@ public final class MapViewModel {
     /// Clears active navigation target.
     public func clearNavigationTarget() {
         self.selectedMember = nil
+    }
+    
+    /// Enables or disables high-precision navigation mode on the location service.
+    public func setTacticalRadarActive(_ active: Bool) {
+        locationService?.setTacticalRadarActive(active)
     }
     
     /// Updates local user status (coalesced into next location update).

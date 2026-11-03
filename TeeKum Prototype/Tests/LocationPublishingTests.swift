@@ -103,9 +103,10 @@ public struct LocationPublishingTests {
         if !(await testMapViewModelIntegration()) { passed = false }
         if !(await testMultiSessionStreamRenewal()) { passed = false }
         if !(await testStalePeerAcceleratedCadenceAndTwoTierRecovery()) { passed = false }
+        if !(await testDynamicAdaptiveAccuracyAndRadarMode()) { passed = false }
         
         if passed {
-            print("--- [LocationPublishingTests] ALL LOCATION TESTS PASSED SUCCESSFULLY! ---")
+            print("--- [LocationPublishingTests] ALL 14 LOCATION TESTS PASSED SUCCESSFULLY! ---")
         } else {
             print("--- [LocationPublishingTests] SOME LOCATION TESTS FAILED! ---")
         }
@@ -904,6 +905,120 @@ public struct LocationPublishingTests {
         }
         
         print("  ✓ Stale peer accelerated cadence, two-tier recovery, and response burst successfully validated!")
+        return true
+    }
+    
+    // MARK: - Test 14: Dynamic Adaptive Accuracy & Tactical Radar High-Precision Mode (Option B)
+    
+    public static func testDynamicAdaptiveAccuracyAndRadarMode() async -> Bool {
+        print("[Test 14] Dynamic adaptive accuracy & Tactical Radar high-precision mode...")
+        let service = LocationService()
+        
+        // 1. Initial Default State (Moving / Normal)
+        guard service.currentDesiredAccuracy == kCLLocationAccuracyBest else {
+            print("FAILED: Default desiredAccuracy should be kCLLocationAccuracyBest, got \(service.currentDesiredAccuracy)")
+            return false
+        }
+        guard !service.isTacticalRadarActive else {
+            print("FAILED: isTacticalRadarActive should be false initially")
+            return false
+        }
+        
+        // 2. Open Tactical Radar -> Elevate to BestForNavigation + 0° heading filter
+        service.setTacticalRadarActive(true)
+        guard service.isTacticalRadarActive else {
+            print("FAILED: isTacticalRadarActive should be true")
+            return false
+        }
+        guard service.currentDesiredAccuracy == kCLLocationAccuracyBestForNavigation else {
+            print("FAILED: Tactical radar mode should elevate accuracy to kCLLocationAccuracyBestForNavigation")
+            return false
+        }
+        #if os(iOS)
+        guard service.currentHeadingFilter == kCLHeadingFilterNone else {
+            print("FAILED: Tactical radar mode should set headingFilter to kCLHeadingFilterNone")
+            return false
+        }
+        #endif
+        
+        // 3. Close Tactical Radar -> Restore Normal Moving Accuracy
+        service.setTacticalRadarActive(false)
+        guard !service.isTacticalRadarActive else {
+            print("FAILED: isTacticalRadarActive should be false")
+            return false
+        }
+        guard service.currentDesiredAccuracy == kCLLocationAccuracyBest else {
+            print("FAILED: Exiting radar should restore kCLLocationAccuracyBest")
+            return false
+        }
+        
+        // 4. User is Stationary (Dancing/Resting at Stage) -> Drop to 100m to save battery
+        service.simulateMotionActivity(stationary: true)
+        guard service.isStationary else {
+            print("FAILED: isStationary should be true")
+            return false
+        }
+        guard service.currentDesiredAccuracy == kCLLocationAccuracyHundredMeters else {
+            print("FAILED: Stationary state should drop accuracy to kCLLocationAccuracyHundredMeters to save battery")
+            return false
+        }
+        guard service.currentDistanceFilter == 15.0 else {
+            print("FAILED: Stationary state should set distanceFilter to 15m")
+            return false
+        }
+        
+        // 5. User opens Tactical Radar while Stationary -> Priority elevation to BestForNavigation
+        service.setTacticalRadarActive(true)
+        guard service.currentDesiredAccuracy == kCLLocationAccuracyBestForNavigation else {
+            print("FAILED: Tactical radar should preempt stationary low-power mode and elevate to BestForNavigation")
+            return false
+        }
+        
+        // 6. User closes Tactical Radar while still Stationary -> Return to 100m
+        service.setTacticalRadarActive(false)
+        guard service.currentDesiredAccuracy == kCLLocationAccuracyHundredMeters else {
+            print("FAILED: Closing radar while stationary should return to kCLLocationAccuracyHundredMeters")
+            return false
+        }
+        
+        // 7. User starts walking -> Return to kCLLocationAccuracyBest
+        service.simulateMotionActivity(stationary: false)
+        guard !service.isStationary else {
+            print("FAILED: isStationary should be false")
+            return false
+        }
+        guard service.currentDesiredAccuracy == kCLLocationAccuracyBest else {
+            print("FAILED: Walking motion should restore kCLLocationAccuracyBest")
+            return false
+        }
+        
+        // 8. Festival Survival Mode (<20% Battery) -> Force battery-saving GPS throttling
+        service.applyBatteryLevel(0.15)
+        guard service.isSurvivalModeActive else {
+            print("FAILED: isSurvivalModeActive should be true at 15% battery")
+            return false
+        }
+        guard service.currentDesiredAccuracy == kCLLocationAccuracyHundredMeters else {
+            print("FAILED: Survival mode should force accuracy to kCLLocationAccuracyHundredMeters")
+            return false
+        }
+        guard service.currentDistanceFilter == 25.0 else {
+            print("FAILED: Survival mode should set distanceFilter to 25m")
+            return false
+        }
+        
+        // 9. Battery recovers -> Restore standard moving accuracy
+        service.applyBatteryLevel(0.85)
+        guard !service.isSurvivalModeActive else {
+            print("FAILED: isSurvivalModeActive should be false at 85% battery")
+            return false
+        }
+        guard service.currentDesiredAccuracy == kCLLocationAccuracyBest else {
+            print("FAILED: Battery recovery should restore kCLLocationAccuracyBest")
+            return false
+        }
+        
+        print("  ✓ Dynamic adaptive accuracy and Tactical Radar high-precision mode successfully validated!")
         return true
     }
 }

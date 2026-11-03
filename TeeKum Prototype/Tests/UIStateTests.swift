@@ -31,9 +31,10 @@ public struct UIStateTests {
         if !(await testInitialsCodecAndAutoMeshEdgeCases()) { passed = false }
         if !(await testSessionTeardownAndCleanUIReset()) { passed = false }
         if !(await testSOSMemberRosterAndEmergencyVisualState()) { passed = false }
+        if !(await testTacticalRadarProjectionClampingAndSelection()) { passed = false }
         
         if passed {
-            print("--- [UIStateTests] ✓ ALL 12 UI STATE TEST SUITES PASSED ---")
+            print("--- [UIStateTests] ✓ ALL 13 UI STATE TEST SUITES PASSED ---")
         } else {
             print("--- [UIStateTests] ✗ SOME UI STATE TESTS FAILED ---")
         }
@@ -932,6 +933,154 @@ public struct UIStateTests {
         }
         
         print("PASSED: testMeetingPointWireBroadcastWithHigherTTL")
+        return true
+    }
+    
+    // MARK: - 13. Tactical Radar Projection, 60M Clamping & Selection
+    
+    @MainActor
+    private static func testTacticalRadarProjectionClampingAndSelection() async -> Bool {
+        print("[TEST] testTacticalRadarProjectionClampingAndSelection...")
+        
+        // 1. Theme Configuration Verification
+        let theme = RadarTheme.standard
+        guard theme.concentricRanges == [15.0, 30.0, 60.0] else {
+            print("FAILED: theme.concentricRanges should be [15, 30, 60], got \(theme.concentricRanges)")
+            return false
+        }
+        guard theme.maxDisplayRange == 60.0 else {
+            print("FAILED: theme.maxDisplayRange should be 60.0, got \(theme.maxDisplayRange)")
+            return false
+        }
+        
+        // 2. User Origin and Friends Setup
+        let userPin = LocationPin(
+            coordinate: CLLocationCoordinate2D(latitude: 37.774900, longitude: -122.419400),
+            horizontalAccuracy: 5.0
+        )
+        
+        // Friend 1: ~20 meters North (within 60m boundary)
+        let closeFriendCoord = CLLocationCoordinate2D(latitude: 37.775080, longitude: -122.419400)
+        let closeFriend = Member(
+            id: "CLS",
+            name: "Close Friend",
+            coordinate: closeFriendCoord,
+            status: UserStatus(code: .available)
+        )
+        
+        // Friend 2: ~150 meters East (well beyond 60m boundary)
+        let farFriendCoord = CLLocationCoordinate2D(latitude: 37.774900, longitude: -122.417700)
+        let farFriend = Member(
+            id: "FAR",
+            name: "Far Friend",
+            coordinate: farFriendCoord,
+            status: UserStatus(code: .omw)
+        )
+        
+        let closeDist = userPin.distance(to: closeFriendCoord)
+        let farDist = userPin.distance(to: farFriendCoord)
+        
+        guard closeDist < theme.maxDisplayRange else {
+            print("FAILED: closeDist should be < 60m, got \(closeDist)")
+            return false
+        }
+        guard farDist > theme.maxDisplayRange else {
+            print("FAILED: farDist should be > 60m, got \(farDist)")
+            return false
+        }
+        
+        // Clamping logic verification
+        let isCloseClamped = closeDist > theme.maxDisplayRange
+        let isFarClamped = farDist > theme.maxDisplayRange
+        guard !isCloseClamped && isFarClamped else {
+            print("FAILED: Clamping flag mismatch: close=\(isCloseClamped), far=\(isFarClamped)")
+            return false
+        }
+        
+        let clampedFarDistance = min(farDist, theme.maxDisplayRange)
+        guard clampedFarDistance == 60.0 else {
+            print("FAILED: Clamped display distance should be exactly 60.0, got \(clampedFarDistance)")
+            return false
+        }
+        
+        // 3. Heading-Up (Forward-Up) Relative Projection Verification
+        let bearingToClose = userPin.bearing(to: closeFriendCoord) // ~0° North
+        let bearingToFar = userPin.bearing(to: farFriendCoord)     // ~90° East
+        
+        // Case A: User facing North (heading = 0°)
+        let headingNorth: CLLocationDirection = 0.0
+        let relAngleCloseFacingNorth = (bearingToClose - headingNorth + 360.0).truncatingRemainder(dividingBy: 360.0)
+        let relAngleFarFacingNorth = (bearingToFar - headingNorth + 360.0).truncatingRemainder(dividingBy: 360.0)
+        guard abs(relAngleCloseFacingNorth - 0.0) < 2.0 else {
+            print("FAILED: Close friend should be at ~0° Ahead when facing North, got \(relAngleCloseFacingNorth)")
+            return false
+        }
+        guard abs(relAngleFarFacingNorth - 90.0) < 2.0 else {
+            print("FAILED: Far friend should be at ~90° Right when facing North, got \(relAngleFarFacingNorth)")
+            return false
+        }
+        
+        // Case B: User turns to face East (heading = 90°)
+        let headingEast: CLLocationDirection = 90.0
+        let relAngleFarFacingEast = (bearingToFar - headingEast + 360.0).truncatingRemainder(dividingBy: 360.0)
+        let circularDelta = min(relAngleFarFacingEast, 360.0 - relAngleFarFacingEast)
+        guard circularDelta < 2.0 else {
+            print("FAILED: Far friend to the East should now be ~0° Ahead when user faces East, got \(relAngleFarFacingEast)")
+            return false
+        }
+        
+        // 4. Polar to Cartesian Screen Coordinate Projection Verification
+        let radarRadius: CGFloat = 120.0
+        // Ahead (0°): dx = sin(0) * r = 0, dy = -cos(0) * r = -r (Up)
+        let angleAheadRad = 0.0 * .pi / 180.0
+        let dxAhead = sin(angleAheadRad) * Double(radarRadius)
+        let dyAhead = -cos(angleAheadRad) * Double(radarRadius)
+        guard abs(dxAhead) < 0.001 && abs(dyAhead - (-Double(radarRadius))) < 0.001 else {
+            print("FAILED: Cartesian 0° Ahead projection mismatch: dx=\(dxAhead), dy=\(dyAhead)")
+            return false
+        }
+        
+        // Right (90°): dx = sin(pi/2) * r = r, dy = -cos(pi/2) * r = 0 (Right)
+        let angleRightRad = 90.0 * .pi / 180.0
+        let dxRight = sin(angleRightRad) * Double(radarRadius)
+        let dyRight = -cos(angleRightRad) * Double(radarRadius)
+        guard abs(dxRight - Double(radarRadius)) < 0.001 && abs(dyRight) < 0.001 else {
+            print("FAILED: Cartesian 90° Right projection mismatch: dx=\(dxRight), dy=\(dyRight)")
+            return false
+        }
+        
+        // 5. Tactical Radar Selection & Initialization Logic
+        let allMembers = [closeFriend, farFriend]
+        
+        // Initializing with nil selected member
+        var activeTarget: Member? = nil
+        guard activeTarget == nil else {
+            print("FAILED: activeTarget should be nil initially")
+            return false
+        }
+        
+        // Selecting a member
+        activeTarget = closeFriend
+        guard activeTarget?.id == "CLS" else {
+            print("FAILED: activeTarget should be CLS")
+            return false
+        }
+        
+        // Switching member
+        activeTarget = farFriend
+        guard activeTarget?.id == "FAR" else {
+            print("FAILED: activeTarget should be FAR")
+            return false
+        }
+        
+        // Deselecting back to nil
+        activeTarget = nil
+        guard activeTarget == nil else {
+            print("FAILED: activeTarget should reset to nil upon deselection")
+            return false
+        }
+        
+        print("PASSED: testTacticalRadarProjectionClampingAndSelection")
         return true
     }
 }

@@ -78,6 +78,39 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     /// Current device battery percentage (0.0 ... 1.0).
     public private(set) var currentBatteryLevel: Float = 1.0
     
+    // MARK: - Dynamic Adaptive Accuracy (Option B)
+    
+    /// Tracks whether the user is actively viewing the Tactical Radar or navigating.
+    public private(set) var isTacticalRadarActive: Bool = false
+    
+    /// True if Core Location accuracy authorization is .fullAccuracy (Precise Location ON).
+    public var isPreciseLocationAuthorized: Bool {
+        #if os(iOS)
+        return locationManager.accuracyAuthorization == .fullAccuracy
+        #else
+        return true
+        #endif
+    }
+    
+    /// Current CoreLocation desiredAccuracy value configured on the hardware manager.
+    public var currentDesiredAccuracy: CLLocationAccuracy {
+        locationManager.desiredAccuracy
+    }
+    
+    /// Current CoreLocation distanceFilter value configured on the hardware manager.
+    public var currentDistanceFilter: CLLocationDistance {
+        locationManager.distanceFilter
+    }
+    
+    /// Current CoreLocation headingFilter value configured on the hardware manager.
+    public var currentHeadingFilter: CLLocationDegrees {
+        #if os(iOS)
+        return locationManager.headingFilter
+        #else
+        return 1.0
+        #endif
+    }
+    
     /// Current Core Location authorization status.
     public private(set) var authorizationStatus: CLAuthorizationStatus
     
@@ -276,6 +309,7 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         
         startMotionTracking()
         updateBatteryState()
+        applyDynamicAccuracy()
         
         if isLiveSharingEnabled {
             startPublishingScheduler()
@@ -556,10 +590,53 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     private func setStationaryState(_ stationary: Bool) {
         guard isStationary != stationary else { return }
         self.isStationary = stationary
+        applyDynamicAccuracy()
         
         // When motion state changes, restart scheduler to adopt new cadence immediately
         if isTracking && isLiveSharingEnabled {
             startPublishingScheduler()
+        }
+    }
+    
+    // MARK: - Tactical Radar & Dynamic Accuracy Control
+    
+    /// Enables or disables high-precision navigation mode for the tactical radar.
+    public func setTacticalRadarActive(_ active: Bool) {
+        guard isTacticalRadarActive != active else { return }
+        self.isTacticalRadarActive = active
+        applyDynamicAccuracy()
+    }
+    
+    /// Dynamically tunes Core Location desiredAccuracy, distanceFilter, and headingFilter:
+    /// - Tactical Radar active -> kCLLocationAccuracyBestForNavigation + 0° heading filter (Dual-frequency L1/L5 GPS).
+    /// - Festival Survival Mode (<20% battery) -> kCLLocationAccuracyHundredMeters + 25m distanceFilter.
+    /// - Stationary (standing/dancing at stage) -> kCLLocationAccuracyHundredMeters + 15m distanceFilter.
+    /// - Moving (walking between stages) -> kCLLocationAccuracyBest + 1° headingFilter.
+    public func applyDynamicAccuracy() {
+        if isTacticalRadarActive {
+            locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+            locationManager.distanceFilter = kCLDistanceFilterNone
+            #if os(iOS)
+            locationManager.headingFilter = kCLHeadingFilterNone
+            #endif
+        } else if isSurvivalModeActive {
+            locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            locationManager.distanceFilter = 25.0
+            #if os(iOS)
+            locationManager.headingFilter = 5.0
+            #endif
+        } else if isStationary {
+            locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            locationManager.distanceFilter = 15.0
+            #if os(iOS)
+            locationManager.headingFilter = 3.0
+            #endif
+        } else {
+            locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            locationManager.distanceFilter = kCLDistanceFilterNone
+            #if os(iOS)
+            locationManager.headingFilter = 1.0
+            #endif
         }
     }
     
@@ -586,6 +663,7 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         
         if isSurvivalModeActive != survival {
             self.isSurvivalModeActive = survival
+            applyDynamicAccuracy()
             if isTracking && isLiveSharingEnabled {
                 startPublishingScheduler()
             }

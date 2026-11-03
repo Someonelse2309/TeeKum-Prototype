@@ -8,30 +8,57 @@
 import SwiftUI
 import CoreLocation
 
-/// Pure MVVM View providing directed 360° compass navigation toward a selected friend
-/// and 1-tap high-visibility visual screen strobe torch to hold above festival crowds.
+/// Full-screen Tactical Radar and visual crowd finder beacon.
+/// Replaces the legacy compass dial with a dynamic 15m/30m/60m tactical radar
+/// that displays all group members, allows targeting/highlighting a friend,
+/// and retains the high-visibility neon strobe torch to wave above crowds.
 public struct FinderBeaconView: View {
-    public let friend: Member
+    public let members: [Member]
     public let userLocation: LocationPin?
     public let currentHeading: CLLocationDirection?
+    public let locationService: (any LocationServiceProvider)?
     public let onDismiss: () -> Void
     
+    @State private var selectedMember: Member?
     @State private var isStrobeActive: Bool = false
     @State private var strobeColorIndex: Int = 0
     @State private var strobeTask: Task<Void, Never>?
     
     private let strobeColors: [Color] = [.yellow, .cyan, .green, .white]
     
+    /// Primary initializer supporting the multi-peer tactical radar.
+    public init(
+        members: [Member],
+        initialSelectedMember: Member? = nil,
+        userLocation: LocationPin? = nil,
+        currentHeading: CLLocationDirection? = nil,
+        locationService: (any LocationServiceProvider)? = nil,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.members = members
+        self._selectedMember = State(initialValue: initialSelectedMember)
+        self.userLocation = userLocation
+        self.currentHeading = currentHeading
+        self.locationService = locationService
+        self.onDismiss = onDismiss
+    }
+    
+    /// Legacy convenience initializer for single-friend navigation.
     public init(
         friend: Member,
         userLocation: LocationPin? = nil,
         currentHeading: CLLocationDirection? = nil,
+        locationService: (any LocationServiceProvider)? = nil,
         onDismiss: @escaping () -> Void
     ) {
-        self.friend = friend
-        self.userLocation = userLocation
-        self.currentHeading = currentHeading
-        self.onDismiss = onDismiss
+        self.init(
+            members: [friend],
+            initialSelectedMember: friend,
+            userLocation: userLocation,
+            currentHeading: currentHeading,
+            locationService: locationService,
+            onDismiss: onDismiss
+        )
     }
     
     public var body: some View {
@@ -39,28 +66,44 @@ public struct FinderBeaconView: View {
             if isStrobeActive {
                 strobeView
             } else {
-                normalCompassView
+                normalRadarView
             }
         }
         .preferredColorScheme(.dark)
+        .onAppear {
+            locationService?.setTacticalRadarActive(true)
+        }
+        .onDisappear {
+            locationService?.setTacticalRadarActive(false)
+        }
     }
     
-    // MARK: - Normal Compass Navigation View
+    // MARK: - Normal Tactical Radar View
     
-    private var normalCompassView: some View {
+    private var normalRadarView: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             
-            VStack(spacing: 24) {
-                // Top Header Bar
-                HStack {
+            VStack(spacing: 12) {
+                // MARK: - Top Header Bar
+                HStack(alignment: .center) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Navigating To")
-                            .font(.caption)
-                            .foregroundStyle(.gray)
-                        Text(friend.name)
+                        HStack(spacing: 6) {
+                            Text(selectedMember != nil ? "NAVIGATING TO" : "FESTIVAL RADAR")
+                                .font(.caption.bold().monospaced())
+                                .foregroundStyle(selectedMember != nil ? .yellow : .cyan)
+                            
+                            if selectedMember == nil {
+                                Text("(\(members.count) Friends)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.gray)
+                            }
+                        }
+                        
+                        Text(selectedMember?.name ?? "360° Tactical Radar")
                             .font(.title2.bold())
                             .foregroundStyle(.white)
+                            .lineLimit(1)
                     }
                     
                     Spacer()
@@ -72,102 +115,169 @@ public struct FinderBeaconView: View {
                             .font(.title2)
                             .foregroundStyle(.gray)
                     }
+                    .accessibilityLabel("Close Radar")
                 }
                 .padding(.horizontal)
-                .padding(.top, 16)
+                .padding(.top, 12)
                 
-                Spacer()
-                
-                // 360° Rotating Compass Arrow
-                let relativeAngle = computeRelativeBearing()
-                let distance = computeDistance()
-                
-                ZStack {
-                    // Outer Compass Dial Ring
-                    Circle()
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 2)
-                        .frame(width: 260, height: 260)
-                    
-                    // Cardinal Tick Marks
-                    ForEach(0..<12) { i in
-                        Rectangle()
-                            .fill(i % 3 == 0 ? Color.white : Color.gray.opacity(0.4))
-                            .frame(width: 2, height: i % 3 == 0 ? 14 : 8)
-                            .offset(y: -120)
-                            .rotationEffect(.degrees(Double(i) * 30.0))
+                // MARK: - Selected Target Status Pill / HUD
+                if let target = selectedMember {
+                    selectedTargetHUD(for: target)
+                        .padding(.horizontal)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "scope")
+                            .font(.caption)
+                            .foregroundStyle(.cyan)
+                        Text("Tap any blip or card below to lock onto a friend")
+                            .font(.caption)
+                            .foregroundStyle(.gray)
                     }
-                    
-                    // Directional Pointer Arrow
-                    VStack(spacing: 0) {
-                        Image(systemName: "location.north.fill")
-                            .font(.system(size: 72))
-                            .foregroundStyle(.green)
-                            .shadow(color: .green.opacity(0.6), radius: 12)
-                        Spacer()
-                    }
-                    .frame(height: 200)
-                    .rotationEffect(.degrees(relativeAngle))
-                    .animation(.spring(response: 0.35, dampingFraction: 0.7), value: relativeAngle)
-                    
-                    // Center Distance Badge
-                    VStack(spacing: 4) {
-                        if let dist = distance {
-                            Text(dist < 8.0 ? "VERY CLOSE" : (dist >= 1000 ? String(format: "%.1f km", dist / 1000.0) : String(format: "%.0f m", dist)))
-                                .font(.title3.bold().monospaced())
-                                .foregroundStyle(dist < 8.0 ? .yellow : .white)
-                            
-                            if dist < 8.0 {
-                                Text("Within UWB Range (<8m)")
-                                    .font(.caption2.bold())
-                                    .foregroundStyle(.yellow)
-                            }
-                        } else {
-                            Text("No GPS Fix")
-                                .font(.footnote)
-                                .foregroundStyle(.gray)
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.black.opacity(0.85))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.vertical, 4)
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Compass pointing toward \(friend.name)")
-                .accessibilityValue(distance != nil ? "\(Int(distance!)) meters away" : "Distance unknown")
                 
-                Spacer()
+                // MARK: - Main Radar Canvas
+                RadarView(
+                    members: members,
+                    userLocation: userLocation,
+                    currentHeading: currentHeading,
+                    selectedMember: $selectedMember,
+                    theme: .standard
+                )
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 
-                // Bottom Strobe Beacon Button
-                VStack(spacing: 12) {
+                // MARK: - Bottom Horizontal Friend Cards Carousel
+                if !members.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(members) { member in
+                                let dist = computeDistance(to: member)
+                                let bearing = computeRelativeBearing(to: member)
+                                
+                                RadarFriendCard(
+                                    member: member,
+                                    distance: dist,
+                                    relativeBearing: bearing,
+                                    isSelected: selectedMember?.id == member.id,
+                                    theme: .standard,
+                                    onTap: {
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                                            if selectedMember?.id == member.id {
+                                                selectedMember = nil
+                                            } else {
+                                                selectedMember = member
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                    .frame(height: 56)
+                }
+                
+                // MARK: - Visual Screen Strobe Torch Button
+                VStack(spacing: 6) {
                     Button {
                         startStrobe()
                     } label: {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 8) {
                             Image(systemName: "flashlight.on.fill")
-                                .font(.title3)
-                            Text("HOLD UP VISUAL STROBE")
-                                .font(.headline.bold())
+                                .font(.headline)
+                            Text("HOLD UP VISUAL STROBE TORCH")
+                                .font(.subheadline.bold())
                         }
                         .frame(maxWidth: .infinity)
-                        .padding()
+                        .padding(.vertical, 12)
                         .background(Color.yellow)
                         .foregroundStyle(.black)
                         .clipShape(RoundedRectangle(cornerRadius: 14))
-                        .shadow(color: .yellow.opacity(0.4), radius: 8)
+                        .shadow(color: Color.yellow.opacity(0.35), radius: 6)
                     }
-                    .accessibilityLabel("Activate visual strobe beacon")
-                    .accessibilityHint("Turns screen into a flashing torch to wave above crowds.")
+                    .accessibilityLabel("Activate visual strobe torch")
+                    .accessibilityHint("Turns screen into a flashing neon beacon to wave above crowds.")
                     
-                    Text("Turn your screen into a neon strobe to help your friend spot you above the crowd.")
-                        .font(.caption2)
-                        .multilineTextAlignment(.center)
+                    Text("Hold screen in the air to help friends visually spot you in the crowd.")
+                        .font(.system(size: 10))
                         .foregroundStyle(.gray)
-                        .padding(.horizontal)
                 }
                 .padding(.horizontal)
-                .padding(.bottom, 24)
+                .padding(.bottom, 16)
             }
         }
+    }
+    
+    // MARK: - Selected Target HUD Banner
+    
+    private func selectedTargetHUD(for target: Member) -> some View {
+        let dist = computeDistance(to: target)
+        let relBearing = computeRelativeBearing(to: target)
+        
+        return HStack(spacing: 12) {
+            // Target Initials Badge
+            Text(target.initials)
+                .font(.system(size: 14, weight: .black, design: .rounded))
+                .padding(8)
+                .background(Color.yellow)
+                .foregroundStyle(.black)
+                .clipShape(Circle())
+            
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(target.name)
+                        .font(.headline.bold())
+                        .foregroundStyle(.white)
+                    
+                    Text(target.status.code.emoji)
+                        .font(.subheadline)
+                }
+                
+                HStack(spacing: 8) {
+                    if let d = dist {
+                        Text(d < 8.0 ? "VERY CLOSE (<8m)" : (d >= 1000 ? String(format: "%.1f km", d / 1000.0) : String(format: "%.0f m", d)))
+                            .font(.caption.bold().monospaced())
+                            .foregroundStyle(d < 8.0 ? .yellow : .green)
+                    } else {
+                        Text("No GPS Fix")
+                            .font(.caption)
+                            .foregroundStyle(.gray)
+                    }
+                    
+                    if let bearing = relBearing {
+                        Text("• \(clockDirection(for: bearing))")
+                            .font(.caption.bold())
+                            .foregroundStyle(.cyan)
+                    }
+                }
+            }
+            
+            Spacer()
+            
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    selectedMember = nil
+                }
+            } label: {
+                Text("Clear")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.15))
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.yellow.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.yellow.opacity(0.4), lineWidth: 1)
+        )
     }
     
     // MARK: - Screen Strobe Flasher View
@@ -197,13 +307,14 @@ public struct FinderBeaconView: View {
                 
                 Spacer()
                 
-                Text(friend.name.uppercased())
-                    .font(.system(size: 48, weight: .black))
+                Text((selectedMember?.name ?? "HERE").uppercased())
+                    .font(.system(size: 44, weight: .black))
                     .foregroundStyle(.black)
+                    .lineLimit(1)
                 
                 Text("LOOK HERE!")
-                    .font(.system(size: 32, weight: .heavy))
-                    .foregroundStyle(.black.opacity(0.8))
+                    .font(.system(size: 30, weight: .heavy))
+                    .foregroundStyle(.black.opacity(0.85))
                 
                 Spacer()
             }
@@ -234,20 +345,33 @@ public struct FinderBeaconView: View {
         strobeTask = nil
     }
     
-    // MARK: - Math Helpers
+    // MARK: - Computations
     
-    private func computeDistance() -> CLLocationDistance? {
-        guard let userCoord = userLocation?.coordinate, let friendCoord = friend.coordinate else { return nil }
+    private func computeDistance(to member: Member) -> CLLocationDistance? {
+        guard let userCoord = userLocation?.coordinate, let friendCoord = member.coordinate else { return nil }
         let uLoc = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
         let fLoc = CLLocation(latitude: friendCoord.latitude, longitude: friendCoord.longitude)
         return uLoc.distance(from: fLoc)
     }
     
-    private func computeRelativeBearing() -> Double {
-        guard let userLoc = userLocation, let friendCoord = friend.coordinate else { return 0.0 }
+    private func computeRelativeBearing(to member: Member) -> Double? {
+        guard let userLoc = userLocation, let friendCoord = member.coordinate else { return nil }
         let bearingToTarget = userLoc.bearing(to: friendCoord)
         let heading = currentHeading ?? 0.0
         let relative = bearingToTarget - heading
         return (relative + 360.0).truncatingRemainder(dividingBy: 360.0)
+    }
+    
+    private func clockDirection(for relativeAngle: Double) -> String {
+        let normalized = (relativeAngle + 360.0).truncatingRemainder(dividingBy: 360.0)
+        let hour = Int((normalized + 15.0) / 30.0) % 12
+        let displayHour = hour == 0 ? 12 : hour
+        if displayHour == 12 {
+            return "Ahead"
+        } else if displayHour == 6 {
+            return "Behind"
+        } else {
+            return "\(displayHour) o'clock"
+        }
     }
 }
