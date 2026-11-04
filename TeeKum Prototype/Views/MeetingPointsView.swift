@@ -101,15 +101,30 @@ public struct MeetingPointsView: View {
                 
                 Spacer()
                 
-                Button("Cancel", role: .destructive) {
-                    meetingPointViewModel.cancelMeetingPoint()
+                let localInitials = sessionViewModel.activeSession?.localInitials ?? ""
+                if active.proposerId == localInitials {
+                    Button("Cancel", role: .destructive) {
+                        meetingPointViewModel.cancelMeetingPoint(callerId: localInitials)
+                    }
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.red.opacity(0.15))
+                    .clipShape(Capsule())
+                } else {
+                    HStack(spacing: 4) {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 9))
+                        Text("Set by \(active.proposerId)")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(.yellow)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3.5)
+                    .background(Color.yellow.opacity(0.15))
+                    .clipShape(Capsule())
                 }
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(.red)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color.red.opacity(0.15))
-                .clipShape(Capsule())
             }
             
             VStack(alignment: .leading, spacing: 4) {
@@ -281,8 +296,52 @@ public struct MeetingPointsView: View {
     // MARK: - Proposal Section
     
     private var proposalSection: some View {
+        Group {
+            let localInitials = sessionViewModel.activeSession?.localInitials ?? ""
+            if let active = meetingPointViewModel.activeMeetingPoint,
+               !active.isExpired,
+               active.proposerId != localInitials {
+                rendezvousLockedNotice(setterId: active.proposerId)
+            } else {
+                activeProposalForm(isUpdate: meetingPointViewModel.activeMeetingPoint != nil && !meetingPointViewModel.activeMeetingPoint!.isExpired)
+            }
+        }
+    }
+    
+    private func rendezvousLockedNotice(setterId: String) -> some View {
+        VStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Color.yellow.opacity(0.15))
+                    .frame(width: 44, height: 44)
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Color.yellow)
+            }
+            
+            Text("Rendezvous Locked")
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+            
+            Text("Set by \(setterId). Another member cannot set the meeting point until \(setterId) unsets this rendezvous.")
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.gray)
+                .padding(.horizontal, 16)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(20)
+        .background(Color.white.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.yellow.opacity(0.3), lineWidth: 1)
+        )
+    }
+    
+    private func activeProposalForm(isUpdate: Bool) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("PROPOSE RENDEZVOUS")
+            Text(isUpdate ? "UPDATE RENDEZVOUS" : "PROPOSE RENDEZVOUS")
                 .font(.system(size: 11, weight: .black, design: .rounded))
                 .foregroundStyle(.gray)
                 .tracking(0.6)
@@ -405,8 +464,8 @@ public struct MeetingPointsView: View {
                 proposeCurrentMeeting()
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "mappin.and.ellipse")
-                    Text("Broadcast Rendezvous")
+                    Image(systemName: isUpdate ? "arrow.triangle.2.circlepath" : "mappin.and.ellipse")
+                    Text(isUpdate ? "Broadcast Updated Rendezvous" : "Broadcast Rendezvous")
                 }
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .frame(maxWidth: .infinity)

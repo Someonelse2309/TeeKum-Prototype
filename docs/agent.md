@@ -180,13 +180,13 @@ graph TD
 - **Close-Range Transition (<8 meters):** Smoothly and automatically transitions into Apple Nearby Interaction (Ultra-Wideband U1/U2) precision radar, pointing with centimeter accuracy ("3.2m at 2 o'clock").
 - **Visual Strobe Beacon:** 1-tap crowd torch button turns the screen into a high-visibility flashing neon strobe to wave above dark crowds.
 
-#### User Story 4: Single Active Meeting Point & One-Tap Acceptance
-- **Goal:** Synchronize a group rendezvous spot without confusing duplicates.
+#### User Story 4: Single Active Meeting Point & Setter Lock Rule
+- **Goal:** Synchronize a single group rendezvous spot without conflicting overwrites.
 - **Single Active Rule:** Only **ONE** active meeting point exists for the group at any given time.
-- **Creation & Map Interaction:** Any member can propose a meeting point via two streamlined methods:
-  1. **Interactive Map Long-Press:** A 0.5-second long-press on the `MapReader`-enabled MapKit view drops a temporary visual pin at the exact touch coordinate and opens the proposal sheet.
-  2. **Curated Dropdown Menu:** The `SetMeetingPointSheet` provides a pre-populated dropdown picker (`PremadeMeetingLocation`) containing 16 popular festival landmarks (*"Main Stage"*, *"Sound Booth"*, *"Medical Tent"*, *"Water Station"*, *"Food Court"*, *"Merch Tent"*, etc.) with a sensible default of `"Meeting Point"`. This eliminates the need for frustrating freeform text typing on high-glare festival grounds.
-- **Acceptance:** Friends receive a non-intrusive banner notification and tap **"I'll be there"** or **"Can't make it"**, syncing attendance status to everyone's map in real time.
+- **Setter Lock Rule:** When a member sets a meeting point, another person cannot set or change the meeting point before the original setter unsets (cancels) it or it auto-expires (1-hour cutoff).
+  - **Setter Privileges:** The setter can update the meetup time/location and can unset (cancel) the meeting point.
+  - **Non-Setter Constraints:** While an active rendezvous is set, non-setters are locked out from setting new meeting points. Map long-press alerts with haptic warning and locked toast (*"Only [Setter] can unset or change the active rendezvous"*). Proposal sheets display lock status with disabled broadcast buttons. Inbound mesh proposals or cancellations from non-setters are rejected by the protocol engine (`applyInboundUpdate`).
+  - **Attendance Confirmation:** Friends tap **"I'll be there"**, **"Can't make it"**, or auto-arrive within 25m, syncing attendance in real time.
 
 #### User Story 5: Festival Group Mesh Chat & Quick Preset Chips
 - **Goal:** Rapidly communicate status, location hints, or rendezvous intentions with friends across the festival mesh.
@@ -981,7 +981,7 @@ Use a **Hybrid AODV-inspired on-demand routing approach** with bounded flooding 
 9.  Never compromise cryptography to hit a packet size target.
 10. Architecture must remain **pure, simple MVVM** with **zero external dependencies**.
 11. Group creation is **100% serverless** via URL fragment links and QR barcodes.
-12. There is **only ONE active meeting point** at a time for the group.
+12. There is **only ONE active meeting point** at a time for the group. When a member sets a meeting point, another person cannot set the meeting point before the setter unsets it or it auto-expires.
 13. Wire format is fixed at **56 bytes** (Protocol v2) with big-endian integer coordinates, 24-bit session ID, and full 16-byte authentication tags.
 14. **Mandatory Development Logging:** Every agent or developer modifying the codebase MUST maintain and update the chronological log in [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md). Every development task, feature addition, bug fix, architectural decision, and test verification must be logged to ensure seamless context handoff and traceability.
 

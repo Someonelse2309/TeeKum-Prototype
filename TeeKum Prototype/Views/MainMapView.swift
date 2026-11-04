@@ -164,9 +164,13 @@ public struct MainMapView: View {
             droppedPinCoordinate = nil
         }) {
             if let coord = droppedPinCoordinate {
+                let isLocked = meetingPointViewModel.isLockedByOtherSetter
+                let setter = meetingPointViewModel.currentSetterId ?? ""
                 SetMeetingPointSheet(
                     coordinate: coord,
                     activeMeetingPoint: meetingPointViewModel.activeMeetingPoint,
+                    isLocked: isLocked,
+                    lockReason: isLocked ? "Locked by \(setter). Only \(setter) can change it." : nil,
                     onConfirm: { meetupTime, isRightNow, chosenCoord in
                         if let session = sessionViewModel.activeSession {
                             meetingPointViewModel.proposeMeetingPoint(
@@ -379,6 +383,22 @@ public struct MainMapView: View {
     }
     
     private func handleMapLongPress(at coordinate: CLLocationCoordinate2D) {
+        if let active = meetingPointViewModel.activeMeetingPoint,
+           !active.isExpired,
+           let localInitials = sessionViewModel.activeSession?.localInitials,
+           active.proposerId != localInitials {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            NotificationService.shared.showInAppToast(
+                InAppToast(
+                    title: "Rendezvous Locked",
+                    message: "Only \(active.proposerId) can unset or change the active rendezvous.",
+                    systemImage: "lock.fill",
+                    accentColor: Color.yellow
+                )
+            )
+            return
+        }
+        
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         droppedPinCoordinate = coordinate
         isShowingDroppedPinSheet = true

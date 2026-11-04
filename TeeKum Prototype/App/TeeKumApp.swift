@@ -651,7 +651,8 @@ struct TeeKumApp: App {
             
         case .meetingUpdate:
             guard let update = try? MeetingUpdatePayload.deserialize(from: decrypted) else { return }
-            meetingPointViewModel.applyInboundUpdate(update)
+            let applied = meetingPointViewModel.applyInboundUpdate(update)
+            guard applied else { return }
             if update.senderInitials != session.localInitials {
                 let actionText = update.action == .propose ? "proposed rendezvous" : (update.action == .accept ? "is attending" : (update.action == .cancel ? "canceled rendezvous" : "declined"))
                 let displayTitle = meetingPointViewModel.activeMeetingPoint?.formattedTitle ?? "\(update.senderInitials)'s Rendezvous"

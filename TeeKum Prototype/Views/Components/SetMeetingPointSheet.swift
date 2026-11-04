@@ -13,6 +13,8 @@ import CoreLocation
 public struct SetMeetingPointSheet: View {
     public let coordinate: CLLocationCoordinate2D
     public let activeMeetingPoint: MeetingPoint?
+    public let isLocked: Bool
+    public let lockReason: String?
     public let onConfirm: (_ meetupTime: Date, _ isRightNow: Bool, _ coordinate: CLLocationCoordinate2D) -> Void
     public let onCancel: () -> Void
     
@@ -23,11 +25,15 @@ public struct SetMeetingPointSheet: View {
     public init(
         coordinate: CLLocationCoordinate2D,
         activeMeetingPoint: MeetingPoint?,
+        isLocked: Bool = false,
+        lockReason: String? = nil,
         onConfirm: @escaping (_ meetupTime: Date, _ isRightNow: Bool, _ coordinate: CLLocationCoordinate2D) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.coordinate = coordinate
         self.activeMeetingPoint = activeMeetingPoint
+        self.isLocked = isLocked
+        self.lockReason = lockReason
         self.onConfirm = onConfirm
         self.onCancel = onCancel
     }
@@ -49,12 +55,26 @@ public struct SetMeetingPointSheet: View {
             VStack(alignment: .leading, spacing: 18) {
                 // Header with Coordinates & Active Replacement Warning
                 VStack(alignment: .leading, spacing: 6) {
-                    if let active = activeMeetingPoint {
+                    if isLocked {
+                        HStack(spacing: 6) {
+                            Image(systemName: "lock.fill")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.yellow)
+                            Text(lockReason ?? "Rendezvous is locked by the setter.")
+                                .font(.caption.bold())
+                                .foregroundStyle(.yellow)
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.yellow.opacity(0.15))
+                        .clipShape(Capsule())
+                    } else if let active = activeMeetingPoint {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(.caption2.bold())
                                 .foregroundStyle(.yellow)
-                            Text("Replaces active spot: \(active.formattedTitle)")
+                            Text("Updates active rendezvous: \(active.formattedTitle)")
                                 .font(.caption.bold())
                                 .foregroundStyle(.yellow)
                                 .lineLimit(1)
@@ -179,20 +199,22 @@ public struct SetMeetingPointSheet: View {
                 
                 // Primary Broadcast Action
                 Button {
+                    guard !isLocked else { return }
                     onConfirm(computedMeetupDate, isRightNowSelection, coordinate)
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "mappin.and.ellipse")
-                        Text("Broadcast Rendezvous")
+                        Image(systemName: isLocked ? "lock.fill" : (activeMeetingPoint != nil ? "arrow.triangle.2.circlepath" : "mappin.and.ellipse"))
+                        Text(isLocked ? "Rendezvous Locked" : (activeMeetingPoint != nil ? "Broadcast Updated Rendezvous" : "Broadcast Rendezvous"))
                     }
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
-                    .background(Color.yellow)
-                    .foregroundStyle(.black)
+                    .background(isLocked ? Color.gray.opacity(0.3) : Color.yellow)
+                    .foregroundStyle(isLocked ? Color.gray : Color.black)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: Color.yellow.opacity(0.3), radius: 6)
+                    .shadow(color: isLocked ? Color.clear : Color.yellow.opacity(0.3), radius: 6)
                 }
+                .disabled(isLocked)
             }
             .padding(20)
             .background(Color(red: 0.08, green: 0.08, blue: 0.10).ignoresSafeArea())

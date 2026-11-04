@@ -60,8 +60,55 @@ public final class MeetingPointViewModel {
         self.transport = nil
     }
     
-    /// Proposes a new rendezvous point (replaces any previous active meeting point)
+    // MARK: - Meeting Point Locking & Setter Rules
+    
+    /// Evaluates whether the specified member initials are permitted to set or update the active rendezvous.
+    /// Rule: When someone sets a meeting point, another person cannot set the meeting point
+    /// before the setter unsets the meeting point or it auto-expires.
+    public func canSetMeetingPoint(by proposerId: String) -> Bool {
+        checkExpiration()
+        guard let active = activeMeetingPoint, !active.isExpired else {
+            // No active rendezvous exists; any group member is free to propose!
+            return true
+        }
+        let sanitized = InitialsCodec.sanitize(proposerId)
+        // If an active rendezvous exists, ONLY the original setter is permitted to update or move it.
+        return active.proposerId == sanitized
+    }
+    
+    /// Evaluates whether the specified member initials are permitted to unset (cancel) the active rendezvous.
+    /// Rule: Only the setter can unset the meeting point.
+    public func canUnsetMeetingPoint(by callerId: String) -> Bool {
+        guard let active = activeMeetingPoint else { return false }
+        let sanitized = InitialsCodec.sanitize(callerId)
+        return active.proposerId == sanitized
+    }
+    
+    /// Returns true if an active rendezvous is currently set by someone other than the local user.
+    public var isLockedByOtherSetter: Bool {
+        checkExpiration()
+        guard let active = activeMeetingPoint, !active.isExpired else { return false }
+        guard let local = sessionProvider?()?.localInitials else { return false }
+        return active.proposerId != InitialsCodec.sanitize(local)
+    }
+    
+    /// Returns true if the active rendezvous was proposed by the local user.
+    public var isLocalUserSetter: Bool {
+        checkExpiration()
+        guard let local = sessionProvider?()?.localInitials else { return false }
+        return canUnsetMeetingPoint(by: local)
+    }
+    
+    /// The initials of the member who set the active meeting point, or nil if none.
+    public var currentSetterId: String? {
+        checkExpiration()
+        return activeMeetingPoint?.proposerId
+    }
+    
+    /// Proposes a new rendezvous point (or updates the existing rendezvous if proposed by the setter)
     /// and broadcasts the proposal over the mesh network with a higher TTL (15 hops).
+    /// Returns `true` if accepted and broadcast; returns `false` if blocked by another active setter.
+    @discardableResult
     public func proposeMeetingPoint(
         coordinate: CLLocationCoordinate2D,
         meetupTime: Date = Date(),
@@ -69,16 +116,22 @@ public final class MeetingPointViewModel {
         anchorToProposerGPS: Bool = false,
         proposerId: String,
         arrivalRadiusMeters: Double = 25.0
-    ) {
+    ) -> Bool {
+        let sanitizedProposer = InitialsCodec.sanitize(proposerId)
+        guard canSetMeetingPoint(by: sanitizedProposer) else {
+            print("[MeetingPointViewModel] Blocked rendezvous proposal by '\(sanitizedProposer)': active rendezvous locked by setter '\(activeMeetingPoint?.proposerId ?? "")'")
+            return false
+        }
+        
         let point = MeetingPoint(
             coordinate: coordinate,
             meetupTime: meetupTime,
             createdAt: Date(),
-            proposerId: proposerId,
+            proposerId: sanitizedProposer,
             isRightNow: isRightNow,
             anchorToProposerGPS: anchorToProposerGPS,
             arrivalRadiusMeters: arrivalRadiusMeters,
-            attendance: [proposerId: .attending]
+            attendance: [sanitizedProposer: .attending]
         )
         self.activeMeetingPoint = point
         self.localAttendanceStatus = .attending
@@ -86,6 +139,7 @@ public final class MeetingPointViewModel {
         Task { [weak self] in
             await self?.broadcastMeetingUpdate(action: .propose, meetingPoint: point)
         }
+        return true
     }
     
     /// Checks whether the user has reached the active rendezvous spot and auto-broadcasts arrival.
@@ -130,15 +184,25 @@ public final class MeetingPointViewModel {
         }
     }
     
-    /// Cancels the current meeting point and broadcasts cancellation over the mesh.
-    public func cancelMeetingPoint() {
-        guard let point = activeMeetingPoint else { return }
+    /// Cancels (unsets) the current active meeting point and broadcasts cancellation over the mesh.
+    /// Rule: Only the setter who created the meeting point can unset it.
+    /// Returns `true` if cancelled; returns `false` if blocked because caller is not the setter.
+    @discardableResult
+    public func cancelMeetingPoint(callerId: String? = nil) -> Bool {
+        guard let point = activeMeetingPoint else { return false }
+        let caller = callerId ?? sessionProvider?()?.localInitials ?? point.proposerId
+        guard canUnsetMeetingPoint(by: caller) else {
+            print("[MeetingPointViewModel] Blocked rendezvous cancellation by '\(caller)': only setter '\(point.proposerId)' can unset this meeting point")
+            return false
+        }
+        
         self.activeMeetingPoint = nil
         self.localAttendanceStatus = nil
         
         Task { [weak self] in
             await self?.broadcastMeetingUpdate(action: .cancel, meetingPoint: point)
         }
+        return true
     }
     
     /// Syncs the current active meeting point to newly connected or late-joining peers.
@@ -148,9 +212,22 @@ public final class MeetingPointViewModel {
     }
     
     /// Applies an authenticated inbound meeting update received over the mesh (without re-broadcasting).
-    public func applyInboundUpdate(_ update: MeetingUpdatePayload) {
+    /// Enforces the lock rule: When someone sets a meeting point, another person cannot set the
+    /// meeting point before the setter unsets the meeting point.
+    /// Returns `true` if applied; `false` if rejected by the lock rule.
+    @discardableResult
+    public func applyInboundUpdate(_ update: MeetingUpdatePayload) -> Bool {
         switch update.action {
         case .propose:
+            checkExpiration()
+            // Lock rule: If an active unexpired meeting point exists, another person cannot set it before setter unsets it.
+            if let existing = activeMeetingPoint, !existing.isExpired {
+                guard existing.proposerId == update.senderInitials else {
+                    print("[MeetingPointViewModel] Inbound proposal from '\(update.senderInitials)' rejected; active rendezvous locked by setter '\(existing.proposerId)'")
+                    return false
+                }
+            }
+            
             let mp = MeetingPoint(
                 id: update.meetingPointId,
                 coordinate: update.coordinate,
@@ -168,13 +245,22 @@ public final class MeetingPointViewModel {
                 if let localInitials = sessionProvider?()?.localInitials, update.senderInitials != localInitials {
                     self.localAttendanceStatus = nil
                 }
+                return true
             }
+            return false
             
         case .cancel:
-            if activeMeetingPoint?.id == update.meetingPointId {
-                self.activeMeetingPoint = nil
-                self.localAttendanceStatus = nil
+            guard let existing = activeMeetingPoint, existing.id == update.meetingPointId else {
+                return false
             }
+            // Lock rule: Only the setter who proposed this rendezvous can cancel it over the mesh.
+            guard existing.proposerId == update.senderInitials else {
+                print("[MeetingPointViewModel] Inbound cancel from '\(update.senderInitials)' rejected; only setter '\(existing.proposerId)' can unset this rendezvous")
+                return false
+            }
+            self.activeMeetingPoint = nil
+            self.localAttendanceStatus = nil
+            return true
             
         case .accept, .decline:
             if var mp = activeMeetingPoint, mp.id == update.meetingPointId {
@@ -183,7 +269,9 @@ public final class MeetingPointViewModel {
                 if let localInitials = sessionProvider?()?.localInitials, update.senderInitials == localInitials {
                     self.localAttendanceStatus = update.attendanceStatus
                 }
+                return true
             }
+            return false
         }
     }
     

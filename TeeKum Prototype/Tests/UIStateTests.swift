@@ -32,9 +32,10 @@ public struct UIStateTests {
         if !(await testSessionTeardownAndCleanUIReset()) { passed = false }
         if !(await testSOSMemberRosterAndEmergencyVisualState()) { passed = false }
         if !(await testTacticalRadarProjectionClampingAndSelection()) { passed = false }
+        if !(await testMeetingPointSetterLockRule()) { passed = false }
         
         if passed {
-            print("--- [UIStateTests] ✓ ALL 13 UI STATE TEST SUITES PASSED ---")
+            print("--- [UIStateTests] ✓ ALL 14 UI STATE TEST SUITES PASSED ---")
         } else {
             print("--- [UIStateTests] ✗ SOME UI STATE TESTS FAILED ---")
         }
@@ -1098,6 +1099,206 @@ public struct UIStateTests {
         }
         
         print("PASSED: testTacticalRadarProjectionClampingAndSelection")
+        return true
+    }
+    
+    // MARK: - 14. Meeting Point Setter Lock Rule
+    
+    @MainActor
+    private static func testMeetingPointSetterLockRule() async -> Bool {
+        print("[TEST] testMeetingPointSetterLockRule...")
+        let mpVM = MeetingPointViewModel()
+        
+        let coord1 = CLLocationCoordinate2D(latitude: 33.6820, longitude: -116.2350)
+        let coord2 = CLLocationCoordinate2D(latitude: 33.6850, longitude: -116.2380)
+        let meetupDate = Date().addingTimeInterval(1800)
+        
+        // 1. Initial state: No active rendezvous -> anyone can set
+        guard mpVM.canSetMeetingPoint(by: "ALX") else {
+            print("FAILED: canSetMeetingPoint should be true when no rendezvous is active")
+            return false
+        }
+        guard mpVM.canSetMeetingPoint(by: "BOB") else {
+            print("FAILED: canSetMeetingPoint should be true for any member initially")
+            return false
+        }
+        
+        // 2. ALX proposes rendezvous -> succeeds and becomes the setter
+        let proposedByAlx = mpVM.proposeMeetingPoint(
+            coordinate: coord1,
+            meetupTime: meetupDate,
+            isRightNow: false,
+            anchorToProposerGPS: false,
+            proposerId: "ALX",
+            arrivalRadiusMeters: 25.0
+        )
+        guard proposedByAlx, let active = mpVM.activeMeetingPoint, active.proposerId == "ALX" else {
+            print("FAILED: ALX should successfully set the initial meeting point")
+            return false
+        }
+        guard mpVM.currentSetterId == "ALX" else {
+            print("FAILED: currentSetterId should be ALX, got \(String(describing: mpVM.currentSetterId))")
+            return false
+        }
+        
+        // 3. Setter ALX can set/update, but other member BOB is locked out
+        guard mpVM.canSetMeetingPoint(by: "ALX") else {
+            print("FAILED: Setter ALX should be allowed to update their active meeting point")
+            return false
+        }
+        guard !mpVM.canSetMeetingPoint(by: "BOB") else {
+            print("FAILED: Non-setter BOB must be blocked from setting while ALX's point is active")
+            return false
+        }
+        
+        // 4. BOB tries to propose a meeting point -> rejected!
+        let proposedByBob = mpVM.proposeMeetingPoint(
+            coordinate: coord2,
+            meetupTime: meetupDate,
+            isRightNow: false,
+            anchorToProposerGPS: false,
+            proposerId: "BOB",
+            arrivalRadiusMeters: 25.0
+        )
+        guard !proposedByBob else {
+            print("FAILED: proposeMeetingPoint by BOB should return false")
+            return false
+        }
+        guard mpVM.activeMeetingPoint?.proposerId == "ALX", mpVM.activeMeetingPoint?.coordinate.latitude == coord1.latitude else {
+            print("FAILED: Active meeting point must remain ALX's coordinate and proposerId")
+            return false
+        }
+        
+        // 5. BOB tries to cancel ALX's meeting point -> rejected!
+        guard !mpVM.canUnsetMeetingPoint(by: "BOB") else {
+            print("FAILED: canUnsetMeetingPoint by BOB must be false")
+            return false
+        }
+        let cancelledByBob = mpVM.cancelMeetingPoint(callerId: "BOB")
+        guard !cancelledByBob else {
+            print("FAILED: cancelMeetingPoint by BOB must return false")
+            return false
+        }
+        guard mpVM.activeMeetingPoint != nil else {
+            print("FAILED: Active meeting point must not be cleared by non-setter BOB")
+            return false
+        }
+        
+        // 6. Mesh inbound proposal from BOB -> rejected by applyInboundUpdate!
+        let rogueProposal = MeetingUpdatePayload(
+            coordinate: coord2,
+            meetupTime: meetupDate,
+            createdAt: Date(),
+            action: .propose,
+            attendanceStatus: .attending,
+            meetingPointId: 99999,
+            senderInitials: "BOB",
+            arrivalRadiusMeters: 25,
+            isRightNow: false,
+            anchorToProposerGPS: false
+        )
+        let appliedRogueProposal = mpVM.applyInboundUpdate(rogueProposal)
+        guard !appliedRogueProposal else {
+            print("FAILED: Inbound proposal from non-setter BOB must be rejected")
+            return false
+        }
+        guard mpVM.activeMeetingPoint?.proposerId == "ALX" else {
+            print("FAILED: Active meeting point must not be overwritten by inbound proposal from BOB")
+            return false
+        }
+        
+        // 7. Mesh inbound cancel from BOB -> rejected by applyInboundUpdate!
+        let rogueCancel = MeetingUpdatePayload(
+            coordinate: coord1,
+            meetupTime: meetupDate,
+            createdAt: Date(),
+            action: .cancel,
+            attendanceStatus: .cantMakeIt,
+            meetingPointId: active.id,
+            senderInitials: "BOB",
+            arrivalRadiusMeters: 25,
+            isRightNow: false,
+            anchorToProposerGPS: false
+        )
+        let appliedRogueCancel = mpVM.applyInboundUpdate(rogueCancel)
+        guard !appliedRogueCancel else {
+            print("FAILED: Inbound cancel from non-setter BOB must be rejected")
+            return false
+        }
+        guard mpVM.activeMeetingPoint != nil else {
+            print("FAILED: Active meeting point must not be cleared by inbound cancel from BOB")
+            return false
+        }
+        
+        // 8. Setter ALX updates their meeting point -> accepted
+        let updatedDate = meetupDate.addingTimeInterval(600)
+        let updateFromAlx = mpVM.proposeMeetingPoint(
+            coordinate: coord2,
+            meetupTime: updatedDate,
+            isRightNow: false,
+            anchorToProposerGPS: false,
+            proposerId: "ALX",
+            arrivalRadiusMeters: 25.0
+        )
+        guard updateFromAlx, mpVM.activeMeetingPoint?.coordinate.latitude == coord2.latitude else {
+            print("FAILED: Setter ALX must be allowed to update rendezvous coordinates")
+            return false
+        }
+        
+        // 9. Setter ALX unsets (cancels) the meeting point -> succeeds
+        guard mpVM.canUnsetMeetingPoint(by: "ALX") else {
+            print("FAILED: canUnsetMeetingPoint by setter ALX must be true")
+            return false
+        }
+        let cancelledByAlx = mpVM.cancelMeetingPoint(callerId: "ALX")
+        guard cancelledByAlx, mpVM.activeMeetingPoint == nil else {
+            print("FAILED: Setter ALX should successfully unset the meeting point")
+            return false
+        }
+        
+        // 10. Once unset, BOB is now permitted to set a new meeting point!
+        guard mpVM.canSetMeetingPoint(by: "BOB") else {
+            print("FAILED: BOB should be allowed to set a meeting point after ALX unset the previous one")
+            return false
+        }
+        let proposedByBobNow = mpVM.proposeMeetingPoint(
+            coordinate: coord2,
+            meetupTime: meetupDate,
+            isRightNow: false,
+            anchorToProposerGPS: false,
+            proposerId: "BOB",
+            arrivalRadiusMeters: 25.0
+        )
+        guard proposedByBobNow, let newActive = mpVM.activeMeetingPoint, newActive.proposerId == "BOB" else {
+            print("FAILED: BOB should successfully set the new meeting point once unset")
+            return false
+        }
+        guard mpVM.currentSetterId == "BOB" else {
+            print("FAILED: currentSetterId should now be BOB")
+            return false
+        }
+        
+        // 11. Now ALX is locked out until BOB unsets it
+        guard !mpVM.canSetMeetingPoint(by: "ALX") else {
+            print("FAILED: ALX must now be locked out from setting while BOB is the active setter")
+            return false
+        }
+        guard !mpVM.cancelMeetingPoint(callerId: "ALX") else {
+            print("FAILED: ALX must not be able to cancel BOB's meeting point")
+            return false
+        }
+        
+        // Clean up: BOB unsets
+        guard mpVM.cancelMeetingPoint(callerId: "BOB") else {
+            print("FAILED: Setter BOB should successfully unset their meeting point")
+            return false
+        }
+        guard mpVM.activeMeetingPoint == nil else {
+            print("FAILED: Active meeting point should be nil after BOB unsets")
+            return false
+        }
+        
+        print("PASSED: testMeetingPointSetterLockRule")
         return true
     }
 }
