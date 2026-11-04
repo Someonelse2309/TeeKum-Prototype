@@ -9,6 +9,49 @@ import Foundation
 import CoreLocation
 import CryptoKit
 
+// MARK: - Mock SOS Audio Alerter for Integration Testing
+
+/// Deterministic mock audio alerter for unit and integration testing.
+/// Tracks exact trigger and stop invocations to verify duplicate suppression.
+final class MockSOSAudioAlerter: SOSAudioAlerting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _triggerCount: Int = 0
+    private var _stopCount: Int = 0
+    
+    var triggerCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _triggerCount
+    }
+    
+    var stopCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _stopCount
+    }
+    
+    init() {}
+    
+    func triggerEmergencyAlertFeedback() {
+        lock.lock()
+        defer { lock.unlock() }
+        _triggerCount += 1
+    }
+    
+    func stopEmergencyAlertFeedback() {
+        lock.lock()
+        defer { lock.unlock() }
+        _stopCount += 1
+    }
+    
+    func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        _triggerCount = 0
+        _stopCount = 0
+    }
+}
+
 // MARK: - Mock In-Memory Transport for SOS Integration Testing
 
 private actor MockSOSPeerTransport: PeerTransport {

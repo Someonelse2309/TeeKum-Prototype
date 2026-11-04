@@ -55,7 +55,7 @@ public struct ChatSheetView: View {
                     bottomInputDock
                 }
             }
-            .navigationBarHidden(true)
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(item: $viewModel.selectedMessageForDetails) { message in
                 RecipientAckBreakdownView(message: message, viewModel: viewModel)
             }

@@ -83,8 +83,7 @@ public final class GroupSessionViewModel {
     /// Enters the festival auto-mesh network using 1 to 3 uppercase initials.
     public func enterAutoMesh(initials: String, colorCode: UInt8? = nil) {
         let cleanInitials = initials.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard cleanInitials.count >= 1 && cleanInitials.count <= 3,
-              cleanInitials.allSatisfy({ $0 >= "A" && $0 <= "Z" }) else {
+        guard InitialsCodec.isValid(cleanInitials) else {
             errorMessage = "Initials must be 1 to 3 uppercase letters (A–Z)."
             return
         }
@@ -98,8 +97,8 @@ public final class GroupSessionViewModel {
         UserDefaults.standard.set(cleanInitials, forKey: Self.localUserNameStorageKey)
     }
     
-    /// Creates a private group with a newly generated 256-bit key, custom name, and initials (1–3 letters).
-    public func createGroup(name: String, localName: String, colorCode: UInt8? = nil) {
+    /// Generates a new GroupSession with a cryptographic 256-bit key for staging/presentation without immediately activating it.
+    public func createDraftSession(name: String, localName: String, colorCode: UInt8? = nil) -> GroupSession {
         let cleanInitials = InitialsCodec.sanitize(localName)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let sessionName = trimmedName.isEmpty ? "Festival Group" : trimmedName
@@ -109,7 +108,7 @@ public final class GroupSessionViewModel {
         let keyData = Data(keyBytes)
         
         let color = colorCode ?? localColor.rawValue
-        let session = GroupSession(
+        return GroupSession(
             sessionId: UInt16.random(in: 1...UInt16.max),
             sessionName: sessionName,
             symmetricKeyData: keyData,
@@ -117,11 +116,16 @@ public final class GroupSessionViewModel {
             localColorCode: color,
             isHost: true
         )
+    }
+    
+    /// Creates a private group with a newly generated 256-bit key, custom name, and initials (1–3 letters).
+    public func createGroup(name: String, localName: String, colorCode: UInt8? = nil) {
+        let session = createDraftSession(name: name, localName: localName, colorCode: colorCode)
         self.activeSession = session
-        self.localUserName = cleanInitials
+        self.localUserName = session.localInitials
         self.errorMessage = nil
         saveStoredSession(session)
-        UserDefaults.standard.set(cleanInitials, forKey: Self.localUserNameStorageKey)
+        UserDefaults.standard.set(session.localInitials, forKey: Self.localUserNameStorageKey)
     }
     
     /// Joins an existing group using decoded invite parameters and custom initials (1–3 letters).

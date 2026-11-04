@@ -108,4 +108,11 @@ nonisolated public enum InitialsCodec {
         }
         return String(letters.prefix(3))
     }
+    
+    /// Validates whether a candidate string is a valid 1 to 3-letter uppercase initial (A–Z).
+    public static func isValid(_ initials: String) -> Bool {
+        let trimmed = initials.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard trimmed.count >= 1 && trimmed.count <= 3 else { return false }
+        return trimmed.allSatisfy { $0 >= "A" && $0 <= "Z" }
+    }
 }

@@ -22,7 +22,7 @@ public struct FinderBeaconView: View {
     public let peerTransport: (any PeerTransport)?
     public let onDismiss: () -> Void
     
-    @ObservedObject private var nearbyService = NearbyInteractionService.shared
+    private var nearbyService = NearbyInteractionService.shared
     @State private var selectedMember: Member?
     @State private var isStrobeActive: Bool = false
     @State private var strobeColorIndex: Int = 0
@@ -51,28 +51,6 @@ public struct FinderBeaconView: View {
         self.session = session
         self.peerTransport = peerTransport
         self.onDismiss = onDismiss
-    }
-    
-    /// Legacy convenience initializer for single-friend navigation.
-    public init(
-        friend: Member,
-        userLocation: LocationPin? = nil,
-        currentHeading: CLLocationDirection? = nil,
-        locationService: (any LocationServiceProvider)? = nil,
-        session: GroupSession? = nil,
-        peerTransport: (any PeerTransport)? = nil,
-        onDismiss: @escaping () -> Void
-    ) {
-        self.init(
-            members: [friend],
-            initialSelectedMember: friend,
-            userLocation: userLocation,
-            currentHeading: currentHeading,
-            locationService: locationService,
-            session: session,
-            peerTransport: peerTransport,
-            onDismiss: onDismiss
-        )
     }
     
     public var body: some View {
@@ -273,7 +251,7 @@ public struct FinderBeaconView: View {
                     
                     HStack(spacing: 8) {
                         if let d = dist {
-                            Text(d < 8.0 ? "VERY CLOSE (<8m)" : (d >= 1000 ? String(format: "%.1f km", d / 1000.0) : String(format: "%.0f m", d)))
+                            Text(d < 8.0 ? "VERY CLOSE (<8m)" : d.formattedDistance())
                                 .font(.caption.bold().monospaced())
                                 .foregroundStyle(d < 8.0 ? .yellow : .green)
                         } else {
@@ -283,7 +261,7 @@ public struct FinderBeaconView: View {
                         }
                         
                         if let bearing = relBearing {
-                            Text("• \(clockDirection(for: bearing))")
+                            Text("• \(bearing.clockDirection)")
                                 .font(.caption.bold())
                                 .foregroundStyle(.cyan)
                         }
@@ -438,10 +416,8 @@ public struct FinderBeaconView: View {
     // MARK: - Computations
     
     private func computeDistance(to member: Member) -> CLLocationDistance? {
-        guard let userCoord = userLocation?.coordinate, let friendCoord = member.coordinate else { return nil }
-        let uLoc = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
-        let fLoc = CLLocation(latitude: friendCoord.latitude, longitude: friendCoord.longitude)
-        return uLoc.distance(from: fLoc)
+        guard let userLoc = userLocation, let friendCoord = member.coordinate else { return nil }
+        return userLoc.distance(to: friendCoord)
     }
     
     private func computeRelativeBearing(to member: Member) -> Double? {
@@ -450,18 +426,5 @@ public struct FinderBeaconView: View {
         let heading = currentHeading ?? 0.0
         let relative = bearingToTarget - heading
         return (relative + 360.0).truncatingRemainder(dividingBy: 360.0)
-    }
-    
-    private func clockDirection(for relativeAngle: Double) -> String {
-        let normalized = (relativeAngle + 360.0).truncatingRemainder(dividingBy: 360.0)
-        let hour = Int((normalized + 15.0) / 30.0) % 12
-        let displayHour = hour == 0 ? 12 : hour
-        if displayHour == 12 {
-            return "Ahead"
-        } else if displayHour == 6 {
-            return "Behind"
-        } else {
-            return "\(displayHour) o'clock"
-        }
     }
 }

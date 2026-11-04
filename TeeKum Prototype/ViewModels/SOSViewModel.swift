@@ -298,7 +298,7 @@ public final class SOSViewModel {
             accuracy = 255
         }
         
-        let batteryPct = UInt8(min(100, max(0, Int(((locationService?.currentBatteryLevel ?? 1.0) * 100).rounded()))))
+        let batteryPct = (locationService?.currentBatteryLevel ?? 1.0).asBatteryPercentage
         
         let sosPayload = SOSPayload(
             coordinate: coordinate,

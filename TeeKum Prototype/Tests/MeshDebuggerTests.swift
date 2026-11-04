@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import CoreLocation
 import CryptoKit
 
 /// Comprehensive test suite validating the Mesh Debugger & Diagnostic Lab:

@@ -138,7 +138,7 @@ public struct DiagnosticsView: View {
                             
                             LabeledContent("Motion State", value: locService.isStationary ? "Stationary (GPS Asleep via CoreMotion)" : "Moving (High Accuracy GPS)")
                             LabeledContent("Publishing Cadence", value: String(format: "%.1f s interval", locService.currentCadenceInterval))
-                            LabeledContent("Battery Level", value: String(format: "%.0f%%", locService.currentBatteryLevel * 100))
+                            LabeledContent("Battery Level", value: locService.currentBatteryLevel.formattedBatteryPercentage)
                             LabeledContent("Survival Mode (<20%)") {
                                 Text(locService.isSurvivalModeActive ? "ACTIVE (Throttled)" : "Normal")
                                     .bold()
@@ -554,26 +554,26 @@ public struct DiagnosticsView: View {
     
     private func runLocationVerification() {
         isRunningTests = true
-        testResultSummary = "Running 11 tests..."
+        testResultSummary = "Running 15 tests..."
         
         Task {
             let passed = await LocationPublishingTests.runAllTests()
             await MainActor.run {
                 isRunningTests = false
-                testResultSummary = passed ? "✓ ALL 11 LOCATION TESTS PASSED" : "✗ SOME TESTS FAILED"
+                testResultSummary = passed ? "✓ ALL 15 LOCATION TESTS PASSED" : "✗ SOME TESTS FAILED"
             }
         }
     }
     
     private func runUIVerification() {
         isRunningUITests = true
-        uiTestResultSummary = "Running 8 UI tests..."
+        uiTestResultSummary = "Running 13 UI tests..."
         
         Task {
             let passed = await UIStateTests.runAllTests()
             await MainActor.run {
                 isRunningUITests = false
-                uiTestResultSummary = passed ? "✓ ALL 8 UI STATE TESTS PASSED" : "✗ SOME UI TESTS FAILED"
+                uiTestResultSummary = passed ? "✓ ALL 13 UI STATE TESTS PASSED" : "✗ SOME UI TESTS FAILED"
             }
         }
     }
@@ -642,13 +642,13 @@ public struct DiagnosticsView: View {
     
     private func runChatEngineVerification() {
         isRunningChatEngineTests = true
-        chatEngineTestResultSummary = "Running 15 Chat Engine tests..."
+        chatEngineTestResultSummary = "Running 16 Chat Engine tests..."
         
         Task {
             let passed = await ChatMessagingEngineTests.runAllTests()
             await MainActor.run {
                 isRunningChatEngineTests = false
-                chatEngineTestResultSummary = passed ? "✓ ALL 15 CHAT ENGINE TESTS PASSED" : "✗ SOME TESTS FAILED"
+                chatEngineTestResultSummary = passed ? "✓ ALL 16 CHAT ENGINE TESTS PASSED" : "✗ SOME TESTS FAILED"
             }
         }
     }

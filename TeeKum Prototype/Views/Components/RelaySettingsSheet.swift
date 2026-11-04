@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import Combine
 
 /// Communal Mesh Relay Settings and Battery Policy Control Sheet.
 ///
@@ -25,7 +24,6 @@ public struct RelaySettingsSheet: View {
     @State private var policyState: RelayPolicyState = RelayPolicyState(mode: .disabled)
     @State private var telemetry: RelayTelemetry = RelayTelemetry()
     @State private var selectedMode: RelayParticipationMode = .disabled
-    @State private var timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
     
     public init(
         relayPolicyManager: RelayPolicyManager,
@@ -79,11 +77,9 @@ public struct RelaySettingsSheet: View {
                 }
             }
             .task {
-                await refreshState()
-            }
-            .onReceive(timer) { _ in
-                Task {
+                while !Task.isCancelled {
                     await refreshState()
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
                 }
             }
         }
@@ -261,7 +257,7 @@ public struct RelaySettingsSheet: View {
                         .font(.subheadline)
                         .foregroundStyle(.white)
                     Spacer()
-                    Text(String(format: "%.0f%%", currentBatteryLevel * 100))
+                    Text(currentBatteryLevel.formattedBatteryPercentage)
                         .font(.subheadline.bold().monospaced())
                         .foregroundStyle(currentBatteryLevel < 0.20 ? .red : .green)
                 }

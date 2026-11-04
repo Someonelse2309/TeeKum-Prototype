@@ -7,7 +7,6 @@
 
 import Foundation
 import CoreLocation
-import ActivityKit
 
 public final class LiveActivityTests: Sendable {
     
@@ -170,7 +169,6 @@ public final class LiveActivityTests: Sendable {
         // Update activity with telemetry
         let meetingPoint = MeetingPoint(
             id: 1,
-            name: "Main Stage Tent",
             coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
             proposerId: "NIC"
         )

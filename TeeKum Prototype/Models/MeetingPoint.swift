@@ -107,9 +107,7 @@ public struct MeetingPoint: Identifiable, Equatable, Hashable, Sendable {
             return "Right Now"
         }
         
-        let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
-        let clockString = formatter.string(from: meetupTime)
+        let clockString = meetupTime.formattedMeetupTime
         
         let diffMinutes = Int(meetupTime.timeIntervalSinceNow / 60)
         if diffMinutes > 0 {
@@ -147,28 +145,6 @@ public struct MeetingPoint: Identifiable, Equatable, Hashable, Sendable {
         self.isRightNow = isRightNow
         self.anchorToProposerGPS = anchorToProposerGPS
         self.arrivalRadiusMeters = arrivalRadiusMeters
-        self.attendance = attendance
-    }
-    
-    /// Convenience initializer for backwards compatibility with legacy callers.
-    public init(
-        id: UInt32 = UInt32.random(in: 1...UInt32.max),
-        name: String = "",
-        coordinate: CLLocationCoordinate2D,
-        targetTime: Date? = nil,
-        proposerId: String,
-        landmarkId: UInt32? = nil,
-        attendance: [String: AttendanceStatus] = [:],
-        createdAt: Date = Date()
-    ) {
-        self.id = id
-        self.coordinate = coordinate
-        self.meetupTime = targetTime ?? Date()
-        self.createdAt = createdAt
-        self.proposerId = InitialsCodec.sanitize(proposerId)
-        self.isRightNow = targetTime == nil
-        self.anchorToProposerGPS = false
-        self.arrivalRadiusMeters = 25.0
         self.attendance = attendance
     }
     

@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import CoreLocation
 
 /// Centralized Master Configuration Repository for Google Antigravity / TeeKum Festival Mesh.
 ///

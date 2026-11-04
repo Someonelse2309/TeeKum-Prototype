@@ -7,7 +7,6 @@
 
 import Foundation
 import SwiftUI
-import CryptoKit
 
 /// Comprehensive automated UI and ViewModel test suite for TeeKum Phase 3 Festival Group Mesh Chat.
 ///

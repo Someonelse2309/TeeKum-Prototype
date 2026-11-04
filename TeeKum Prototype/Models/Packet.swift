@@ -43,6 +43,11 @@ nonisolated public enum PacketConstants {
         set { TeeKumConfiguration.Network.sosHopLimit = newValue }
     }
     
+    /// Validates whether a given data buffer size matches the strictly fixed 56-byte wire format.
+    public static func isValidWirePacketSize(_ count: Int) -> Bool {
+        count == wirePacketSize
+    }
+    
     /// 4-byte protocol domain tag used in nonce construction: 'T', 'K', 'M', '3'
     public static var protocolDomainTag: [UInt8] { TeeKumConfiguration.Network.protocolDomainTag }
 }
@@ -134,7 +139,7 @@ public enum PacketCodecError: Error, LocalizedError, Equatable {
     }
 }
 
-// MARK: - Cleartext Envelope (8 Bytes)
+// MARK: - Cleartext Envelope (10 Bytes)
 
 public struct CleartextEnvelope: Equatable, Sendable {
     public var version: UInt8
@@ -387,7 +392,7 @@ public struct LocationPingPayload: Equatable, Sendable {
     
     /// Reconstructed magnetic compass heading in degrees (0..<360).
     public var headingDegrees: CLLocationDirection {
-        Double(heading) * 360.0 / 255.0
+        CLLocationDirection.fromHeadingByte(heading)
     }
     
     /// Primary Initializer (Phase 3 Option B: Pure geographic & sensor telemetry)
@@ -411,8 +416,8 @@ public struct LocationPingPayload: Equatable, Sendable {
     
     public func serialize() -> Data {
         var data = Data(capacity: PacketConstants.encryptedPayloadSize)
-        let latRaw = Int32((coordinate.latitude * 1_000_000.0).rounded()).bigEndian
-        let lonRaw = Int32((coordinate.longitude * 1_000_000.0).rounded()).bigEndian
+        let latRaw = coordinate.rawLatitude.bigEndian
+        let lonRaw = coordinate.rawLongitude.bigEndian
         let tsRaw = UInt32(timestamp.timeIntervalSince1970).bigEndian
         
         // Bytes 0..3: latitudeRaw (4B signed Int32)
@@ -457,14 +462,10 @@ public struct LocationPingPayload: Equatable, Sendable {
         let heading = data[start + 16]
         let colorCode = data[start + 17]
         
-        let lat = Double(latRaw) / 1_000_000.0
-        let lon = Double(lonRaw) / 1_000_000.0
-        
-        guard lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0 else {
-            throw PacketCodecError.invalidCoordinateRange(latitude: lat, longitude: lon)
+        let coord = CLLocationCoordinate2D.dequantize(latitudeRaw: latRaw, longitudeRaw: lonRaw)
+        guard coord.latitude >= -90.0 && coord.latitude <= 90.0 && coord.longitude >= -180.0 && coord.longitude <= 180.0 else {
+            throw PacketCodecError.invalidCoordinateRange(latitude: coord.latitude, longitude: coord.longitude)
         }
-        
-        let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         let date = Date(timeIntervalSince1970: TimeInterval(tsRaw))
         
         return LocationPingPayload(
@@ -512,8 +513,8 @@ public struct SOSPayload: Equatable, Sendable {
     
     public func serialize() -> Data {
         var data = Data(capacity: PacketConstants.encryptedPayloadSize)
-        let latRaw = Int32((coordinate.latitude * 1_000_000.0).rounded()).bigEndian
-        let lonRaw = Int32((coordinate.longitude * 1_000_000.0).rounded()).bigEndian
+        let latRaw = coordinate.rawLatitude.bigEndian
+        let lonRaw = coordinate.rawLongitude.bigEndian
         let tsRaw = UInt32(timestamp.timeIntervalSince1970).bigEndian
         
         var lat = latRaw; data.append(Data(bytes: &lat, count: 4))
@@ -554,14 +555,10 @@ public struct SOSPayload: Equatable, Sendable {
         let battery = data[21]
         let colorCode = data.count > 22 ? data[22] : 0
         
-        let lat = Double(latRaw) / 1_000_000.0
-        let lon = Double(lonRaw) / 1_000_000.0
-        
-        guard lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0 else {
-            throw PacketCodecError.invalidCoordinateRange(latitude: lat, longitude: lon)
+        let coord = CLLocationCoordinate2D.dequantize(latitudeRaw: latRaw, longitudeRaw: lonRaw)
+        guard coord.latitude >= -90.0 && coord.latitude <= 90.0 && coord.longitude >= -180.0 && coord.longitude <= 180.0 else {
+            throw PacketCodecError.invalidCoordinateRange(latitude: coord.latitude, longitude: coord.longitude)
         }
-        
-        let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         let date = Date(timeIntervalSince1970: TimeInterval(tsRaw))
         let emergency = SOSType(rawValue: emergencyByte) ?? .general
         
@@ -650,8 +647,8 @@ public struct MeetingUpdatePayload: Equatable, Sendable {
     
     public func serialize() -> Data {
         var data = Data(capacity: PacketConstants.encryptedPayloadSize)
-        let latRaw = Int32((coordinate.latitude * 1_000_000.0).rounded()).bigEndian
-        let lonRaw = Int32((coordinate.longitude * 1_000_000.0).rounded()).bigEndian
+        let latRaw = coordinate.rawLatitude.bigEndian
+        let lonRaw = coordinate.rawLongitude.bigEndian
         let meetupTsRaw = UInt32(meetupTime.timeIntervalSince1970).bigEndian
         let createdTsRaw = UInt32(createdAt.timeIntervalSince1970).bigEndian
         
@@ -694,14 +691,10 @@ public struct MeetingUpdatePayload: Equatable, Sendable {
         let arrivalRadius = data[24]
         let flagsByte = data[25]
         
-        let lat = Double(latRaw) / 1_000_000.0
-        let lon = Double(lonRaw) / 1_000_000.0
-        
-        guard lat >= -90.0 && lat <= 90.0 && lon >= -180.0 && lon <= 180.0 else {
-            throw PacketCodecError.invalidCoordinateRange(latitude: lat, longitude: lon)
+        let coord = CLLocationCoordinate2D.dequantize(latitudeRaw: latRaw, longitudeRaw: lonRaw)
+        guard coord.latitude >= -90.0 && coord.latitude <= 90.0 && coord.longitude >= -180.0 && coord.longitude <= 180.0 else {
+            throw PacketCodecError.invalidCoordinateRange(latitude: coord.latitude, longitude: coord.longitude)
         }
-        
-        let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         let meetupDate = Date(timeIntervalSince1970: TimeInterval(meetupTsRaw))
         let createdDate = Date(timeIntervalSince1970: TimeInterval(createdTsRaw))
         let action = MeetingAction(rawValue: actionByte) ?? .propose

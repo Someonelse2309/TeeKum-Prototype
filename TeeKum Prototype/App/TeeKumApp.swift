@@ -42,7 +42,7 @@ struct TeeKumApp: App {
     @State private var sosViewModel = SOSViewModel()
     @State private var meetingPointViewModel = MeetingPointViewModel()
     @State private var locationPublisher: LocationPublisher?
-    @State private var relayedPacketCache: Set<String> = []
+    private let seenPacketCache = SeenPacketCache()
     private let cryptoService = CryptoService()
     private let peerTransport: PeerTransportService
     private let relayPolicyManager: RelayPolicyManager
@@ -543,7 +543,7 @@ struct TeeKumApp: App {
         sosViewModel.dismissIncomingAlert()
         meetingPointViewModel.reset()
         mapViewModel.selectedMember = nil
-        relayedPacketCache.removeAll()
+        await seenPacketCache.removeAll()
         sessionHolder.session = nil
         await chatMessageEngine.clearHistory()
         await chatMessageEngine.configure(sessionProvider: nil, recipientsProvider: nil)
@@ -735,16 +735,11 @@ struct TeeKumApp: App {
             return
         }
         
-        // Prevent routing loops: relay each unique session sequence number at most once
-        let cacheKey = "\(envelope.sessionId)-\(envelope.sequenceNumber)"
-        if relayedPacketCache.contains(cacheKey) {
+        // Prevent routing loops: relay each unique session sequence number at most once via LRU cache
+        let packetKey = PacketKey(wirePacket: inbound.rawPacket)
+        let isDuplicate = await seenPacketCache.isDuplicateAndRecord(packetKey)
+        if isDuplicate {
             return
-        }
-        relayedPacketCache.insert(cacheKey)
-        
-        // Bounded cache maintenance
-        if relayedPacketCache.count > 1000 {
-            relayedPacketCache.removeAll()
         }
         
         var relayedEnvelope = envelope
@@ -783,14 +778,13 @@ struct TeeKumApp: App {
             return
         }
         
-        // 3. Deduplicate (5-minute LRU window)
-        let cacheKey = "\(envelope.sessionId)-\(envelope.sequenceNumber)"
-        if relayedPacketCache.contains(cacheKey) {
+        // 3. Deduplicate via 5-minute LRU SeenPacketCache
+        let packetKey = PacketKey(wirePacket: inbound.rawPacket)
+        let isDuplicate = await seenPacketCache.isDuplicateAndRecord(packetKey)
+        if isDuplicate {
             await relayPolicyManager.recordDropEvent(reason: .duplicate)
             return
         }
-        relayedPacketCache.insert(cacheKey)
-        if relayedPacketCache.count > 1000 { relayedPacketCache.removeAll() }
         
         // 4. Rate-limited blind forwarding via PeerTransportService
         do {

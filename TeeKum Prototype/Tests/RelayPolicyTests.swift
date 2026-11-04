@@ -6,8 +6,6 @@
 //
 
 import Foundation
-import CoreLocation
-import CryptoKit
 
 /// Comprehensive automated test suite verifying Agent 5 — Communal Relay Controls and Battery Policy:
 /// 1. Relay disabled at startup: stranger packets dropped with .dropPolicyDisabled.

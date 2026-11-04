@@ -105,7 +105,7 @@ public struct RadarFriendCard: View {
                         
                         // Clock Direction Hint
                         if let bearing = relativeBearing {
-                            Text("• \(clockDirection(for: bearing))")
+                            Text("• \(bearing.clockDirection)")
                                 .font(.caption2)
                                 .foregroundStyle(.cyan.opacity(0.9))
                         }
@@ -115,10 +115,10 @@ public struct RadarFriendCard: View {
                 // Battery Indicator (if available)
                 if let battery = member.batteryLevel {
                     VStack {
-                        Image(systemName: batteryIcon(for: battery))
+                        Image(systemName: battery.batterySystemImage)
                             .font(.system(size: 10))
                             .foregroundStyle(battery <= 0.2 ? .red : .gray)
-                        Text("\(Int(battery * 100))%")
+                        Text(battery.formattedBatteryPercentage)
                             .font(.system(size: 8).monospaced())
                             .foregroundStyle(.gray)
                     }
@@ -145,35 +145,7 @@ public struct RadarFriendCard: View {
     private func formatDistance(_ dist: CLLocationDistance) -> String {
         if dist < 8.0 {
             return "NEARBY (<8m)"
-        } else if dist >= 1000.0 {
-            return String(format: "%.1f km", dist / 1000.0)
-        } else {
-            return String(format: "%.0f m", dist)
         }
-    }
-    
-    private func clockDirection(for relativeAngle: Double) -> String {
-        let normalized = (relativeAngle + 360.0).truncatingRemainder(dividingBy: 360.0)
-        let hour = Int((normalized + 15.0) / 30.0) % 12
-        let displayHour = hour == 0 ? 12 : hour
-        if displayHour == 12 {
-            return "Ahead"
-        } else if displayHour == 6 {
-            return "Behind"
-        } else {
-            return "\(displayHour) o'clock"
-        }
-    }
-    
-    private func batteryIcon(for level: Float) -> String {
-        if level <= 0.2 {
-            return "battery.25"
-        } else if level <= 0.5 {
-            return "battery.50"
-        } else if level <= 0.75 {
-            return "battery.75"
-        } else {
-            return "battery.100"
-        }
+        return dist.formattedDistance()
     }
 }

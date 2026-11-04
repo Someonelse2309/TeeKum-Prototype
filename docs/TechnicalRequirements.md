@@ -250,7 +250,7 @@ final class LocationSamplingPolicy {
 | `SymmetricKey` | Represents a 256-bit symmetric key for a group session. | Generated on group creation and exchanged via URL fragment or QR barcode. | `CryptoService.swift` |
 | `ChaChaPoly.seal(_:using:nonce:authenticating:)` | Encrypts payload and computes a 16-byte Poly1305 authentication tag over ciphertext and AAD. | Encrypts 30 bytes of private coordinates and binds the 10-byte outer envelope (hopCount masked to 0x00) as AAD. | `CryptoService.swift` |
 | `ChaChaPoly.open(_:using:authenticating:)` | Decrypts ciphertext and verifies the Poly1305 tag against AAD. | Validates inbound packets; forged packets or altered envelope fields are dropped instantly. | `CryptoService.swift` |
-| `ChaChaPoly.Nonce(data:)` | Creates a unique 96-bit initialization vector per packet. | Derived from 24-bit session ID (3B) + 32-bit sequence number (4B) + version/type (1B) + 4-byte domain tag "TKM2" (4B). | `CryptoService.swift` |
+| `ChaChaPoly.Nonce(data:)` | Creates a unique 96-bit initialization vector per packet. | Derived from 24-bit session ID (3B) + 32-bit sequence number (4B) + version/type (1B) + 4-byte domain tag "TKM3" (4B). | `CryptoService.swift` |
 
 ---
 

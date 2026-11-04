@@ -67,12 +67,6 @@ public struct GroupPairingView: View {
     enum PairingTab: String, CaseIterable {
         case create = "Create Group"
         case join = "Scan to Join"
-// MARK: Ini di hide dulu
-//        case openMesh = "Open Mesh"
-    }
-    
-    public init(sessionViewModel: GroupSessionViewModel) {
-        self.sessionViewModel = sessionViewModel
     }
     
     private var cleanInitials: String {
@@ -113,9 +107,6 @@ public struct GroupPairingView: View {
                             createGroupSection
                         case .join:
                             scanToJoinSection
-                            // MARK: Ini di hide dulu
-//                        case .openMesh:
-//                            openMeshSection
                         }
                         
                         // Error message banner
@@ -399,17 +390,10 @@ public struct GroupPairingView: View {
     }
     
     private func executeCreateGroup(name: String, initials: String) {
-        var keyBytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, keyBytes.count, &keyBytes)
-        let keyData = Data(keyBytes)
-        
-        let session = GroupSession(
-            sessionId: UInt16.random(in: 1...UInt16.max),
-            sessionName: name,
-            symmetricKeyData: keyData,
-            localInitials: initials,
-            localColorCode: selectedColor.rawValue,
-            isHost: true
+        let session = sessionViewModel.createDraftSession(
+            name: name,
+            localName: initials,
+            colorCode: selectedColor.rawValue
         )
         self.createdSession = session
         sessionViewModel.clearError()
@@ -463,49 +447,5 @@ public struct GroupPairingView: View {
         sessionViewModel.clearError()
         // Present Agreement Page before joining group
         pendingAgreement = .join(invite: invite, initials: clean)
-    }
-    
-    // MARK: - Open Mesh Section (Instant Auto-Mesh)
-    
-    private var openMeshSection: some View {
-        VStack(spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Festival Auto-Mesh")
-                    .font(.headline.bold())
-                    .foregroundStyle(.white)
-                
-                Text("Join the default festival mesh network immediately. All attendees using TeeKum on this channel can discover each other automatically without exchanging codes.")
-                    .font(.subheadline)
-                    .foregroundStyle(.gray)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
-            .background(Color(white: 0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .padding(.horizontal)
-            
-            Button(action: handleEnterAutoMesh) {
-                HStack(spacing: 10) {
-                    Text("Join Festival Open Mesh")
-                        .font(.headline.bold())
-                    Image(systemName: "arrow.right")
-                        .font(.headline.bold())
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(isInitialsValid ? Color.green : Color.gray.opacity(0.3))
-                .foregroundStyle(isInitialsValid ? Color.black : Color.gray)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-            }
-            .disabled(!isInitialsValid)
-            .padding(.horizontal)
-        }
-    }
-    
-    private func handleEnterAutoMesh() {
-        guard isInitialsValid else { return }
-        let clean = InitialsCodec.sanitize(cleanInitials)
-        // Present Agreement Page before entering open mesh
-        pendingAgreement = .autoMesh(initials: clean)
     }
 }

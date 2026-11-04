@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import CoreLocation
 import CryptoKit
 
 /// Authoritative Unit & Integration Test Suite for Agent 3 (AODV-Inspired Routing Engine).

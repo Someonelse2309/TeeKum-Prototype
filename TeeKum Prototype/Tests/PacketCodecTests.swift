@@ -1269,15 +1269,15 @@ public enum PacketCodecTests {
         }
     }
     
-    // MARK: - Test 20: Regression Test for All 7 Packet Types
+    // MARK: - Test 20: Regression Test for All 8 Packet Types
     
     public static func testAllExistingPacketTypesRegression() -> Bool {
-        print("[Test 20] Regression test for all 7 PacketTypes (0x01..0x07)...")
+        print("[Test 20] Regression test for all 8 PacketTypes (0x01..0x08)...")
         
-        // 1. Verify PacketType raw values are distinct and contiguous 0x01..0x07
+        // 1. Verify PacketType raw values are distinct and contiguous 0x01..0x08
         let allTypes = PacketType.allCases
-        guard allTypes.count == 7 else {
-            print("  FAIL: Expected exactly 7 PacketTypes, got \(allTypes.count)")
+        guard allTypes.count == 8 else {
+            print("  FAIL: Expected exactly 8 PacketTypes, got \(allTypes.count)")
             return false
         }
         
@@ -1288,7 +1288,8 @@ public enum PacketCodecTests {
             .routeReq: 0x04,
             .routeResp: 0x05,
             .ack: 0x06,
-            .chatMessage: 0x07
+            .chatMessage: 0x07,
+            .uwbTokenExchange: 0x08
         ]
         
         for (pType, expectedRaw) in expectedRawValues {
@@ -1298,7 +1299,7 @@ public enum PacketCodecTests {
             }
         }
         
-        // 2. Verify CleartextEnvelope byte0 for all 7 types with protocol version 3
+        // 2. Verify CleartextEnvelope byte0 for all 8 types with protocol version 3
         let expectedByte0Values: [PacketType: UInt8] = [
             .locationPing: 0x31,
             .sos: 0x32,
@@ -1306,7 +1307,8 @@ public enum PacketCodecTests {
             .routeReq: 0x34,
             .routeResp: 0x35,
             .ack: 0x36,
-            .chatMessage: 0x37
+            .chatMessage: 0x37,
+            .uwbTokenExchange: 0x38
         ]
         
         for (pType, expectedByte0) in expectedByte0Values {
@@ -1334,7 +1336,7 @@ public enum PacketCodecTests {
             }
         }
         
-        print("  PASS: All 7 PacketTypes, byte 0 encodings, and envelope codecs verified.")
+        print("  PASS: All 8 PacketTypes, byte 0 encodings, and envelope codecs verified.")
         return true
     }
 }

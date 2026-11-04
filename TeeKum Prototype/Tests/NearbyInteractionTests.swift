@@ -6,8 +6,6 @@
 //
 
 import Foundation
-import CoreLocation
-import CryptoKit
 
 /// Exhaustive Test Suite for Ultra-Wideband (UWB) Nearby Interaction,
 /// token exchange fragmentation, wire packet roundtrip, and service state transitions.

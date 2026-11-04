@@ -183,9 +183,6 @@ public struct IncomingSOSAlert: Identifiable, Equatable, Sendable {
     /// Local display name of the member in distress.
     public var senderName: String
     
-    /// Backward-compatibility sender identifier.
-    public var senderId: String { senderInitials }
-    
     /// Specific category of emergency (`general`, `medical`, `separated`, `security`).
     public let emergencyType: SOSType
     

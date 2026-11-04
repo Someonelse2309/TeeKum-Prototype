@@ -8,9 +8,9 @@
 import Foundation
 import NearbyInteraction
 import simd
-import Combine
 import UIKit
 import CryptoKit
+import Observation
 
 /// Current state of Ultra-Wideband (UWB) precision ranging.
 public enum UWBRangingState: Equatable, Sendable {
@@ -25,20 +25,21 @@ public enum UWBRangingState: Equatable, Sendable {
 /// Service managing native Apple NearbyInteraction (`NISession`) lifecycle,
 /// out-of-band discovery token exchange over the 56-byte wire protocol,
 /// precision 3D direction/centimeter distance tracking, and AirTag-style haptics.
+@Observable
 @MainActor
-public final class NearbyInteractionService: NSObject, ObservableObject, NISessionDelegate {
+public final class NearbyInteractionService: NSObject, NISessionDelegate {
     public static let shared = NearbyInteractionService()
     
-    // MARK: - Published State
+    // MARK: - Observable State
     
-    @Published public private(set) var isSupported: Bool = false
-    @Published public private(set) var rangingState: UWBRangingState = .idle
-    @Published public private(set) var activeTargetMemberId: String?
-    @Published public private(set) var activeTargetMemberName: String?
-    @Published public private(set) var currentDistance: Float?
-    @Published public private(set) var currentDirection: simd_float3?
-    @Published public private(set) var currentHorizontalAngle: Float?
-    @Published public private(set) var lastUpdate: Date?
+    public private(set) var isSupported: Bool = false
+    public private(set) var rangingState: UWBRangingState = .idle
+    public private(set) var activeTargetMemberId: String?
+    public private(set) var activeTargetMemberName: String?
+    public private(set) var currentDistance: Float?
+    public private(set) var currentDirection: simd_float3?
+    public private(set) var currentHorizontalAngle: Float?
+    public private(set) var lastUpdate: Date?
     
     // MARK: - Internal Session State
     

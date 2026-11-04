@@ -422,17 +422,10 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── LiveActivityTests.swift      // 6 automated tests: ActivityKit lifecycle, dynamic island, lock screen toggle
 │   │   ├── MeshFailureIntegrationTests.swift // 12 automated tests: link breakage, partitions, loops, corruption resync
 │   │   ├── MeshDebuggerTests.swift      // 10 automated tests: 1-tap triage, 56B packet inspector, injection, sandbox
-│   │   ├── ChatEngineTests.swift        // 12 automated tests: ChatMessagePayload, outbox retries, delivery ACKs
+│   │   ├── ChatMessagingEngineTests.swift // 16 automated tests: ChatMessagePayload, outbox retries, delivery ACKs
+│   │   ├── ChatUITests.swift            // 11 automated tests: Message bubbles, presets, byte limiting, badge counts
 │   │   ├── InactivityGuardTests.swift   // 9 automated tests: stillness timer, 30s pre-alarm countdown, auto-SOS
 │   │   └── NearbyInteractionTests.swift // 6 automated tests: UWB token codec, 12-chunk reassembly, 1-hop limit
-│   │   ├── UIStateTests.swift           // 13 automated tests: pairing, freshness, dropdown, tactical radar projection
-│   │   ├── RoutingForwardingTests.swift // 12 automated tests: blind relay, 8-hop limit, rate limiting, deduplication
-│   │   ├── RouteDiscoveryTests.swift    // 14 automated tests: AODV RREQ/RREP, stale peer two-tier discovery, burst
-│   │   ├── NeighborDiscoveryTests.swift // 13 automated tests: Bonjour _teekum._tcp peering, TXT relay flag, RSSI
-│   │   ├── RelayPolicyTests.swift       // 12 automated tests: 3 modes, hard 20% cutoff, survival mode, Live Activity
-│   │   ├── LiveActivityTests.swift      // 6 automated tests: ActivityKit lifecycle, dynamic island, lock screen toggle
-│   │   ├── MeshFailureIntegrationTests.swift // 12 automated tests: link breakage, partitions, loops, corruption resync
-│   │   └── MeshDebuggerTests.swift      // 10 automated tests: 1-tap triage, 56B packet inspector, injection, sandbox
 │   └── Assets.xcassets                  // App icons, accent colors & visual assets
 ├── TeeKumWidgets/                       // ActivityKit Widget Extension Target
 │   ├── SessionActivityAttributes.swift  // Shared ActivityKit attributes contract

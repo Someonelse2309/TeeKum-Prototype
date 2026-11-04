@@ -109,13 +109,8 @@ public final class LocationPublisher {
             return
         }
         
-        let batteryPct = UInt8(min(100, max(0, Int((locationService.currentBatteryLevel * 100).rounded()))))
-        let headingByte: UInt8
-        if let heading = locationService.currentHeading {
-            headingByte = UInt8(min(255, max(0, Int((heading * 255.0 / 360.0).rounded()))))
-        } else {
-            headingByte = 0
-        }
+        let batteryPct = locationService.currentBatteryLevel.asBatteryPercentage
+        let headingByte = locationService.currentHeading?.quantizedHeadingByte ?? 0
         
         // Option B: Pure geographic & sensor telemetry (Status is transmitted independently via Chat)
         let payload = LocationPingPayload(
@@ -188,7 +183,7 @@ public final class LocationPublisher {
             accuracy = 255
         }
         
-        let batteryPct = UInt8(min(100, max(0, Int((locationService.currentBatteryLevel * 100).rounded()))))
+        let batteryPct = locationService.currentBatteryLevel.asBatteryPercentage
         
         let sosPayload = SOSPayload(
             coordinate: coordinate,

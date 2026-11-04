@@ -128,10 +128,8 @@ public struct MeetingPointsView: View {
                     if let userLoc = userLocation {
                         Text("•")
                             .foregroundStyle(.gray)
-                        let pointLoc = CLLocation(latitude: active.coordinate.latitude, longitude: active.coordinate.longitude)
-                        let currentLoc = CLLocation(latitude: userLoc.coordinate.latitude, longitude: userLoc.coordinate.longitude)
-                        let dist = currentLoc.distance(from: pointLoc)
-                        Text(formatDistance(dist))
+                        let dist = userLoc.distance(to: active.coordinate)
+                        Text(dist.formattedDistance(spaced: false, includeSuffix: true))
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white.opacity(0.85))
                     }
@@ -438,13 +436,5 @@ public struct MeetingPointsView: View {
         )
         
         dismiss()
-    }
-    
-    private func formatDistance(_ meters: Double) -> String {
-        if meters < 1000 {
-            return "\(Int(meters))m away"
-        } else {
-            return String(format: "%.1fkm away", meters / 1000)
-        }
     }
 }

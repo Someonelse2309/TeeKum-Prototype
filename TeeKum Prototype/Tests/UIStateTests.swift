@@ -55,6 +55,13 @@ public struct UIStateTests {
             return false
         }
         
+        // Test staging draft session generation (View-to-ViewModel refactoring)
+        let draftSession = vm.createDraftSession(name: "Staged Group", localName: "STG")
+        guard draftSession.sessionName == "Staged Group" && draftSession.localInitials == "STG" && draftSession.isHost else {
+            print("FAILED: createDraftSession returned unexpected properties")
+            return false
+        }
+        
         // Host creates group with 1 to 3-letter initials (e.g. "D" or "DNA")
         vm.createGroup(name: "EDC Crew", localName: "DNA")
         guard let session = vm.activeSession else {
@@ -354,6 +361,38 @@ public struct UIStateTests {
             return false
         }
         
+        // Centralized Formatters verification
+        guard dist.formattedDistance() == "111 m" else {
+            print("FAILED: formattedDistance metric failed: \(dist.formattedDistance())")
+            return false
+        }
+        guard CLLocationDistance(1500).formattedDistance() == "1.5 km" else {
+            print("FAILED: formattedDistance km failed")
+            return false
+        }
+        guard CLLocationDistance(2500).formattedDistance(spaced: false, includeSuffix: true) == "2.5km away" else {
+            print("FAILED: formattedDistance with suffix failed")
+            return false
+        }
+        guard Float(0.85).asBatteryPercentage == 85 && Float(0.85).formattedBatteryPercentage == "85%" else {
+            print("FAILED: battery percentage formatting failed")
+            return false
+        }
+        guard Float(0.15).batterySystemImage == "battery.25" && Float(0.40).batterySystemImage == "battery.50" && Float(0.70).batterySystemImage == "battery.75" && Float(0.95).batterySystemImage == "battery.100" else {
+            print("FAILED: battery system image mapping failed")
+            return false
+        }
+        guard Double(0).clockDirection == "Ahead" && Double(180).clockDirection == "Behind" && Double(60).clockDirection == "2 o'clock" else {
+            print("FAILED: clock direction calculation failed")
+            return false
+        }
+        
+        let testDate = Date(timeIntervalSince1970: 1700000000)
+        guard !testDate.formattedShortTime.isEmpty && !testDate.formattedSecondsTime.isEmpty && !testDate.formattedMeetupTime.isEmpty else {
+            print("FAILED: time formatters returned empty")
+            return false
+        }
+        
         print("PASSED: testFriendDistanceAndBearingCalculations")
         return true
     }
@@ -486,10 +525,18 @@ public struct UIStateTests {
             return false
         }
         
-        // 4. Invalid input rejection
+        // 4. Invalid input rejection & isValid validator
         guard InitialsCodec.encode("") == nil else { return false }
         guard InitialsCodec.encode("ABCD") == nil else { return false }
         guard InitialsCodec.encode("A1B") == nil else { return false }
+        guard InitialsCodec.isValid("DNA") && InitialsCodec.isValid("A") && InitialsCodec.isValid("AB") else {
+            print("FAILED: InitialsCodec.isValid true cases")
+            return false
+        }
+        guard !InitialsCodec.isValid("") && !InitialsCodec.isValid("ABCD") && !InitialsCodec.isValid("A1B") else {
+            print("FAILED: InitialsCodec.isValid false cases")
+            return false
+        }
         
         // 5. QR Barcode URL parsing edge cases
         let keyData = Data(repeating: 0x77, count: 32)

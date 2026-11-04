@@ -43,15 +43,15 @@ nonisolated public struct CadenceConfiguration: Equatable, Sendable {
     public var staleRecoveryTimeout: TimeInterval
     
     public init(
-        movingInterval: TimeInterval = MeshTimingConfiguration.default.movingInterval,
-        stationaryInterval: TimeInterval = MeshTimingConfiguration.default.stationaryInterval,
-        distantPeerInterval: TimeInterval = MeshTimingConfiguration.default.distantPeerInterval,
-        survivalInterval: TimeInterval = MeshTimingConfiguration.default.survivalInterval,
-        staleThreshold: TimeInterval = MeshTimingConfiguration.default.stalePeerThreshold,
-        stalePeerThreshold: TimeInterval = MeshTimingConfiguration.default.stalePeerThreshold,
-        staleRecoveryInterval: TimeInterval = MeshTimingConfiguration.default.staleRecoveryInterval,
-        staleRouteReqDelay: TimeInterval = MeshTimingConfiguration.default.staleRouteReqDelay,
-        staleRecoveryTimeout: TimeInterval = MeshTimingConfiguration.default.staleRecoveryTimeout
+        movingInterval: TimeInterval = TeeKumConfiguration.Timing.locationMovingInterval,
+        stationaryInterval: TimeInterval = TeeKumConfiguration.Timing.locationStationaryInterval,
+        distantPeerInterval: TimeInterval = TeeKumConfiguration.Timing.distantPeerInterval,
+        survivalInterval: TimeInterval = TeeKumConfiguration.Timing.survivalInterval,
+        staleThreshold: TimeInterval = TeeKumConfiguration.Timing.stalePeerThreshold,
+        stalePeerThreshold: TimeInterval = TeeKumConfiguration.Timing.stalePeerThreshold,
+        staleRecoveryInterval: TimeInterval = 2.0,
+        staleRouteReqDelay: TimeInterval = 15.0,
+        staleRecoveryTimeout: TimeInterval = 60.0
     ) {
         self.movingInterval = movingInterval
         self.stationaryInterval = stationaryInterval

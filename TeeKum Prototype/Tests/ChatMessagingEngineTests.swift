@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import CoreLocation
 import CryptoKit
 
 /// Authoritative Unit & Integration Test Suite for Agent 2 (Chat Messaging & Mesh Integration Engineer).

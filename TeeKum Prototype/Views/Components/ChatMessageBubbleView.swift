@@ -62,7 +62,7 @@ public struct ChatMessageBubbleView: View {
                 
                 // Footer: Timestamp + Delivery State
                 HStack(spacing: 4) {
-                    Text(formatTime(message.timestamp))
+                    Text(message.timestamp.formattedShortTime)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(Color.white.opacity(0.6))
                     
@@ -92,7 +92,7 @@ public struct ChatMessageBubbleView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Your message: \(message.text), sent at \(formatTime(message.timestamp)), \(message.deliverySummaryText). Double tap for delivery details.")
+        .accessibilityLabel("Your message: \(message.text), sent at \(message.timestamp.formattedShortTime), \(message.deliverySummaryText). Double tap for delivery details.")
     }
     
     // MARK: - Incoming Message Bubble
@@ -119,7 +119,7 @@ public struct ChatMessageBubbleView: View {
                         .font(.caption.bold())
                         .foregroundStyle(senderColor.swiftUIColor)
                     
-                    Text(formatTime(message.timestamp))
+                    Text(message.timestamp.formattedShortTime)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(Color.white.opacity(0.5))
                 }
@@ -152,7 +152,7 @@ public struct ChatMessageBubbleView: View {
             )
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Message from \(message.senderInitials): \(message.text), received at \(formatTime(message.timestamp))")
+        .accessibilityLabel("Message from \(message.senderInitials): \(message.text), received at \(message.timestamp.formattedShortTime)")
     }
     
     // MARK: - Delivery State Badge
@@ -216,11 +216,5 @@ public struct ChatMessageBubbleView: View {
     
     private var localAccentColor: Color {
         localColor != .unset ? localColor.swiftUIColor : Color(red: 0.0, green: 0.85, blue: 1.0)
-    }
-    
-    private func formatTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
     }
 }

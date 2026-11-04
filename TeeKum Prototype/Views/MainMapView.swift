@@ -42,7 +42,6 @@ public struct MainMapView: View {
     // Interactive Map-Pointing for Meeting Points
     @State private var droppedPinCoordinate: CLLocationCoordinate2D? = nil
     @State private var isShowingDroppedPinSheet: Bool = false
-    @State private var droppedPinName: String = ""
     @State private var lastTouchPoint: CGPoint? = nil
     
     @MainActor
@@ -307,7 +306,7 @@ public struct MainMapView: View {
                 ForEach(sessionViewModel.members) { member in
                     if let coord = member.coordinate {
                         Annotation("", coordinate: coord) {
-                            friendPinView(for: member)
+                            FriendPinAnnotationView(member: member)
                                 .onTapGesture {
                                     mapViewModel.selectMemberForNavigation(member)
                                 }
@@ -319,7 +318,7 @@ public struct MainMapView: View {
                 // Active Single Meeting Point Annotation
                 if let mp = meetingPointViewModel.activeMeetingPoint {
                     Annotation("", coordinate: mp.coordinate) {
-                        meetingPointPinView(for: mp)
+                        MeetingPointPinView(meetingPoint: mp)
                             .onTapGesture {
                                 isShowingMeetingPoints = true
                             }
@@ -354,137 +353,6 @@ public struct MainMapView: View {
         }
     }
     
-    // MARK: - Friend Pin View
-    
-    private func friendPinView(for member: Member) -> some View {
-        let isStale = member.isStale(threshold: 60)
-        let isEmergency = member.isEmergency
-        let memberColor = member.color.swiftUIColor
-        let pinAccentColor = isEmergency ? Color.red : (isStale ? memberColor.opacity(0.6) : memberColor)
-        
-        return VStack(spacing: 4) {
-            ZStack {
-                // Directional Heading Indicator (Vision Cone + Perimeter Pointer)
-                if let heading = member.heading {
-                    DirectionalHeadingIndicator(
-                        heading: heading,
-                        color: pinAccentColor,
-                        avatarRadius: 22,
-                        coneRadius: 44,
-                        fovAngle: 52
-                    )
-                }
-                
-                // Outer ring
-                if isEmergency {
-                    Circle()
-                        .stroke(Color.red.opacity(0.6), lineWidth: 4)
-                        .frame(width: 52, height: 52)
-                }
-                
-                Circle()
-                    .stroke(
-                        pinAccentColor,
-                        lineWidth: isEmergency ? 3 : 2
-                    )
-                    .frame(width: 44, height: 44)
-                    .background(
-                        Circle().fill(Color.black.opacity(0.8))
-                    )
-                    .shadow(color: isEmergency ? Color.red.opacity(0.8) : memberColor.opacity(0.4), radius: 4)
-                
-                Text(member.initials)
-                    .font(.system(size: 14, weight: .black, design: .rounded))
-                    .foregroundStyle(isEmergency ? .red : memberColor)
-                
-                // Stale warning indicator badge
-                if isStale {
-                    VStack {
-                        HStack {
-                            Spacer()
-                            Circle()
-                                .fill(Color.orange)
-                                .frame(width: 10, height: 10)
-                        }
-                        Spacer()
-                    }
-                    .frame(width: 44, height: 44)
-                }
-            }
-            .opacity(isStale ? 0.65 : 1.0)
-            
-            // Name & Freshness Tag
-            VStack(spacing: 1) {
-                HStack(spacing: 4) {
-                    if isEmergency {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 8).bold())
-                            .foregroundStyle(.red)
-                    }
-                    Text(member.name)
-                        .font(.caption2.bold())
-                        .foregroundStyle(isEmergency ? .red : memberColor)
-                }
-                
-                if isEmergency {
-                    Text("EMERGENCY")
-                        .font(.system(size: 7).bold())
-                        .foregroundStyle(.red)
-                } else if isStale {
-                    Text("Stale • \(relativeAge(since: member.lastSeen))")
-                        .font(.system(size: 8).bold())
-                        .foregroundStyle(.orange)
-                }
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.black.opacity(0.85))
-            .clipShape(Capsule())
-            .overlay(
-                Capsule().stroke(isEmergency ? Color.red.opacity(0.7) : (isStale ? Color.orange.opacity(0.5) : memberColor.opacity(0.4)), lineWidth: 1)
-            )
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(member.name)\(member.isEmergency ? ", emergency SOS active" : "")\(member.heading.map { ", facing \(Int($0)) degrees" } ?? "")")
-        .accessibilityValue(isStale ? "Stale location measured \(relativeAge(since: member.lastSeen))" : "Live location")
-        .accessibilityHint("Double tap to view friend details and navigation.")
-    }
-    
-    // MARK: - Meeting Point Pin
-    
-    private func meetingPointPinView(for mp: MeetingPoint) -> some View {
-        VStack(spacing: 3) {
-            ZStack {
-                Circle()
-                    .fill(Color(red: 0.0, green: 0.85, blue: 1.0).opacity(0.20))
-                    .frame(width: 42, height: 42)
-                Circle()
-                    .stroke(Color(red: 0.0, green: 0.85, blue: 1.0), lineWidth: 2)
-                    .frame(width: 42, height: 42)
-                Image(systemName: "mappin.and.ellipse")
-                    .font(.system(size: 19, weight: .bold))
-                    .foregroundStyle(Color(red: 0.0, green: 0.85, blue: 1.0))
-            }
-            .shadow(color: Color(red: 0.0, green: 0.85, blue: 1.0).opacity(0.55), radius: 6)
-            
-            VStack(spacing: 1) {
-                Text(mp.title)
-                    .font(.system(size: 10, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
-                Text(mp.timeDescription)
-                    .font(.system(size: 8, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color(red: 0.0, green: 0.85, blue: 1.0))
-            }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Color.black.opacity(0.85))
-            .clipShape(Capsule())
-            .overlay(
-                Capsule().stroke(Color(red: 0.0, green: 0.85, blue: 1.0).opacity(0.4), lineWidth: 1)
-            )
-        }
-    }
-    
     // MARK: - Temporary Dropped Pin (Interactive Long-Press)
     
     private var temporaryDroppedPinView: some View {
@@ -500,7 +368,7 @@ public struct MainMapView: View {
                     .shadow(color: .yellow.opacity(0.9), radius: 8)
             }
             
-            Text(droppedPinName.isEmpty ? "Rendezvous Spot" : droppedPinName)
+            Text("Rendezvous Spot")
                 .font(.caption2.bold())
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -513,7 +381,6 @@ public struct MainMapView: View {
     private func handleMapLongPress(at coordinate: CLLocationCoordinate2D) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         droppedPinCoordinate = coordinate
-        droppedPinName = "Rendezvous Spot"
         isShowingDroppedPinSheet = true
     }
     
@@ -794,61 +661,19 @@ public struct MainMapView: View {
     // MARK: - Incoming SOS Alert Banner
     
     private func incomingSOSBanner(for alert: IncomingSOSAlert) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: alert.emergencyType == .inactivity ? "figure.fall" : "exclamationmark.triangle.fill")
-                .font(.title2.bold())
-                .foregroundStyle(.yellow)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(alert.emergencyType == .inactivity ? "MAN DOWN" : "EMERGENCY SOS")
-                        .font(.caption2.bold())
-                        .foregroundStyle(alert.emergencyType == .inactivity ? .black : .red)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(alert.emergencyType == .inactivity ? Color.yellow : Color.white)
-                        .clipShape(Capsule())
-                    
-                    Text(alert.senderName)
-                        .font(.subheadline.bold())
-                        .foregroundStyle(.white)
-                }
-                
-                Text(alert.emergencyType == .inactivity
-                     ? "⚠️ Immobile for >3m • Battery \(alert.batteryLevel)%"
-                     : "\(alert.emergencyType.title) • Battery \(alert.batteryLevel)%")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.9))
-            }
-            
-            Spacer()
-            
-            Button("Dismiss") {
+        IncomingSOSAlertBannerView(
+            alert: alert,
+            onDismiss: {
                 sosViewModel.dismissIncomingAlert()
-            }
-            .font(.caption.bold())
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.white.opacity(0.2))
-            .clipShape(Capsule())
-            .foregroundStyle(.white)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color(red: 0.85, green: 0.1, blue: 0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .padding(.horizontal, 12)
-        .padding(.top, 6)
-        .shadow(color: .red.opacity(0.5), radius: 8)
-        .transition(.move(edge: .top).combined(with: .opacity))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if alert.coordinate.latitude != 0 && alert.coordinate.longitude != 0 {
-                withAnimation {
-                    mapCameraPosition = .camera(MapCamera(centerCoordinate: alert.coordinate, distance: 300))
+            },
+            onTap: {
+                if alert.coordinate.latitude != 0 && alert.coordinate.longitude != 0 {
+                    withAnimation {
+                        mapCameraPosition = .camera(MapCamera(centerCoordinate: alert.coordinate, distance: 300))
+                    }
                 }
             }
-        }
+        )
     }
     
     // MARK: - Bottom Controls Dock
@@ -918,12 +743,12 @@ public struct MainMapView: View {
             HStack(spacing: 12) {
                 Image(systemName: "point.3.connected.trianglepath.dotted")
                     .font(.title3)
-                    .foregroundStyle(relayCardColor)
+                    .foregroundStyle(relayButtonColor)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(relayCardTitle)
                         .font(.subheadline.bold())
-                        .foregroundStyle(relayCardColor)
+                        .foregroundStyle(relayButtonColor)
                     
                     Text(relayCardSubtitle)
                         .font(.caption2)
@@ -959,10 +784,6 @@ public struct MainMapView: View {
         } else {
             return .gray
         }
-    }
-    
-    private var relayCardColor: Color {
-        relayButtonColor
     }
     
     private var relayCardTitle: String {
@@ -1031,12 +852,5 @@ public struct MainMapView: View {
             return .orange
         }
         return .green
-    }
-    
-    private func relativeAge(since date: Date) -> String {
-        let elapsed = max(0, Date().timeIntervalSince(date))
-        if elapsed < 60 { return "\(Int(elapsed))s" }
-        let minutes = Int(elapsed / 60)
-        return "\(minutes)m"
     }
 }

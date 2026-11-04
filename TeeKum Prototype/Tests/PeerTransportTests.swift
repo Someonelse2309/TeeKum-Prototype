@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import CoreLocation
 
 /// Self-contained verification suite for the low-level Peer-to-Peer Transport layer:
 /// - Stream message framing and partial read chunk reconstruction

@@ -988,7 +988,7 @@ public final class MeshDebuggerViewModel: @unchecked Sendable {
         - Radio State: \(transportState)
         - Active Direct Peers: \(livePeerCount)
         - Communal Relay Permitted: \(relayPolicyState?.isRelayPermitted ?? false)
-        - Battery Level: \(String(format: "%.0f%%", (locationService?.currentBatteryLevel ?? 1.0) * 100))
+        - Battery Level: \((locationService?.currentBatteryLevel ?? 1.0).formattedBatteryPercentage)
         - Survival Mode Active: \(locationService?.isSurvivalModeActive ?? false)
         
         ## 2. Automated Health Triage

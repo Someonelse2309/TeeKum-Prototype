@@ -117,9 +117,9 @@ public struct FriendDetailView: View {
                     
                     if let battery = member.batteryLevel {
                         HStack(spacing: 3) {
-                            Image(systemName: batteryIcon(battery))
+                            Image(systemName: battery.batterySystemImage)
                                 .font(.caption2)
-                            Text("\(Int((battery * 100).rounded()))%")
+                            Text(battery.formattedBatteryPercentage)
                                 .font(.caption2.bold())
                         }
                         .foregroundStyle(battery > 0.2 ? .green : .red)
@@ -278,7 +278,7 @@ public struct FriendDetailView: View {
                         Text("Estimated Distance")
                             .font(.caption)
                             .foregroundStyle(.gray)
-                        Text(dist >= 1000 ? String(format: "%.2f km", dist / 1000.0) : String(format: "%.0f meters", dist))
+                        Text(dist.formattedDistance())
                             .font(.title2.bold())
                             .foregroundStyle(.white)
                     }
@@ -321,11 +321,7 @@ public struct FriendDetailView: View {
     private func timeAgo(since date: Date) -> String {
         let elapsed = max(0, currentTime.timeIntervalSince(date))
         if elapsed < 5 { return "just now" }
-        if elapsed < 60 { return "\(Int(elapsed))s ago" }
-        let minutes = Int(elapsed / 60)
-        if minutes < 60 { return "\(minutes)m ago" }
-        let hours = minutes / 60
-        return "\(hours)h ago"
+        return date.compactTimeAgo(from: currentTime)
     }
     
     private func accuracyDescription(_ accuracy: CLLocationAccuracy) -> String {
@@ -345,13 +341,6 @@ public struct FriendDetailView: View {
         if rssi >= -65 { return .green }
         if rssi >= -80 { return .yellow }
         return .orange
-    }
-    
-    private func batteryIcon(_ level: Float) -> String {
-        if level > 0.8 { return "battery.100" }
-        if level > 0.5 { return "battery.75" }
-        if level > 0.25 { return "battery.50" }
-        return "battery.25"
     }
     
     private func cardinalDirection(_ degrees: Double) -> String {

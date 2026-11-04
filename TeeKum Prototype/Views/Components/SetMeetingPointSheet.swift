@@ -32,22 +32,6 @@ public struct SetMeetingPointSheet: View {
         self.onCancel = onCancel
     }
     
-    // Backwards-compatible initializer for legacy call signatures
-    public init(
-        coordinate: CLLocationCoordinate2D,
-        initialName: String = "",
-        activeMeetingPoint: MeetingPoint?,
-        onConfirm: @escaping (String, CLLocationCoordinate2D) -> Void,
-        onCancel: @escaping () -> Void
-    ) {
-        self.coordinate = coordinate
-        self.activeMeetingPoint = activeMeetingPoint
-        self.onCancel = onCancel
-        self.onConfirm = { date, isNow, coord in
-            onConfirm("Rendezvous", coord)
-        }
-    }
-    
     private var computedMeetupDate: Date {
         if isCustomTime {
             return customDate
@@ -180,7 +164,7 @@ public struct SetMeetingPointSheet: View {
                         Text("RENDEZVOUS TARGET")
                             .font(.system(size: 9, weight: .black, design: .rounded))
                             .foregroundStyle(Color(red: 0.0, green: 0.85, blue: 1.0))
-                        Text(isRightNowSelection ? "Meet Right Now" : "Meet at \(formattedTimeString(computedMeetupDate))")
+                        Text(isRightNowSelection ? "Meet Right Now" : "Meet at \(computedMeetupDate.formattedMeetupTime)")
                             .font(.system(size: 14, weight: .bold, design: .rounded))
                             .foregroundStyle(.white)
                     }
@@ -224,11 +208,5 @@ public struct SetMeetingPointSheet: View {
             }
         }
         .preferredColorScheme(.dark)
-    }
-    
-    private func formattedTimeString(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "h:mm a"
-        return formatter.string(from: date)
     }
 }

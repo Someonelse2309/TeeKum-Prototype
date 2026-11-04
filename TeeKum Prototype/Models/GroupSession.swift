@@ -44,9 +44,6 @@ public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
     /// Backward-compatibility alias for display name.
     public var localMemberName: String { localInitials }
     
-    /// Backward-compatibility alias for member ID (3-letter initials).
-    public var localMemberId: String { localInitials }
-    
     /// True if the user initiated the session (or host role).
     public let isHost: Bool
     

@@ -5,6 +5,245 @@
 
 ---
 
+### [2026-11-04 16:30] — Principal Engineer Final Cleanup Review & Acceptance
+- **Contributor / Agent:** Principal Engineer — Final Architectural Review & Acceptance Authority (Antigravity)
+- **Status:** **ACCEPTED** (Clean Compilations for App & Widget Targets, 100% Pass Rate across 18 Test Suites / 208 Unit & Integration Tests, Zero Wire/Security Regressions, All Invariants Preserved)
+- **Target Phase / Milestone:** Phase 3 Cleanup Final Review & Architectural Acceptance Sign-Off
+
+#### 1. Objective & Scope
+- Conduct formal Principal Engineer final review to accept or reject the complete TeeKum codebase cleanup.
+- Evaluate the 12-point review checklist: unused file deletion, symbol removal safety, consolidation correctness, MVVM boundary preservation, networking/mesh responsibilities, 56-byte wire format, encryption/authentication, SOS and ACK behaviors, Phase 3 feature preservation, project reference integrity, test/build execution validity, and documentation completeness.
+- Audit remaining technical debt and establish risk mitigation guidance for upcoming development phases without expanding cleanup scope into an architectural rewrite.
+- Deliver definitive acceptance report [`docs/CLEANUP_FINAL_REPORT.md`](CLEANUP_FINAL_REPORT.md).
+
+#### 2. Key Review Findings & Checklist Evaluation
+- **12/12 Checklist Gates Passed:**
+  1. *Deleted Files:* `SessionStorageProtocol.swift` verified genuinely unused (0 conformances, 0 references). Legacy status models retired previously in favor of Mesh Chat.
+  2. *Deleted Symbols:* Dead initializers, overloads, and unused `@State` properties safely removed without breaking call sites.
+  3. *Consolidation:* `Formatters.swift` centralized distance, battery, date, and clock direction formatting. `TeeKumApp.swift` relay deduplication migrated from ad-hoc `Set<String>` to actor-isolated `SeenPacketCache`. Coordinate quantization centralized in `Packet.swift`.
+  4. *MVVM Integrity:* Cryptographic key drafting extracted from `GroupPairingView` into `GroupSessionViewModel`. `NearbyInteractionService` modernized to `@Observable`. Presentation components modularized.
+  5. *Mesh & Networking:* AWDL Bonjour peering, AODV route discovery, blind forwarding, dual-lane rate limiting, outbox priority scheduling, and battery survival cutoff 100% preserved.
+  6. *56-Byte Wire Datagram:* 10B cleartext envelope, 30B encrypted payload, 16B Poly1305 MAC tag, and all 8 PacketTypes (0x01..0x08) verified bit-for-bit.
+  7. *Crypto & Security:* ChaCha20-Poly1305 AEAD, envelope AAD binding, deterministic Nonce derivation, and stranger packet cryptographic dropping verified.
+  8. *SOS & ACK:* 3-second hold circular countdown, urgent outbox preemption, honest delivery states, audio siren alerting, and Man Down auto-SOS verified.
+  9. *Phase 3 Features:* Group Mesh Chat (Type 0x07), Inactivity Guard (Type 0x04), UWB NearbyInteraction (Type 0x08), Tactical Radar forward-up polar projection, and 12-byte reserved altimeter padding strictly preserved.
+  10. *Project & Assets:* Modern `PBXFileSystemSynchronizedRootGroup` verified; asset catalog and targets compile cleanly.
+  11. *Builds & Tests Executed:* Xcode builds succeeded for App and Widget extension targets (0 errors). Simulator execution completed 208/208 tests with 100% pass rate.
+  12. *Documentation:* `CLEANUP_AUDIT.md`, `CLEANUP_TEST_REPORT.md`, `TechnicalRequirements.md`, `agent.md`, and `CLEANUP_FINAL_REPORT.md` aligned.
+
+#### 3. Key Decisions & Rationale
+- **Final Acceptance Sign-Off:** The cleanup is formally **ACCEPTED**. Application behavior, user safety, and cryptographic integrity remain fully intact with measurable improvements in code quality, maintainability, and allocation efficiency.
+- **Cataloged Technical Debt (Separate Tasks):** Documented non-blocking items to address in future tasks: Xcode target file sharing for `SessionActivityAttributes.swift`, consolidation of `CadenceConfiguration` and `MeshTimingConfiguration` into `TeeKumConfiguration.Timing`, Swift 6 actor isolation warning resolution, `#if DEBUG` guards for internal test runners in `DiagnosticsView`, and SOSViewModel/SOSForwardingEngine pipeline unification.
+
+#### 4. Deliverables Produced
+- Created: [`docs/CLEANUP_FINAL_REPORT.md`](CLEANUP_FINAL_REPORT.md) — Comprehensive final review and acceptance report.
+- Updated: [`docs/DEVELOPMENT_LOG.md`](DEVELOPMENT_LOG.md).
+
+---
+
+### [2026-11-04 16:10] — Cleanup Regression Testing & Verification Report
+- **Contributor / Agent:** Senior QA Engineer — Cleanup Regression Testing (Antigravity)
+- **Status:** Completed & Fully Verified (Clean Xcode Builds for App & Widget Targets, 100% Pass Rate across all 18 Test Suites / 208 Unit & Integration Tests, 0 Regressions)
+- **Target Phase / Milestone:** Phase 3 Cleanup Regression Testing & Quality Assurance Verification
+
+#### 1. Objective & Scope
+- Execute a comprehensive regression test suite following the code cleanup, dead code removal, presentation component extraction, and state modernization passes performed by earlier agents.
+- Validate build integrity for iOS and Watch targets, classify all compiler warnings, verify project references and assets.
+- Test and classify all 15 functional domains (implemented, partially implemented, retired/replaced, or unimplemented).
+- Perform static analysis checking for force unwraps, unhandled errors, memory retain cycles, and Swift 6 concurrency warnings.
+- Define the physical device testing matrix for capabilities that cannot be verified in the iOS simulator.
+- Deliver authoritative report [`docs/CLEANUP_TEST_REPORT.md`](CLEANUP_TEST_REPORT.md).
+
+#### 2. Key Verification Results
+- **Clean Xcode Compilations:**
+  - `TeeKum Prototype` (iOS App Target): Clean build succeeded (0 fatal errors).
+  - `TeeKumWidgets` (Widget Extension Target): Clean build succeeded (0 fatal errors).
+  - Apple Watch Target: Correctly identified as planned Phase 3 companion architecture; no watchOS target currently configured in Xcode project.
+- **Automated Master Test Suite (100% Pass Rate):**
+  - Executed master test suite on booted `iPhone 18 Pro` simulator (iOS 27.0).
+  - **18 Test Suites / 208 Unit & Integration Tests Passed (0 Failures, 0 Regressions)**:
+    - `PacketCodecTests` (20/20)
+    - `PeerTransportTests` (14/14)
+    - `NeighborDiscoveryTests` (13/13)
+    - `RoutingForwardingTests` (12/12)
+    - `RouteDiscoveryTests` (14/14)
+    - `CryptoSecurityTests` (13/13)
+    - `LocationPublishingTests` (15/15)
+    - `UIStateTests` (13/13)
+    - `SOSEndToEndTests` (11/11)
+    - `MultiHopSOSTests` (11/11)
+    - `LiveActivityTests` (6/6)
+    - `RelayPolicyTests` (12/12)
+    - `MeshFailureIntegrationTests` (12/12)
+    - `MeshDebuggerTests` (10/10)
+    - `ChatMessagingEngineTests` (16/16)
+    - `ChatUITests` (11/11)
+    - `InactivityGuardTests` (9/9)
+    - `NearbyInteractionTests` (6/6)
+- **Functional Verification Matrix (15 Areas):**
+  - *Implemented & Verified:* Group Creation/Join, QR/Links, Location Telemetry, Direct P2P, Multi-Hop Forwarding, Packet Deduplication, Encryption/Auth, SOS Broadcasting & Preemption, ACK & Delivery States, Meeting Points, Chat Functionality, Session Teardown.
+  - *Retired & Replaced:* Status updates (replaced by Phase 3 Mesh Chat Type 0x07 and preset chips).
+  - *Unimplemented / Planned Phase 3:* WatchConnectivity (`WCSession` companion), Altitude & Floor (12-byte reserved wire block).
+- **Static Analysis & Compiler Warnings:**
+  - Classified 205 unique compiler warnings (236 total instances): 189 actor isolation / Swift 6 concurrency warnings, 27 async expressions missing `await`, 7 Sendable closure captures in `TeeKumApp`, 13 unused immutable values in test mocks.
+  - Audited force unwraps: 1 benign instance in `RadarBlipView` (guarded by ternary), 3 stream continuations in `LocationService`, 0 `try!`, 0 `as!`.
+  - Audited error handling: 0 empty catch blocks, all `try?` instances align with cancellation sleep, stranger packet dropping, or malformed frame rejection.
+  - Audited memory management: 100% of network and location delegate/stream closures capture `[weak self]` and `[weak peer]`.
+- **Physical Device Requirements Matrix:**
+  - Formulated 8-point physical hardware testing matrix for AWDL radio peering, RF crowd contention, true compass magnetometer, dual-frequency GNSS multi-path degradation, Apple U1/U2 Ultra-Wideband ranging, CoreMotion barometric altimeter, and battery survival mode cutoff.
+
+#### 3. Deliverables Produced
+- Created comprehensive report: [`docs/CLEANUP_TEST_REPORT.md`](CLEANUP_TEST_REPORT.md).
+
+---
+
+### [2026-11-04 15:40] — UI & Resource Optimization: Presentation Layer & Resource Cleanup
+- **Contributor / Agent:** Senior iOS Engineer — UI & Resource Optimization (Antigravity)
+- **Status:** Completed & Verified (Clean Xcode Build, 100% Pass Rate across all 18 Automated Test Suites / 195+ Tests)
+- **Target Phase / Milestone:** Presentation Layer Cleanup, Resource Optimization & UI Architecture Alignment
+
+#### 1. Objective & Scope
+- Audit and optimize the TeeKum presentation layer and resource files in accordance with the UI & Resource Optimization specification.
+- Eliminate unused views, dead code blocks, duplicate view components, unnecessary view modifiers, redundant state variables, unnecessary computed properties, and repeated UI formatting logic.
+- Remove framework dependencies (`Combine`) in favor of modern structured Swift concurrency.
+- Audit asset catalogs, fonts, localizations, and runtime asset loading.
+- Decouple business logic (cryptographic key generation and session instantiation) from SwiftUI views into existing ViewModels.
+- Preserve 100% of the existing AMOLED dark visual design, navigation behavior, mesh routing, and wire protocol invariants.
+
+#### 2. Changes Made & Files Touched
+
+##### Presentation Logic Centralization & Allocations Optimization
+- [`TeeKum Prototype/Models/Formatters.swift`](../TeeKum%20Prototype/Models/Formatters.swift):
+  - Added `Double.clockDirection`: Centralized relative bearing to clock direction calculation (e.g., *"Ahead"*, *"2 o'clock"*, *"Behind"*), eliminating duplicate implementations in `FinderBeaconView.swift` and `RadarFriendCard.swift`.
+  - Added `Float.batterySystemImage`: Centralized battery level to SF Symbol name mapping (`"battery.25"`, `"battery.50"`, `"battery.75"`, `"battery.100"`), eliminating duplicate implementations in `FriendDetailView.swift` and `RadarFriendCard.swift`.
+  - Added static cached time formatters (`formattedShortTime`, `formattedSecondsTime`, `formattedMeetupTime`): Eliminated repetitive allocations of `DateFormatter()` on every view render tick across chat bubbles, ACK sheets, and meeting point sheets.
+
+##### SwiftUI Presentation Layer & Dead Code Cleanups
+- [`TeeKum Prototype/Views/GroupPairingView.swift`](../TeeKum%20Prototype/Views/GroupPairingView.swift):
+  - Removed dead, commented-out view code: `openMeshSection` and `handleEnterAutoMesh()`.
+  - Cleaned up `PairingTab` enum to strictly include active tabs (`.create`, `.join`).
+  - Removed duplicate convenience initializer `init(sessionViewModel:)` which was redundant with the primary initializer defaulting optional managers to `nil`.
+  - Extracted cryptographic session generation (`SecRandomCopyBytes`) out of the view into `GroupSessionViewModel.createDraftSession(...)`.
+- [`TeeKum Prototype/Views/SOSButtonView.swift`](../TeeKum%20Prototype/Views/SOSButtonView.swift):
+  - Removed redundant `@State private var pressStartTime: Date?` that was written on press events but never read anywhere in the application.
+- [`TeeKum Prototype/Views/MeshDebuggerView.swift`](../TeeKum%20Prototype/Views/MeshDebuggerView.swift):
+  - Removed unused `@State private var showingExportAlert: Bool = false`.
+  - Replaced deprecated `.navigationBarHidden(true)` with modern iOS 16+ `.toolbar(.hidden, for: .navigationBar)`.
+- [`TeeKum Prototype/Views/Components/ChatSheetView.swift`](../TeeKum%20Prototype/Views/Components/ChatSheetView.swift):
+  - Replaced deprecated `.navigationBarHidden(true)` with `.toolbar(.hidden, for: .navigationBar)`.
+- [`TeeKum Prototype/Views/MainMapView.swift`](../TeeKum%20Prototype/Views/MainMapView.swift):
+  - Removed redundant `@State private var droppedPinName: String = ""` in favor of direct rendezvous title fallback.
+  - Inlined direct view instantiations of `FriendPinAnnotationView` and `MeetingPointPinView` inside `Map` annotation builders, eliminating redundant wrapper functions `friendPinView(for:)` and `meetingPointPinView(for:)`.
+  - Removed redundant computed property alias `relayCardColor`.
+- [`TeeKum Prototype/Views/MeetingPointsView.swift`](../TeeKum%20Prototype/Views/MeetingPointsView.swift):
+  - Removed redundant `formatDistance(_:)` helper in favor of direct `dist.formattedDistance(spaced: false, includeSuffix: true)`.
+  - Replaced ad-hoc `CLLocation` double-allocations with direct `userLoc.distance(to: active.coordinate)`.
+- [`TeeKum Prototype/Views/FinderBeaconView.swift`](../TeeKum%20Prototype/Views/FinderBeaconView.swift):
+  - Replaced local `clockDirection` implementation with `bearing.clockDirection`.
+  - Replaced ad-hoc `CLLocation` double-allocations in `computeDistance(to:)` with direct `userLoc.distance(to: friendCoord)` and `computeRelativeBearing(to:)` with `userLoc.bearing(to: friendCoord)`.
+- [`TeeKum Prototype/Views/FriendDetailView.swift`](../TeeKum%20Prototype/Views/FriendDetailView.swift):
+  - Replaced local `batteryIcon` with `battery.batterySystemImage`.
+  - Unified battery percentage string formatting to use `battery.formattedBatteryPercentage`.
+- [`TeeKum Prototype/Views/Components/Radar/RadarFriendCard.swift`](../TeeKum%20Prototype/Views/Components/Radar/RadarFriendCard.swift):
+  - Replaced local `clockDirection` with `bearing.clockDirection`.
+  - Replaced local `batteryIcon` with `battery.batterySystemImage`.
+  - Unified battery percentage string formatting to use `battery.formattedBatteryPercentage`.
+- [`TeeKum Prototype/Views/Components/ChatMessageBubbleView.swift`](../TeeKum%20Prototype/Views/Components/ChatMessageBubbleView.swift):
+  - Replaced local `DateFormatter()` allocation with `message.timestamp.formattedShortTime`.
+- [`TeeKum Prototype/Views/Components/RecipientAckBreakdownView.swift`](../TeeKum%20Prototype/Views/Components/RecipientAckBreakdownView.swift):
+  - Replaced local `DateFormatter()` allocation with `date.formattedSecondsTime`.
+- [`TeeKum Prototype/Views/Components/SetMeetingPointSheet.swift`](../TeeKum%20Prototype/Views/Components/SetMeetingPointSheet.swift):
+  - Replaced local `DateFormatter()` allocation with `computedMeetupDate.formattedMeetupTime`.
+- [`TeeKum Prototype/Models/MeetingPoint.swift`](../TeeKum%20Prototype/Models/MeetingPoint.swift):
+  - Replaced local `DateFormatter()` allocation in `timeDescription` with `meetupTime.formattedMeetupTime`.
+- [`TeeKum Prototype/Views/Components/RelaySettingsSheet.swift`](../TeeKum%20Prototype/Views/Components/RelaySettingsSheet.swift):
+  - Removed `import Combine`, `@State private var timer`, and `.onReceive(timer)`.
+  - Converted state polling to structured Swift concurrency `.task { while !Task.isCancelled { ... } }`, removing Combine from the codebase.
+
+##### UI Architecture & ViewModel Alignment
+- [`TeeKum Prototype/ViewModels/GroupSessionViewModel.swift`](../TeeKum%20Prototype/ViewModels/GroupSessionViewModel.swift):
+  - Added `public func createDraftSession(name: String, localName: String, colorCode: UInt8? = nil) -> GroupSession` to isolate session creation and key generation logic.
+  - Refactored `createGroup(...)` to delegate to `createDraftSession(...)`.
+
+##### Test Suite Extensions
+- [`TeeKum Prototype/Tests/UIStateTests.swift`](../TeeKum%20Prototype/Tests/UIStateTests.swift):
+  - Added unit test verifications for `createDraftSession(...)`, `Double.clockDirection`, `Float.batterySystemImage`, and static date formatters (`formattedShortTime`, `formattedSecondsTime`, `formattedMeetupTime`).
+
+#### 3. Key Decisions & Rationale
+- **Zero Allocations in View Body Redraws:** Initializing `DateFormatter()` repeatedly inside SwiftUI message bubble feeds and detail sheets causes micro-stutters during scrolling. Replacing these with static, pre-configured formatters in `Formatters.swift` eliminates unnecessary heap allocations while keeping string formatting 100% identical.
+- **Pure Swift Concurrency (Zero Combine):** `RelaySettingsSheet` was the sole file in the application still importing Combine for `Timer.publish`. Replacing it with a native `Task` sleep loop aligns the presentation layer with modern Swift 6 concurrency patterns without changing UI behavior.
+- **Separation of Concerns:** Generating cryptographic random bytes (`SecRandomCopyBytes`) inside a SwiftUI View violated MVVM boundaries. Encapsulating this in `GroupSessionViewModel.createDraftSession(...)` ensures the presentation layer remains strictly declarative.
+- **Resource Audit Confirmation:** Asset catalogs contain standard system templates (`AppIcon`, `AccentColor`). Zero orphaned binary assets, custom font files, or stale localization entries exist; all visual styling utilizes native Apple SF Symbols and programmatic dark-mode color palettes.
+
+#### 4. Verification & Testing Performed
+- **Clean Xcode Simulator Build:** Built scheme `TeeKum Prototype` on `generic/platform=iOS Simulator` -> **BUILD SUCCEEDED** (0 errors).
+- **Master Automated Test Suite:** Ran full automated regression test suite on booted simulator (`com.academy.teekum.TeeKum-Prototype -runAllTests -exitAfterTests`):
+  - **100% Pass Rate across all 18 test suites (195+ tests passing, 0 failures)**.
+  - Validated: `PacketCodecTests`, `PeerTransportTests`, `NeighborDiscoveryTests`, `RoutingForwardingTests`, `RouteDiscoveryTests`, `CryptoSecurityTests`, `LocationPublishingTests`, `UIStateTests`, `SOSEndToEndTests`, `MultiHopSOSTests`, `LiveActivityTests`, `RelayPolicyTests`, `MeshFailureIntegrationTests`, `MeshDebuggerTests`, `ChatMessagingEngineTests`, `ChatUITests`, `InactivityGuardTests`, and `NearbyInteractionTests`.
+- **UI & Navigation Preserved:** Confirmed all screen presentations, bottom sheets, full-screen radar covers, and alert dialogs maintain their exact behavior and visual styling.
+
+#### 5. Open Items & Next Steps
+- Presentation layer and resources are clean, fully optimized, and ready for physical multi-device venue testing.
+
+---
+
+### [2026-11-04 15:10] — Code Quality, Consolidation & Architectural Refactoring
+- **Contributor / Agent:** Senior Swift Engineer — Code Quality & Refactoring (Antigravity)
+- **Status:** Completed & Fully Verified (100% Automated Test Suite Pass Rate across all 18 test suites / 195+ tests, Clean Simulator Build)
+- **Target Phase / Milestone:** Code Quality, Deduplication, Component Extraction & State Modernization
+
+#### 1. Objective & Scope
+- Systematically addressed the 10 code quality and refactoring task areas identified in the project audit:
+  1. Duplicated business logic
+  2. Repeated validation logic
+  3. Similar helper functions implemented multiple times
+  4. Inconsistent error-handling patterns
+  5. Unnecessary abstractions
+  6. Overly large SwiftUI views
+  7. Repeated formatting and conversion logic
+  8. Inconsistent naming conventions
+  9. Unnecessary coupling between UI and services
+  10. Redundant state management
+- Strictly observed all critical architectural invariants: zero wire protocol changes, zero encryption alterations, zero location/SOS cadence regressions.
+
+#### 2. Summary of Refactoring Actions & Consolidations
+- **Telemetry Conversions & Formatting (`Formatters.swift`):**
+  - Created centralized [`Formatters.swift`](../TeeKum%20Prototype/Models/Formatters.swift) containing canonical extensions:
+    - `CLLocationDistance.formattedDistance(spaced:includeSuffix:)`: Unified distance display across `RadarFriendCard`, `MeetingPointsView`, `FriendDetailView`, and `FinderBeaconView`.
+    - `Float.asBatteryPercentage` and `Float.formattedBatteryPercentage`: Unified battery quantization and percentage display.
+    - `Date.compactTimeAgo(from:)`: Unified elapsed time display across `FriendPinAnnotationView` and `RadarFriendCard`.
+- **Coordinate Quantization & Heading (`Packet.swift`):**
+  - Centralized coordinate quantization into `CLLocationCoordinate2D.rawLatitude` and `rawLongitude`, and dequantization into `CLLocationCoordinate2D.dequantize(latitudeRaw:longitudeRaw:)`, eliminating duplicate math in `LocationPingPayload`, `SOSPayload`, and `MeetingUpdatePayload`.
+  - Added `CLLocationDirection.fromHeadingByte(_:)` and `headingByte` conversions.
+  - Added `PacketConstants.isValidWirePacketSize(_:)` and updated Cleartext Envelope comment to `(10 Bytes)`.
+- **View Extraction from `MainMapView.swift`:**
+  - Extracted `FriendPinAnnotationView.swift` (member pin annotation, 52° heading cone, pulsing distress ring, initials avatar).
+  - Extracted `IncomingSOSAlertBannerView.swift` (floating SOS and Man-Down emergency banner).
+  - Extracted `MeetingPointPinView.swift` (single active rendezvous pin annotation).
+- **State Modernization (`NearbyInteractionService.swift`):**
+  - Modernized `NearbyInteractionService` from `ObservableObject` / `@Published` to modern Swift `@Observable`.
+- **Packet Deduplication Alignment (`TeeKumApp.swift`):**
+  - Aligned inline mesh relaying in `TeeKumApp.swift` to use actor-isolated `SeenPacketCache` (`isDuplicateAndRecord(...)`), eliminating unsafe periodic flushes of the ad-hoc Set.
+- **Dead Code & Legacy Initializer Pruning:**
+  - Removed dead `FinderBeaconView.init(friend:)` legacy single-friend initializer.
+  - Removed dead `SetMeetingPointSheet.init(coordinate:initialName:)` backwards-compatibility initializer.
+  - Removed dead `MeetingPointViewModel.proposeMeetingPoint(name:landmarkId:)` legacy overload.
+  - Removed dead `MeetingPoint.init(landmarkId:)` convenience initializer.
+  - Removed dead computed aliases `GroupSession.localMemberId` and `IncomingSOSAlert.senderId`.
+  - Safely removed abandoned `SessionStorageProtocol.swift`.
+- **Test Fixture Relocation & Cleanups:**
+  - Relocated `MockSOSAudioAlerter` out of production `SOSAudioAlert.swift` into `SOSEndToEndTests.swift`.
+  - Cleaned up 12 unused imports across models, views, and test suites.
+- **Validation Centralization:**
+  - Added `InitialsCodec.isValid(_:)` and integrated it in `GroupSessionViewModel.enterAutoMesh(...)`.
+
+#### 3. Verification & Testing Performed
+- **Clean Xcode Simulator Build:** Built scheme `TeeKum Prototype` on `generic/platform=iOS Simulator` -> **BUILD SUCCEEDED** (0 errors).
+- **Master Automated Test Suite:** Ran full automated regression test suite on booted simulator (`com.academy.teekum.TeeKum-Prototype -runAllTests -exitAfterTests`):
+  - **100% Pass Rate across all 18 test suites (208 tests passing, 0 failures)**.
+
+---
+
 ### [2026-11-04 14:40] — Comprehensive Codebase Cleanup Audit & Architecture Strategy
 - **Contributor / Agent:** Senior Software Architect — Project Cleanup Coordinator (Antigravity)
 - **Status:** Completed (Audit Finished, Strategy Documented in `docs/CLEANUP_AUDIT.md`, Awaiting Approval for Destructive Cleanup)

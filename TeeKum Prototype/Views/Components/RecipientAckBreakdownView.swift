@@ -37,7 +37,7 @@ public struct RecipientAckBreakdownView: View {
                                     .font(.headline.bold())
                                     .foregroundStyle(.white)
                                 Spacer()
-                                Text(formatTime(message.timestamp))
+                                Text(message.timestamp.formattedSecondsTime)
                                     .font(.caption2.monospacedDigit())
                                     .foregroundStyle(.gray)
                             }
@@ -148,9 +148,9 @@ public struct RecipientAckBreakdownView: View {
             }
         case .deliveredToRecipient(let ts, let rssi):
             if let r = rssi {
-                Text("Confirmed at \(formatTime(ts)) • \(r) dBm")
+                Text("Confirmed at \(ts.formattedSecondsTime) • \(r) dBm")
             } else {
-                Text("Confirmed at \(formatTime(ts))")
+                Text("Confirmed at \(ts.formattedSecondsTime)")
             }
         case .deliveryTimedOut:
             Text("No response within 15s timeout window")
@@ -243,11 +243,5 @@ public struct RecipientAckBreakdownView: View {
         case .failed:
             return Color(red: 1.0, green: 0.18, blue: 0.45)
         }
-    }
-    
-    private func formatTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: date)
     }
 }

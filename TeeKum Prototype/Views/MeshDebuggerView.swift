@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import CoreLocation
 
 /// Full-Screen Mesh Debugger & Diagnostic Lab.
 ///
@@ -25,7 +24,6 @@ public struct MeshDebuggerView: View {
     var onToggleToNormalMode: (() -> Void)? = nil
     
     @State private var isTriageCardExpanded: Bool = false
-    @State private var showingExportAlert: Bool = false
     @State private var selectedPacketForDetail: MeshPacketLogItem? = nil
     
     public init(
@@ -91,7 +89,7 @@ public struct MeshDebuggerView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .navigationBarHidden(true)
+            .toolbar(.hidden, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
     }

@@ -88,23 +88,6 @@ public final class MeetingPointViewModel {
         }
     }
     
-    /// Overload for backwards compatibility with legacy call sites.
-    public func proposeMeetingPoint(
-        name: String = "",
-        coordinate: CLLocationCoordinate2D,
-        targetTime: Date? = nil,
-        proposerId: String,
-        landmarkId: UInt32? = nil
-    ) {
-        proposeMeetingPoint(
-            coordinate: coordinate,
-            meetupTime: targetTime ?? Date(),
-            isRightNow: targetTime == nil,
-            anchorToProposerGPS: false,
-            proposerId: proposerId
-        )
-    }
-    
     /// Checks whether the user has reached the active rendezvous spot and auto-broadcasts arrival.
     public func checkArrival(userLocation: CLLocationCoordinate2D) {
         checkExpiration()

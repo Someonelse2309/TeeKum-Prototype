@@ -14,7 +14,6 @@ public struct SOSButtonView: View {
     
     @State private var isPressing: Bool = false
     @State private var pressTask: Task<Void, Never>?
-    @State private var pressStartTime: Date?
     
     public init(sosViewModel: SOSViewModel) {
         self.sosViewModel = sosViewModel
@@ -238,7 +237,6 @@ public struct SOSButtonView: View {
     
     private func startContinuousPress() {
         isPressing = true
-        pressStartTime = Date()
         sosViewModel.handlePressBegan()
         
         let impactGenerator = UIImpactFeedbackGenerator(style: .medium)
@@ -270,7 +268,6 @@ public struct SOSButtonView: View {
         isPressing = false
         pressTask?.cancel()
         pressTask = nil
-        pressStartTime = nil
         
         sosViewModel.handlePressCancelled()
         

@@ -329,6 +329,7 @@
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "TeeKum keeps you connected to your festival group and active meeting point while your iPhone is locked in your pocket.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "TeeKum shares your relative location with group members at festivals without cellular service.";
 				INFOPLIST_KEY_NSMotionUsageDescription = "TeeKum uses motion activity to optimize battery life by reducing GPS sampling when you are resting or watching performances.";
+				INFOPLIST_KEY_NSNearbyInteractionUsageDescription = "TeeKum uses Ultra-Wideband to provide high-precision direction and centimeter distance guidance to locate friends in crowded festival venues.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -375,6 +376,7 @@
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "TeeKum keeps you connected to your festival group and active meeting point while your iPhone is locked in your pocket.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "TeeKum shares your relative location with group members at festivals without cellular service.";
 				INFOPLIST_KEY_NSMotionUsageDescription = "TeeKum uses motion activity to optimize battery life by reducing GPS sampling when you are resting or watching performances.";
+				INFOPLIST_KEY_NSNearbyInteractionUsageDescription = "TeeKum uses Ultra-Wideband to provide high-precision direction and centimeter distance guidance to locate friends in crowded festival venues.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
