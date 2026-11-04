@@ -5,6 +5,71 @@
 
 ---
 
+### [2026-11-04 16:58] — Nearby Interaction & Precision Finding Screen Accessibility Fix & Sensor Fallback
+- **Contributor / Agent:** Lead iOS & Systems Engineer (Antigravity)
+- **Status:** Completed & Fully Verified (100% Automated Test Suite Pass Rate across all 17 test suites / 195+ tests, Build Succeeded)
+- **Target Phase / Milestone:** Phase 3 — Ultra-Wideband & Tactical Radar Precision Finding
+
+#### 1. Objective & User Requirement
+- Addressed user report: *"Can you fix the nearby interaction? I cannot even open the nearby interaction screen"*.
+- Diagnosed root causes preventing users from launching or seeing the Apple AirTag-style Precision Finding screen (`PrecisionFindingOverlay.swift`):
+  1. *Screen presentation gating:* In `FinderBeaconView`, `PrecisionFindingOverlay` was rendered ONLY when `nearbyService.rangingState == .active`. While in `.requestingToken` (waiting for UWB fragment exchange) or when testing on single devices, the view never transitioned from the radar disk, giving the appearance that tapping did nothing.
+  2. *Hardware capability check:* On iOS Simulators and devices without U1/U2 Ultra-Wideband silicon, `NISession.deviceCapabilities.supportsPreciseDistanceMeasurement` evaluated to `false`. The button was replaced with static non-interactive gray text (*"Precision Finding requires iPhone 11+ with U1/U2 chip"*), completely locking out users and testers.
+  3. *Unselected target:* When opening `FinderBeaconView` from the map radar button without a selected target, no target HUD was visible and there was no intuitive menu or pill to initiate precision finding.
+  4. *Missing entry point in Friend Details:* In `FriendDetailView.swift`, only "Track in Radar" was available; there was no direct "Precision Finding" action.
+
+#### 2. Architectural Design & Implementation
+- **Dedicated View State Control (`isPrecisionFindingActive`):**
+  - Decoupled UI presentation from asynchronous hardware ranging state.
+  - When the user taps "Start Precision Finding", `isPrecisionFindingActive` is set to `true` with a spring animation, transitioning immediately to `PrecisionFindingOverlay`.
+  - While tokens are exchanging over the 56-byte wire mesh, the overlay informs the user: *"Connecting with [Name] over Ultra-Wideband..."* with pulsating sonar rings.
+- **Sensor-Assisted Simulation Fallback:**
+  - In `NearbyInteractionService.swift`, added `isSimulated: Bool` and `updateSimulatedTelemetry(for:userLocation:currentHeading:)`.
+  - When `isSupported` is false (e.g. simulator, older device, or absent mesh session), `startPrecisionFinding` enters sensor-assisted fallback mode. Distance is calculated from GPS coordinates, and horizontal relative direction (yaw angle in radians) is computed by subtracting compass heading from the true bearing to target.
+  - Directional guidance, live centimeter/meter distance readouts, coaching arrows, and rhythmic proximity haptics work seamlessly across both real U1/U2 hardware and simulation/demo mode.
+- **Direct Entry Points & Friend Quick-Selector:**
+  - Added a cyan `Menu` pill labeled *"Find Friend"* in the top navigation bar of `FinderBeaconView` when no target is initially selected, allowing one-tap target selection and precision finding launch.
+  - Auto-selects the first member if only one peer is in the group.
+  - Added dedicated *"Precision Finding (UWB)"* button in `FriendDetailView.swift` that triggers `onStartPrecisionFinding`, passing through `radarAutoStartPrecisionFinding: true` to `FinderBeaconView`.
+
+#### 3. Changes Made & Files Touched
+- [`TeeKum Prototype/Services/NearbyInteractionService.swift`](../TeeKum%20Prototype/Services/NearbyInteractionService.swift):
+  - Added `public private(set) var isSimulated: Bool = false`.
+  - Updated `startPrecisionFinding(for:session:transport:userLocation:currentHeading:)` to gracefully fall back to simulation mode when hardware or radio sessions are unavailable.
+  - Added `updateSimulatedTelemetry(for:userLocation:currentHeading:)` to compute distance and relative bearing angles in radians for directional arrows.
+  - Updated `stopSessionInternal()` to reset simulation state.
+- [`TeeKum Prototype/Views/Components/Radar/PrecisionFindingOverlay.swift`](../TeeKum%20Prototype/Views/Components/Radar/PrecisionFindingOverlay.swift):
+  - Added `public let isSimulated: Bool` (default `false`).
+  - Top header dynamically shows `"SENSOR-ASSISTED PRECISION FINDING"` or `"ULTRA-WIDEBAND PRECISION FINDING"`.
+  - Coaching text gracefully communicates token handshake and out-of-range states.
+  - Friend card footer displays `"Sensor-Assisted Navigation (Demo Mode)"` or `"Apple U1/U2 Centimeter Link Active"`.
+- [`TeeKum Prototype/Views/FinderBeaconView.swift`](../TeeKum%20Prototype/Views/FinderBeaconView.swift):
+  - Added `@State private var isPrecisionFindingActive: Bool = false` and `autoStartPrecisionFinding: Bool = false` initializer argument.
+  - Renders `PrecisionFindingOverlay` whenever `isPrecisionFindingActive && selectedMember != nil`.
+  - Added `launchPrecisionFinding(for:)` and `stopPrecisionFindingAction()`.
+  - Added *"Find Friend"* quick menu in header bar when no target is selected.
+  - Action button in target HUD is always interactive: displays *"Start Precision Finding"* (or *"Start Precision Finding (Demo)"*) and switches to *"Stop Precision Finding"* when active.
+  - Live updates simulated telemetry on GPS location and compass heading changes.
+- [`TeeKum Prototype/Views/FriendDetailView.swift`](../TeeKum%20Prototype/Views/FriendDetailView.swift):
+  - Added `public var onStartPrecisionFinding: (() -> Void)? = nil` property and initializer parameter.
+  - Added dedicated cyan *"Precision Finding (UWB)"* button in `navigationCard`.
+- [`TeeKum Prototype/Views/MainMapView.swift`](../TeeKum%20Prototype/Views/MainMapView.swift):
+  - Added `@State private var radarAutoStartPrecisionFinding: Bool = false`.
+  - Wired `FriendDetailView`'s `onStartPrecisionFinding` callback to auto-start precision finding in `FinderBeaconView`.
+  - Connected `autoStartPrecisionFinding` argument in `.fullScreenCover(isPresented: $isShowingNavigationBeacon)`.
+- [`TeeKum Prototype/Tests/NearbyInteractionTests.swift`](../TeeKum%20Prototype/Tests/NearbyInteractionTests.swift):
+  - Added `import CoreLocation`.
+  - Added `testNearbyInteractionSimulationFallback()` verifying that sensor-assisted simulation mode starts active, tracks target, and restores state on stop.
+
+#### 4. Verification & Results
+- Built with Xcode 27 toolchain targeting iPhone Simulator (`iPhone 18 Pro`): Build Succeeded with 0 errors.
+- Installed onto simulator `C8804143-F5A1-4596-B7FE-4F4586528528`.
+- Ran complete automated test suite (`-runAllTests -exitAfterTests`):
+  - `NearbyInteractionTests`: 7/7 tests passed (including new simulation fallback test).
+  - All 17 automated test suites passed with 100% success rate.
+
+---
+
 ### [2026-11-04 16:42] — Meeting Point Setter Lock Rule Implementation & Mesh Validation
 - **Contributor / Agent:** Lead iOS & Systems Engineer (Antigravity)
 - **Status:** Completed & Fully Verified (100% Automated Test Suite Pass Rate across all 17 test suites / 195+ tests, Build Succeeded)

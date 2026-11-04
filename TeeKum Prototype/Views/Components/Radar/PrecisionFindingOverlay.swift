@@ -17,6 +17,7 @@ public struct PrecisionFindingOverlay: View {
     public let direction: simd_float3?
     public let horizontalAngle: Float?
     public let rangingState: UWBRangingState
+    public let isSimulated: Bool
     public let onStop: () -> Void
     
     @State private var sonarPulse: CGFloat = 1.0
@@ -27,6 +28,7 @@ public struct PrecisionFindingOverlay: View {
         direction: simd_float3?,
         horizontalAngle: Float?,
         rangingState: UWBRangingState,
+        isSimulated: Bool = false,
         onStop: @escaping () -> Void
     ) {
         self.targetMember = targetMember
@@ -34,6 +36,7 @@ public struct PrecisionFindingOverlay: View {
         self.direction = direction
         self.horizontalAngle = horizontalAngle
         self.rangingState = rangingState
+        self.isSimulated = isSimulated
         self.onStop = onStop
     }
     
@@ -64,7 +67,7 @@ public struct PrecisionFindingOverlay: View {
     private var coachingText: String {
         switch rangingState {
         case .requestingToken:
-            return "Connecting with \(targetMember.name)..."
+            return "Connecting with \(targetMember.name) over Ultra-Wideband..."
         case .outOfRange:
             return "Signal obstructed • Move iPhone around"
         case .failed(let msg):
@@ -112,7 +115,7 @@ public struct PrecisionFindingOverlay: View {
                         .foregroundStyle(primaryColor)
                         .symbolEffect(.pulse, options: .repeating)
                     
-                    Text("ULTRA-WIDEBAND PRECISION FINDING")
+                    Text(isSimulated ? "SENSOR-ASSISTED PRECISION FINDING" : "ULTRA-WIDEBAND PRECISION FINDING")
                         .font(.caption2.bold().monospaced())
                         .foregroundStyle(primaryColor)
                     
@@ -212,7 +215,7 @@ public struct PrecisionFindingOverlay: View {
                             Text(targetMember.name)
                                 .font(.subheadline.bold())
                                 .foregroundStyle(.white)
-                            Text("Apple U1/U2 Centimeter Link Active")
+                            Text(isSimulated ? "Sensor-Assisted Navigation (Demo Mode)" : "Apple U1/U2 Centimeter Link Active")
                                 .font(.caption2)
                                 .foregroundStyle(.gray)
                         }

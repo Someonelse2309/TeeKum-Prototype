@@ -24,6 +24,7 @@ public struct FinderBeaconView: View {
     
     private var nearbyService = NearbyInteractionService.shared
     @State private var selectedMember: Member?
+    @State private var isPrecisionFindingActive: Bool = false
     @State private var isStrobeActive: Bool = false
     @State private var strobeColorIndex: Int = 0
     @State private var strobeTask: Task<Void, Never>?
@@ -40,10 +41,12 @@ public struct FinderBeaconView: View {
         userColor: Color? = nil,
         session: GroupSession? = nil,
         peerTransport: (any PeerTransport)? = nil,
+        autoStartPrecisionFinding: Bool = false,
         onDismiss: @escaping () -> Void
     ) {
         self.members = members
         self._selectedMember = State(initialValue: initialSelectedMember)
+        self._isPrecisionFindingActive = State(initialValue: autoStartPrecisionFinding && initialSelectedMember != nil)
         self.userLocation = userLocation
         self.currentHeading = currentHeading
         self.locationService = locationService
@@ -64,11 +67,24 @@ public struct FinderBeaconView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             locationService?.setTacticalRadarActive(true)
+            if isPrecisionFindingActive, let target = selectedMember {
+                launchPrecisionFinding(for: target)
+            } else if selectedMember == nil && members.count == 1 {
+                selectedMember = members.first
+            }
         }
         .onDisappear {
             locationService?.setTacticalRadarActive(false)
-            Task {
-                await nearbyService.stopPrecisionFinding(session: session, transport: peerTransport)
+            stopPrecisionFindingAction()
+        }
+        .onChange(of: userLocation) { _, newLoc in
+            if isPrecisionFindingActive, let target = selectedMember {
+                nearbyService.updateSimulatedTelemetry(for: target, userLocation: newLoc, currentHeading: currentHeading)
+            }
+        }
+        .onChange(of: currentHeading) { _, newHeading in
+            if isPrecisionFindingActive, let target = selectedMember {
+                nearbyService.updateSimulatedTelemetry(for: target, userLocation: userLocation, currentHeading: newHeading)
             }
         }
     }
@@ -103,6 +119,30 @@ public struct FinderBeaconView: View {
                     
                     Spacer()
                     
+                    if selectedMember == nil && !members.isEmpty {
+                        Menu {
+                            ForEach(members) { member in
+                                Button {
+                                    launchPrecisionFinding(for: member)
+                                } label: {
+                                    Label(member.name, systemImage: "person.circle")
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "dot.radiowaves.left.and.right")
+                                Text("Find Friend")
+                                Image(systemName: "chevron.down")
+                            }
+                            .font(.caption2.bold())
+                            .foregroundStyle(.cyan)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.cyan.opacity(0.18))
+                            .clipShape(Capsule())
+                        }
+                    }
+                    
                     Button {
                         onDismiss()
                     } label: {
@@ -132,25 +172,23 @@ public struct FinderBeaconView: View {
                     .padding(.vertical, 4)
                 }
                 
-                // MARK: - Main Radar Canvas
-                if let target = selectedMember,
-                   nearbyService.rangingState == .active,
-                   nearbyService.activeTargetMemberId == target.id {
+                // MARK: - Main Canvas (Precision Finding Overlay or Tactical Radar)
+                if isPrecisionFindingActive, let target = selectedMember {
                     PrecisionFindingOverlay(
                         targetMember: target,
-                        distanceMeters: nearbyService.currentDistance,
+                        distanceMeters: nearbyService.currentDistance ?? computeDistance(to: target).map { Float($0) },
                         direction: nearbyService.currentDirection,
-                        horizontalAngle: nearbyService.currentHorizontalAngle,
+                        horizontalAngle: nearbyService.currentHorizontalAngle ?? computeSimulatedHorizontalAngle(to: target),
                         rangingState: nearbyService.rangingState,
+                        isSimulated: nearbyService.isSimulated || !nearbyService.isSupported,
                         onStop: {
-                            Task {
-                                await nearbyService.stopPrecisionFinding(session: session, transport: peerTransport)
-                            }
+                            stopPrecisionFindingAction()
                         }
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 24))
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
                 } else {
                     RadarView(
                         members: members,
@@ -181,9 +219,14 @@ public struct FinderBeaconView: View {
                                     onTap: {
                                         withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
                                             if selectedMember?.id == member.id {
+                                                stopPrecisionFindingAction()
                                                 selectedMember = nil
                                             } else {
+                                                let wasActive = isPrecisionFindingActive
                                                 selectedMember = member
+                                                if wasActive {
+                                                    launchPrecisionFinding(for: member)
+                                                }
                                             }
                                         }
                                     }
@@ -272,6 +315,7 @@ public struct FinderBeaconView: View {
                 
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
+                        stopPrecisionFindingAction()
                         selectedMember = nil
                     }
                 } label: {
@@ -285,56 +329,44 @@ public struct FinderBeaconView: View {
                 }
             }
             
-            // Ultra-Wideband Precision Finding Action Bar
+            // Ultra-Wideband / Sensor-Assisted Precision Finding Action Bar
             HStack(spacing: 8) {
-                if nearbyService.isSupported {
-                    if nearbyService.rangingState == .active && nearbyService.activeTargetMemberId == target.id {
-                        Button {
-                            Task {
-                                await nearbyService.stopPrecisionFinding(session: session, transport: peerTransport)
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "stop.circle.fill")
-                                Text("Stop Precision Finding")
-                                    .font(.caption.bold())
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.red.opacity(0.25))
-                            .foregroundStyle(.red)
-                            .clipShape(Capsule())
+                if isPrecisionFindingActive {
+                    Button {
+                        stopPrecisionFindingAction()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "stop.circle.fill")
+                            Text("Stop Precision Finding")
+                                .font(.caption.bold())
                         }
-                    } else {
-                        Button {
-                            guard let session = session, let transport = peerTransport else { return }
-                            Task {
-                                await nearbyService.startPrecisionFinding(for: target, session: session, transport: transport)
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "dot.radiowaves.left.and.right")
-                                Text(nearbyService.rangingState == .requestingToken ? "Requesting UWB..." : "Start Precision Finding")
-                                    .font(.caption.bold())
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.cyan.opacity(0.25))
-                            .foregroundStyle(.cyan)
-                            .clipShape(Capsule())
-                        }
-                        .disabled(nearbyService.rangingState == .requestingToken || session == nil || peerTransport == nil)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.red.opacity(0.25))
+                        .foregroundStyle(.red)
+                        .clipShape(Capsule())
                     }
                 } else {
-                    HStack(spacing: 5) {
-                        Image(systemName: "antenna.radiowaves.left.and.right.slash")
-                            .font(.caption2)
-                            .foregroundStyle(.gray)
-                        Text("Precision Finding requires iPhone 11+ with U1/U2 chip")
+                    Button {
+                        launchPrecisionFinding(for: target)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "dot.radiowaves.left.and.right")
+                            Text(nearbyService.isSupported ? "Start Precision Finding" : "Start Precision Finding (Demo)")
+                                .font(.caption.bold())
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.cyan.opacity(0.25))
+                        .foregroundStyle(.cyan)
+                        .clipShape(Capsule())
+                    }
+                    
+                    if !nearbyService.isSupported {
+                        Text("Sensor-Assisted")
                             .font(.caption2)
                             .foregroundStyle(.gray)
                     }
-                    .padding(.vertical, 2)
                 }
             }
         }
@@ -413,6 +445,33 @@ public struct FinderBeaconView: View {
         strobeTask = nil
     }
     
+    // MARK: - Precision Finding Actions
+    
+    private func launchPrecisionFinding(for member: Member) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+            selectedMember = member
+            isPrecisionFindingActive = true
+        }
+        Task {
+            await nearbyService.startPrecisionFinding(
+                for: member,
+                session: session,
+                transport: peerTransport,
+                userLocation: userLocation,
+                currentHeading: currentHeading
+            )
+        }
+    }
+    
+    private func stopPrecisionFindingAction() {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+            isPrecisionFindingActive = false
+        }
+        Task {
+            await nearbyService.stopPrecisionFinding(session: session, transport: peerTransport)
+        }
+    }
+    
     // MARK: - Computations
     
     private func computeDistance(to member: Member) -> CLLocationDistance? {
@@ -426,5 +485,12 @@ public struct FinderBeaconView: View {
         let heading = currentHeading ?? 0.0
         let relative = bearingToTarget - heading
         return (relative + 360.0).truncatingRemainder(dividingBy: 360.0)
+    }
+    
+    private func computeSimulatedHorizontalAngle(to member: Member) -> Float? {
+        guard let relBearing = computeRelativeBearing(to: member) else { return nil }
+        var deg = relBearing
+        if deg > 180 { deg -= 360 }
+        return Float(deg * .pi / 180.0)
     }
 }

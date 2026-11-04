@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CoreLocation
 
 /// Exhaustive Test Suite for Ultra-Wideband (UWB) Nearby Interaction,
 /// token exchange fragmentation, wire packet roundtrip, and service state transitions.
@@ -23,6 +24,7 @@ public enum NearbyInteractionTests {
         if !testMultiFragmentTokenSplittingAndAssembly() { passed = false }
         if !testUWBHopLimitStrictlyDirectLink() { passed = false }
         if await !testNearbyInteractionServiceState() { passed = false }
+        if await !testNearbyInteractionSimulationFallback() { passed = false }
         
         print("========================================")
         print(passed ? "ALL NEARBY INTERACTION TESTS PASSED!" : "NEARBY INTERACTION TESTS FAILED!")
@@ -214,6 +216,50 @@ public enum NearbyInteractionTests {
             }
             print("  PASS: Service gracefully reported .unsupported on hardware without U1/U2.")
         }
+        return true
+    }
+    
+    // MARK: - Test 7: Sensor-Assisted Simulation Fallback
+    
+    @MainActor
+    public static func testNearbyInteractionSimulationFallback() async -> Bool {
+        print("[Test 7] NearbyInteractionService simulation and sensor fallback...")
+        let service = NearbyInteractionService.shared
+        let dummyMember = Member(
+            id: "SIM",
+            name: "Sim Friend",
+            coordinate: CLLocationCoordinate2D(latitude: 37.7750, longitude: -122.4194)
+        )
+        let loc1 = LocationPin(
+            coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+            horizontalAccuracy: 5.0
+        )
+        
+        await service.startPrecisionFinding(for: dummyMember, userLocation: loc1, currentHeading: 0.0)
+        
+        guard service.activeTargetMemberId == "SIM" else {
+            print("  FAIL: Expected active target SIM, got \(String(describing: service.activeTargetMemberId))")
+            return false
+        }
+        guard service.rangingState == .active else {
+            print("  FAIL: Expected .active state in simulation fallback, got \(service.rangingState)")
+            return false
+        }
+        guard service.isSimulated || service.isSupported else {
+            print("  FAIL: Service neither simulated nor supported.")
+            return false
+        }
+        
+        await service.stopPrecisionFinding(session: nil, transport: nil)
+        guard service.activeTargetMemberId == nil else {
+            print("  FAIL: Expected active target nil after stop, got \(String(describing: service.activeTargetMemberId))")
+            return false
+        }
+        guard service.rangingState == (service.isSupported ? .idle : .unsupported) else {
+            print("  FAIL: Expected state restored after stop, got \(service.rangingState)")
+            return false
+        }
+        print("  PASS: Simulation fallback starts, runs active, and restores state cleanly.")
         return true
     }
 }

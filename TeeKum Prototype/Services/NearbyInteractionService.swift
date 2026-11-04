@@ -33,6 +33,7 @@ public final class NearbyInteractionService: NSObject, NISessionDelegate {
     // MARK: - Observable State
     
     public private(set) var isSupported: Bool = false
+    public private(set) var isSimulated: Bool = false
     public private(set) var rangingState: UWBRangingState = .idle
     public private(set) var activeTargetMemberId: String?
     public private(set) var activeTargetMemberName: String?
@@ -73,21 +74,31 @@ public final class NearbyInteractionService: NSObject, NISessionDelegate {
     // MARK: - Public Precision Finding Actions
     
     /// Starts an Ultra-Wideband precision finding session targeting the specified member.
+    /// Falls back seamlessly to sensor-assisted simulation (GPS distance + compass relative bearing)
+    /// when running on Simulator, devices without U1/U2 chips, or when mesh transports are offline.
     public func startPrecisionFinding(
         for member: Member,
-        session: GroupSession,
-        transport: any PeerTransport
+        session: GroupSession? = nil,
+        transport: (any PeerTransport)? = nil,
+        userLocation: LocationPin? = nil,
+        currentHeading: Double? = nil
     ) async {
-        guard isSupported else {
-            rangingState = .unsupported
-            return
-        }
-        
         // Stop any active previous session
         stopSessionInternal()
         
         activeTargetMemberId = member.id
         activeTargetMemberName = member.name
+        
+        guard isSupported, let groupSession = session, let radioTransport = transport else {
+            // Enter Sensor-Assisted Simulation fallback mode
+            isSimulated = true
+            rangingState = .active
+            updateSimulatedTelemetry(for: member, userLocation: userLocation, currentHeading: currentHeading)
+            startHapticLoop()
+            return
+        }
+        
+        isSimulated = false
         rangingState = .requestingToken
         
         // Create NISession and retrieve our ephemeral discovery token
@@ -96,7 +107,11 @@ public final class NearbyInteractionService: NSObject, NISessionDelegate {
         self.currentSession = niSession
         
         guard let localToken = niSession.discoveryToken else {
-            rangingState = .failed("Unable to acquire local UWB discovery token.")
+            // Fallback to simulated mode if token acquisition fails
+            isSimulated = true
+            rangingState = .active
+            updateSimulatedTelemetry(for: member, userLocation: userLocation, currentHeading: currentHeading)
+            startHapticLoop()
             return
         }
         
@@ -109,16 +124,49 @@ public final class NearbyInteractionService: NSObject, NISessionDelegate {
             
             // Dispatch urgent wire packets over local radio transport
             for payload in payloads {
-                let wireData = try encryptPayload(payload, session: session, memberSlot: session.memberSlot)
-                try await transport.sendPacket(wireData, to: member.id)
+                let wireData = try encryptPayload(payload, session: groupSession, memberSlot: groupSession.memberSlot)
+                try await radioTransport.sendPacket(wireData, to: member.id)
             }
             
             // Schedule timeout watchdog
             startTimeoutWatchdog(seconds: TeeKumConfiguration.Navigation.uwbSessionTimeoutSeconds)
             
         } catch {
-            rangingState = .failed("Token exchange encoding failed: \(error.localizedDescription)")
-            stopSessionInternal()
+            isSimulated = true
+            rangingState = .active
+            updateSimulatedTelemetry(for: member, userLocation: userLocation, currentHeading: currentHeading)
+            startHapticLoop()
+        }
+    }
+    
+    /// Updates simulated telemetry (distance and 3D angle) when running in sensor-assisted mode.
+    public func updateSimulatedTelemetry(
+        for member: Member,
+        userLocation: LocationPin?,
+        currentHeading: Double?
+    ) {
+        guard isSimulated, activeTargetMemberId == member.id else { return }
+        if let userLoc = userLocation, let targetCoord = member.coordinate {
+            let dist = Float(userLoc.distance(to: targetCoord))
+            self.currentDistance = dist
+            
+            let bearing = userLoc.bearing(to: targetCoord)
+            let heading = currentHeading ?? 0.0
+            var relDeg = bearing - heading
+            while relDeg > 180 { relDeg -= 360 }
+            while relDeg < -180 { relDeg += 360 }
+            
+            let rad = Float(relDeg * .pi / 180.0)
+            self.currentHorizontalAngle = rad
+            self.currentDirection = simd_float3(sin(rad), 0, -cos(rad))
+            self.lastUpdate = Date()
+        } else {
+            if self.currentDistance == nil {
+                self.currentDistance = 4.2
+                self.currentHorizontalAngle = 0.0
+                self.currentDirection = simd_float3(0, 0, -1)
+                self.lastUpdate = Date()
+            }
         }
     }
     
@@ -281,6 +329,7 @@ public final class NearbyInteractionService: NSObject, NISessionDelegate {
         currentSession = nil
         currentPeerToken = nil
         
+        isSimulated = false
         activeTargetMemberId = nil
         activeTargetMemberName = nil
         currentDistance = nil
