@@ -574,7 +574,7 @@ flowchart LR
 3. **Milestone 3.3 — Status System Retirement & Location Decoupling:**
    - Remove status arguments from [`LocationPublisher.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Services/LocationPublisher.swift).
    - Update [`TeeKumApp.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/App/TeeKumApp.swift), [`Member.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Models/Member.swift), and [`GroupSessionViewModel.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/ViewModels/GroupSessionViewModel.swift) to retire canned status handling.
-   - Retire [`StatusPickerView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Views/StatusPickerView.swift).
+   - Retire `StatusPickerView.swift` (purged from repository in commit `713b563`).
 4. **Milestone 3.4 — Chat ViewModel & Multi-Peer ACK Tracking:**
    - Implement `ChatViewModel.swift` (@Observable @MainActor) with 3.0s cooldown, message ring buffer, and `ChatMessageDeliveryState` tally (*"Delivered M/N"*).
    - Update [`TeeKumApp.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/App/TeeKumApp.swift) to route inbound chat packets, dispatch jittered ACKs, and forward multi-hop chat datagrams.
