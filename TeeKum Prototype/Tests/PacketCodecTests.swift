@@ -315,7 +315,6 @@ public enum PacketCodecTests {
             let payload = LocationPingPayload(
                 coordinate: coord,
                 accuracy: 5,
-                statusCode: .available,
                 senderInitials: "ALE",
                 batteryLevel: 50
             )
@@ -636,8 +635,6 @@ public enum PacketCodecTests {
             coordinate: coord,
             timestamp: Date(timeIntervalSince1970: 1730000000),
             accuracy: 8,
-            statusCode: .available,
-            targetRefId: nil,
             senderInitials: "NIC",
             batteryLevel: 88,
             heading: 120,
@@ -715,8 +712,6 @@ public enum PacketCodecTests {
             coordinate: coord,
             timestamp: Date(timeIntervalSince1970: 1730000000),
             accuracy: 8,
-            statusCode: .available,
-            targetRefId: nil,
             senderInitials: "DNA",
             batteryLevel: 90,
             heading: 0,

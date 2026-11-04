@@ -40,14 +40,6 @@ public final class MapViewModel {
     /// Backing store for user location when no service is attached.
     private var _userLocation: LocationPin?
     
-    /// Backing store for user status when no service is attached.
-    private var _localStatus: UserStatus = UserStatus(code: .available)
-    
-    /// Current local user status.
-    public var currentStatus: UserStatus {
-        locationService?.currentStatus ?? _localStatus
-    }
-    
     /// Current magnetic compass heading in degrees (0..<360).
     public var currentHeading: CLLocationDirection? {
         locationService?.currentHeading ?? userLocation?.heading
@@ -142,12 +134,6 @@ public final class MapViewModel {
     /// Enables or disables high-precision navigation mode on the location service.
     public func setTacticalRadarActive(_ active: Bool) {
         locationService?.setTacticalRadarActive(active)
-    }
-    
-    /// Updates local user status (coalesced into next location update).
-    public func updateUserStatus(_ status: UserStatus) {
-        _localStatus = status
-        locationService?.updateStatus(status)
     }
     
     /// Computes straight-line distance in meters to a given member.

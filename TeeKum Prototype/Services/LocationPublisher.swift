@@ -74,7 +74,7 @@ public final class LocationPublisher {
         if let initialLoc = locationService.currentLocation, locationService.isLiveSharingEnabled {
             Task { @MainActor [weak self] in
                 guard let self, self.isRunning else { return }
-                await self.handleLocationPingReady(location: initialLoc, status: self.locationService.currentStatus)
+                await self.handleLocationPingReady(location: initialLoc)
             }
         }
         
@@ -82,9 +82,9 @@ public final class LocationPublisher {
         let pingsStream = locationService.publishedPings
         listeningTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            for await (location, status) in pingsStream {
+            for await location in pingsStream {
                 guard !Task.isCancelled, self.isRunning else { break }
-                await self.handleLocationPingReady(location: location, status: status)
+                await self.handleLocationPingReady(location: location)
             }
         }
     }
@@ -96,11 +96,11 @@ public final class LocationPublisher {
         listeningTask = nil
     }
     
-    // MARK: - Ordinary Location & Status Publishing
+    // MARK: - Ordinary Location Publishing
     
-    /// Assembles, seals, and broadcasts a 56-byte wire packet carrying location + status.
+    /// Assembles, seals, and broadcasts a 56-byte wire packet carrying location.
     /// Strictly suppressed if Live Sharing is disabled.
-    public func handleLocationPingReady(location: LocationPin, status: UserStatus) async {
+    public func handleLocationPingReady(location: LocationPin) async {
         // Acceptance Criterion 2: Live Sharing OFF prevents ordinary location broadcasting
         guard locationService.isLiveSharingEnabled else { return }
         

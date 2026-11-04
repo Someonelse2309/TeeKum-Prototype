@@ -66,7 +66,6 @@ public struct CryptoSecurityTests {
         let payload = LocationPingPayload(
             coordinate: CLLocationCoordinate2D(latitude: 33.680312, longitude: -116.237409),
             accuracy: 5,
-            statusCode: .available,
             senderInitials: "DNA",
             batteryLevel: 90,
             heading: 120

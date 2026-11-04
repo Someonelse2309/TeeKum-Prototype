@@ -121,6 +121,8 @@ public actor PacketForwarder: PacketForwarding {
             effectiveLimit = PacketConstants.meetingPointHopLimit
         case .chatMessage, .ack:
             effectiveLimit = PacketConstants.chatHopLimit
+        case .uwbTokenExchange:
+            effectiveLimit = PacketConstants.uwbHopLimit
         default:
             effectiveLimit = PacketConstants.defaultHopLimit
         }

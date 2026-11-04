@@ -122,7 +122,7 @@ public struct LocationPublishingTests {
         
         let service = LocationService(isLiveSharingEnabled: true)
         var publishedCount = 0
-        service.onPublishLocationPing = { _, _ in
+        service.onPublishLocationPing = { _ in
             publishedCount += 1
         }
         
@@ -160,50 +160,33 @@ public struct LocationPublishingTests {
     
     @MainActor
     public static func testStatusCoalescingInNextPing() async -> Bool {
-        print("[Test 2] Status changes included in next normal update (AC 3)...")
+        print("[Test 2] Pure location ping publishing without legacy status overhead...")
         
         let service = LocationService(isLiveSharingEnabled: true)
-        var lastPublishedStatus: StatusCode?
-        var lastPublishedTarget: UInt32?
+        var lastPublishedLocation: LocationPin?
         var publishedCount = 0
         
-        service.onPublishLocationPing = { _, status in
-            lastPublishedStatus = status.code
-            lastPublishedTarget = status.targetRefId
+        service.onPublishLocationPing = { location in
+            lastPublishedLocation = location
             publishedCount += 1
         }
         
         let coord = CLLocationCoordinate2D(latitude: 33.6844, longitude: -116.2390)
         service.simulateLocation(coordinate: coord, accuracy: 4.0)
         
-        // Update status locally to "Getting Drinks"
-        let drinksStatus = UserStatus(code: .gettingDrinks, targetRefId: 0xCAFE1234)
-        service.updateStatus(drinksStatus)
-        
-        // Ensure updating status did NOT send an immediate ordinary packet
-        guard publishedCount == 0 else {
-            print("FAILED: Updating status created an immediate ordinary packet! Count: \(publishedCount)")
-            return false
-        }
-        
-        // When next normal location update fires, verify the new status is included
+        // Immediate publish
         service.triggerImmediatePublish()
         guard publishedCount == 1 else {
-            print("FAILED: Normal publish failed after status change.")
+            print("FAILED: Location publish failed.")
             return false
         }
         
-        guard lastPublishedStatus == .gettingDrinks else {
-            print("FAILED: Expected status .gettingDrinks, got: \(String(describing: lastPublishedStatus))")
+        guard let pubLoc = lastPublishedLocation, abs(pubLoc.coordinate.latitude - 33.6844) < 0.0001 else {
+            print("FAILED: Published coordinate does not match simulated fix.")
             return false
         }
         
-        guard lastPublishedTarget == 0xCAFE1234 else {
-            print("FAILED: Expected targetRefId 0xCAFE1234, got: \(String(describing: lastPublishedTarget))")
-            return false
-        }
-        
-        print("  ✓ Status updates are coalesced and included in the next normal update without separate packets.")
+        print("  ✓ Pure geographic location telemetry published cleanly without status overhead.")
         return true
     }
     
@@ -517,7 +500,7 @@ public struct LocationPublishingTests {
         
         let service = LocationService(isLiveSharingEnabled: true)
         var publishedCount = 0
-        service.onPublishLocationPing = { _, _ in
+        service.onPublishLocationPing = { _ in
             publishedCount += 1
         }
         
@@ -568,10 +551,9 @@ public struct LocationPublishingTests {
         let coord = CLLocationCoordinate2D(latitude: 33.684444, longitude: -116.239111)
         let ts = Date(timeIntervalSince1970: 1700000000)
         service.simulateLocation(coordinate: coord, accuracy: 6.0, timestamp: ts)
-        service.updateStatus(UserStatus(code: .omw))
         
         // Broadcast location ping
-        await publisher.handleLocationPingReady(location: service.currentLocation!, status: service.currentStatus)
+        await publisher.handleLocationPingReady(location: service.currentLocation!)
         
         let packetCount = await mockTransport.getBroadcastedCount()
         guard packetCount == 1 else {
@@ -892,7 +874,7 @@ public struct LocationPublishingTests {
         
         // 7. Stale Response Burst (rapid pings on target discovery)
         var burstPingsCount = 0
-        service.onPublishLocationPing = { _, _ in
+        service.onPublishLocationPing = { _ in
             burstPingsCount += 1
         }
         service.simulateLocation(coordinate: CLLocationCoordinate2D(latitude: 33.68, longitude: -116.24), accuracy: 5.0)
@@ -1061,7 +1043,7 @@ public struct LocationPublishingTests {
                 lastSeen: Date(),
                 coordinate: ping.coordinate,
                 horizontalAccuracy: 5.0,
-                status: UserStatus(code: .available),
+                isEmergency: false,
                 batteryLevel: 0.8,
                 heading: ping.headingDegrees,
                 isDirectPeer: true,

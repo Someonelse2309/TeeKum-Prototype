@@ -171,7 +171,6 @@ public enum RoutingForwardingTests {
         let ping = LocationPingPayload(
             coordinate: CLLocationCoordinate2D(latitude: 36.1, longitude: -115.1),
             accuracy: 3,
-            statusCode: .available,
             senderInitials: "ALC",
             batteryLevel: 80
         )
@@ -257,7 +256,6 @@ public enum RoutingForwardingTests {
         let ping = LocationPingPayload(
             coordinate: CLLocationCoordinate2D(latitude: 36.2, longitude: -115.2),
             accuracy: 3,
-            statusCode: .available,
             senderInitials: "ALC",
             batteryLevel: 85
         )
@@ -348,7 +346,6 @@ public enum RoutingForwardingTests {
         let ping = LocationPingPayload(
             coordinate: CLLocationCoordinate2D(latitude: 36.3, longitude: -115.3),
             accuracy: 3,
-            statusCode: .available,
             senderInitials: "ALC",
             batteryLevel: 75
         )
@@ -515,7 +512,6 @@ public enum RoutingForwardingTests {
             coordinate: CLLocationCoordinate2D(latitude: 36.1, longitude: -115.1),
             timestamp: futureDate,
             accuracy: 5,
-            statusCode: .available,
             senderInitials: "ALC",
             batteryLevel: 90
         )
@@ -534,7 +530,6 @@ public enum RoutingForwardingTests {
             coordinate: CLLocationCoordinate2D(latitude: 36.1, longitude: -115.1),
             timestamp: clock.now(),
             accuracy: 5,
-            statusCode: .available,
             senderInitials: "ALC",
             batteryLevel: 90
         )
@@ -644,7 +639,6 @@ public enum RoutingForwardingTests {
         let impersonatedPing = LocationPingPayload(
             coordinate: CLLocationCoordinate2D(latitude: 36.1699, longitude: -115.1398),
             accuracy: 3,
-            statusCode: .available,
             senderInitials: "ALC",
             batteryLevel: 95
         )
@@ -846,7 +840,6 @@ public enum RoutingForwardingTests {
         let alicePing = LocationPingPayload(
             coordinate: CLLocationCoordinate2D(latitude: 36.1234, longitude: -115.5678),
             accuracy: 4,
-            statusCode: .available,
             senderInitials: "ALC",
             batteryLevel: 92
         )
@@ -928,7 +921,6 @@ public enum RoutingForwardingTests {
         let confidentialPing = LocationPingPayload(
             coordinate: CLLocationCoordinate2D(latitude: 36.9999, longitude: -115.8888),
             accuracy: 2,
-            statusCode: .medical,
             senderInitials: "SEC",
             batteryLevel: 15
         )

@@ -619,8 +619,6 @@ public final class MeshDebuggerViewModel: @unchecked Sendable {
                 coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon),
                 timestamp: Date(),
                 accuracy: 5,
-                statusCode: .available,
-                targetRefId: nil,
                 senderInitials: session.localInitials,
                 batteryLevel: 88,
                 heading: 180
@@ -743,8 +741,6 @@ public final class MeshDebuggerViewModel: @unchecked Sendable {
                 coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
                 timestamp: Date(),
                 accuracy: 5,
-                statusCode: .available,
-                targetRefId: nil,
                 senderInitials: session.localInitials,
                 batteryLevel: 90,
                 heading: 0

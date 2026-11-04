@@ -225,6 +225,8 @@ public struct MainMapView: View {
                 currentHeading: mapViewModel.currentHeading,
                 locationService: mapViewModel.locationService,
                 userColor: sessionViewModel.localColor.swiftUIColor,
+                session: sessionViewModel.activeSession,
+                peerTransport: peerTransport,
                 onDismiss: {
                     radarInitialMember = nil
                     isShowingNavigationBeacon = false
@@ -356,7 +358,7 @@ public struct MainMapView: View {
     
     private func friendPinView(for member: Member) -> some View {
         let isStale = member.isStale(threshold: 60)
-        let isEmergency = member.status.code.isEmergency
+        let isEmergency = member.isEmergency
         let memberColor = member.color.swiftUIColor
         let pinAccentColor = isEmergency ? Color.red : (isStale ? memberColor.opacity(0.6) : memberColor)
         
@@ -391,8 +393,9 @@ public struct MainMapView: View {
                     )
                     .shadow(color: isEmergency ? Color.red.opacity(0.8) : memberColor.opacity(0.4), radius: 4)
                 
-                Text(member.status.code.emoji)
-                    .font(.system(size: 22))
+                Text(member.initials)
+                    .font(.system(size: 14, weight: .black, design: .rounded))
+                    .foregroundStyle(isEmergency ? .red : memberColor)
                 
                 // Stale warning indicator badge
                 if isStale {
@@ -442,7 +445,7 @@ public struct MainMapView: View {
             )
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(member.name), status \(member.status.code.title)\(member.heading.map { ", facing \(Int($0)) degrees" } ?? "")")
+        .accessibilityLabel("\(member.name)\(member.isEmergency ? ", emergency SOS active" : "")\(member.heading.map { ", facing \(Int($0)) degrees" } ?? "")")
         .accessibilityValue(isStale ? "Stale location measured \(relativeAge(since: member.lastSeen))" : "Live location")
         .accessibilityHint("Double tap to view friend details and navigation.")
     }
@@ -858,16 +861,6 @@ public struct MainMapView: View {
             // Communal Relay Status Card (Agent 5)
             if let manager = relayPolicyManager {
                 communalRelayCard(manager)
-            }
-            
-            // 1-Handed Quick-Tap Status Picker
-            StatusPickerView(selectedCode: mapViewModel.currentStatus.code) { newStatus in
-                mapViewModel.updateUserStatus(UserStatus(code: newStatus))
-                if newStatus == .cancelMeeting {
-                    meetingPointViewModel.cancelMeetingPoint()
-                } else if newStatus == .atMeetingPoint, let initials = sessionViewModel.activeSession?.localInitials {
-                    meetingPointViewModel.respond(status: .atMeetingPoint, memberId: initials)
-                }
             }
             
             // 3-Second Hold Emergency SOS Trigger

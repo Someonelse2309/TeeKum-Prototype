@@ -29,8 +29,8 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
     /// Latest reported horizontal accuracy uncertainty radius in meters.
     public var horizontalAccuracy: CLLocationAccuracy?
     
-    /// Latest reported festival activity status.
-    public var status: UserStatus
+    /// True if the member has an active Emergency SOS broadcast.
+    public var isEmergency: Bool
     
     /// Latest reported battery percentage (0.0 to 1.0).
     public var batteryLevel: Float?
@@ -53,7 +53,7 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
         lastSeen: Date = Date(),
         coordinate: CLLocationCoordinate2D? = nil,
         horizontalAccuracy: CLLocationAccuracy? = nil,
-        status: UserStatus = UserStatus(code: .available),
+        isEmergency: Bool = false,
         batteryLevel: Float? = nil,
         heading: CLLocationDirection? = nil,
         isDirectPeer: Bool = false,
@@ -66,7 +66,7 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
         self.lastSeen = lastSeen
         self.coordinate = coordinate
         self.horizontalAccuracy = horizontalAccuracy
-        self.status = status
+        self.isEmergency = isEmergency
         self.batteryLevel = batteryLevel
         self.heading = heading
         self.isDirectPeer = isDirectPeer
@@ -109,7 +109,7 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
         lhs.coordinate?.latitude == rhs.coordinate?.latitude &&
         lhs.coordinate?.longitude == rhs.coordinate?.longitude &&
         lhs.horizontalAccuracy == rhs.horizontalAccuracy &&
-        lhs.status == rhs.status &&
+        lhs.isEmergency == rhs.isEmergency &&
         lhs.batteryLevel == rhs.batteryLevel &&
         lhs.heading == rhs.heading &&
         lhs.isDirectPeer == rhs.isDirectPeer &&
@@ -124,6 +124,6 @@ public struct Member: Identifiable, Equatable, Hashable, Sendable {
             hasher.combine(coordinate.latitude)
             hasher.combine(coordinate.longitude)
         }
-        hasher.combine(status)
+        hasher.combine(isEmergency)
     }
 }

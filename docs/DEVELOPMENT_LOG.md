@@ -5,6 +5,136 @@
 
 ---
 
+### [2026-11-04 14:25] — Complete Retirement of Legacy Status System & Streamlining to Pure Geographic Telemetry
+- **Contributor / Agent:** Lead iOS & Systems Engineer (Antigravity)
+- **Status:** Completed & Fully Verified (100% Automated Test Suite Pass Rate across all 17 test suites / 195+ tests, Build Succeeded)
+- **Target Phase / Milestone:** Phase 3 — Status System Retirement & Mesh Chat Preset Transition
+
+#### 1. Objective & Motivation
+- Addressed user directive: *"We also havent remove the status system, Lets remove it from the app and the system and the documentation"*.
+- In Phase 1 and 2, canned activity statuses (`Drinks`, `Restroom`, `Lost`, etc.) were transmitted as a 1-byte coded hash (`StatusCode`) piggybacked inside `LocationPingPayload` (Byte 13) with a horizontal chip carousel (`StatusPickerView`).
+- In Phase 3, this legacy status system is fully superseded by the **Festival Group Mesh Chat** (`ChatMessagePayload`, Type `0x07`) and quick-tap preset chips (*"Beer line"*, *"At Main Stage"*, *"Restroom"*, *"Where are you?"*, *"On my way"*, *"Lost"*).
+- The goal was to completely excise all legacy status code, models, UI pickers, and documentation references, converting location pings into pure geographic and sensor telemetry (Option B contiguous packing with a 12-byte contiguous reserved block for floorLevel & barometry).
+
+#### 2. Files Removed & Cleaned
+- **Deleted via `git rm`:**
+  - `TeeKum Prototype/Models/Status.swift` (retired `StatusCode` and `UserStatus` enums).
+  - `TeeKum Prototype/Views/StatusPickerView.swift` (retired horizontal chips picker).
+
+#### 3. Architectural & Codebase Refactoring
+- **Model Layer:**
+  - [`Member.swift`](../TeeKum%20Prototype/Models/Member.swift): Replaced `status: UserStatus` property with `isEmergency: Bool = false`. Updated `==` and `hash(into:)` to compare `isEmergency`.
+  - [`Packet.swift`](../TeeKum%20Prototype/Models/Packet.swift): Removed legacy `statusCode` and `targetRefId` from `LocationPingPayload`. In `SOSPayload`, replaced `StatusCode.sos.rawValue` with raw `0x01` byte (`fixedSOSCode`).
+- **Services Layer:**
+  - [`LocationServiceProtocol.swift`](../TeeKum%20Prototype/Services/LocationServiceProtocol.swift): Removed `currentStatus` property and `updateStatus(_:)` method. Updated `publishedPings` to emit `AsyncStream<LocationPin>`.
+  - [`LocationService.swift`](../TeeKum%20Prototype/Services/LocationService.swift): Removed `currentStatus` and `updateStatus(_:)`. Changed `onPublishLocationPing` closure signature from `((LocationPin, UserStatus) -> Void)?` to `((LocationPin) -> Void)?`.
+  - [`LocationPublisher.swift`](../TeeKum%20Prototype/Services/LocationPublisher.swift): Streamlined `handleLocationPingReady(location: LocationPin)` to publish pure location telemetry without status overhead.
+  - [`MeshTopologySimulator.swift`](../TeeKum%20Prototype/Services/MeshTopologySimulator.swift): Removed `status: StatusCode` argument from `sendLocationPing()`.
+- **ViewModel & Presentation Layer:**
+  - [`MapViewModel.swift`](../TeeKum%20Prototype/ViewModels/MapViewModel.swift): Removed `_localStatus`, `currentStatus`, and `updateUserStatus(_:)`.
+  - [`TeeKumApp.swift`](../TeeKum%20Prototype/App/TeeKumApp.swift): Removed `locationService.updateStatus(...)`. Updated inbound SOS and ping handlers to manage `isEmergency` flag on members.
+  - [`MainMapView.swift`](../TeeKum%20Prototype/Views/MainMapView.swift): Removed `StatusPickerView` invocation and status emoji badges from map annotations.
+  - [`RadarFriendCard.swift`](../TeeKum%20Prototype/Views/Components/Radar/RadarFriendCard.swift), [`RadarBlipView.swift`](../TeeKum%20Prototype/Views/Components/Radar/RadarBlipView.swift), [`FinderBeaconView.swift`](../TeeKum%20Prototype/Views/FinderBeaconView.swift), [`FriendDetailView.swift`](../TeeKum%20Prototype/Views/FriendDetailView.swift): Removed status emoji badges, status cards, and canned strings. Replaced emergency styling with `member.isEmergency`.
+  - [`DiagnosticsView.swift`](../TeeKum%20Prototype/Views/DiagnosticsView.swift): Replaced `member.status.code.emoji` with the member's neon color dot (`member.color.swiftUIColor`), and checked `member.isEmergency`.
+  - [`MeshDebuggerViewModel.swift`](../TeeKum%20Prototype/ViewModels/MeshDebuggerViewModel.swift): Removed obsolete `statusCode: .available` and `targetRefId: nil` from test ping payloads.
+- **Test Suite Updates:**
+  - [`LocationPublishingTests.swift`](../TeeKum%20Prototype/Tests/LocationPublishingTests.swift): Updated `onPublishLocationPing` closure signatures and removed status test cases in favor of pure telemetry verification.
+  - [`CryptoSecurityTests.swift`](../TeeKum%20Prototype/Tests/CryptoSecurityTests.swift), [`MeshFailureIntegrationTests.swift`](../TeeKum%20Prototype/Tests/MeshFailureIntegrationTests.swift), [`MultiHopSOSTests.swift`](../TeeKum%20Prototype/Tests/MultiHopSOSTests.swift), [`PacketCodecTests.swift`](../TeeKum%20Prototype/Tests/PacketCodecTests.swift), [`RoutingForwardingTests.swift`](../TeeKum%20Prototype/Tests/RoutingForwardingTests.swift), [`SOSEndToEndTests.swift`](../TeeKum%20Prototype/Tests/SOSEndToEndTests.swift), [`UIStateTests.swift`](../TeeKum%20Prototype/Tests/UIStateTests.swift): Removed all `statusCode: .available` and `UserStatus` parameters.
+- **Documentation Overhaul:**
+  - [`docs/agent.md`](agent.md): Removed `Status.swift` and `StatusPickerView.swift` from architecture trees, updated User Story 5 to Group Mesh Chat & Quick Presets, updated packet wire layouts for pure telemetry Option B, and updated Non-Negotiable summary.
+  - [`docs/TechnicalRequirements.md`](TechnicalRequirements.md): Updated scope, architecture diagrams, folder trees, and test suite counts (17 suites, 195+ tests).
+  - [`docs/phase3/PAYLOAD_GUIDE.md`](phase3/PAYLOAD_GUIDE.md): Clarified retirement of status codes and 12-byte contiguous reserved block.
+
+#### 4. Verification & Validation
+- **Build Verification:** Clean build succeeded (`xcodebuild -scheme "TeeKum Prototype" ...`). Zero compiler errors, zero warnings.
+- **Automated Simulator Run:** Full test suite executed on iPhone 18 Pro simulator (`xcrun simctl launch --console ... -runAllTests -exitAfterTests`).
+- **Results:** 100% Pass Rate across all 17 automated test suites (195+ tests passed):
+  - `PacketCodecTests`: PASS (14/14)
+  - `CryptoSecurityTests`: PASS (13/13)
+  - `PeerTransportTests`: PASS (14/14)
+  - `LocationPublishingTests`: PASS (14/14)
+  - `SOSEndToEndTests`: PASS (11/11)
+  - `MultiHopSOSTests`: PASS (11/11)
+  - `UIStateTests`: PASS (13/13)
+  - `RoutingForwardingTests`: PASS (12/12)
+  - `RouteDiscoveryTests`: PASS (14/14)
+  - `NeighborDiscoveryTests`: PASS (13/13)
+  - `RelayPolicyTests`: PASS (12/12)
+  - `LiveActivityTests`: PASS (6/6)
+  - `MeshFailureIntegrationTests`: PASS (12/12)
+  - `MeshDebuggerTests`: PASS (10/10)
+  - `ChatEngineTests`: PASS (12/12)
+  - `InactivityGuardTests`: PASS (9/9)
+  - `NearbyInteractionTests`: PASS (6/6)
+
+---
+
+### [2026-11-04 13:55] — Native Apple Ultra-Wideband (U1/U2) Nearby Interaction & Precision Finding
+- **Contributor / Agent:** Lead iOS & Systems Engineer (Antigravity)
+- **Status:** Completed & Fully Verified (100% Automated Test Suite Pass Rate across all 17 test suites, Build Succeeded)
+- **Target Phase / Milestone:** Phase 3 — Close-Range Micro-Navigation, Hardware UWB Precision Radar & Sensor Guidance
+
+#### 1. Objective & User Alignments (/grill-me)
+- Addressed user query: *"The nearby interaction hasnt been working /grill-me. Is it possible?"*.
+- Identified that prior codebase only had GPS + Compass radar (`RadarView.swift`), without any `NearbyInteraction.framework` or `NISession` implementation.
+- Conducted `/grill-me` design interview resolving key architectural decisions:
+  1. **Hardware Scoping:** Target real Apple U1/U2 hardware (`NISession.deviceCapabilities.supportsPreciseDistanceMeasurement`), with clean, graceful fallback and clear badge on unsupported devices (e.g. iPhone SE, Simulator).
+  2. **Trigger Behavior:** Manual tap trigger ("Start Precision Finding" button in HUD when a friend is selected) to conserve radio and coprocessor battery.
+  3. **Visual Experience:** AirTag-style overlay in Tactical Radar (`PrecisionFindingOverlay.swift`) featuring 3D directional arrow (`simd_float3` / `horizontalAngle`), live centimeter readout, coaching hints, and distance-scaled haptics.
+  4. **Token Handshake Protocol:** Automatic silent background handshake between devices without requiring the target peer to tap a prompt.
+
+#### 2. Architectural Design & Wire Protocol
+- Apple's `NIDiscoveryToken` serialized via `NSKeyedArchiver` is ~297 bytes.
+- To fit within TeeKum's strict **56-byte wire frame invariant** (10B cleartext envelope + 30B ChaCha20 ciphertext + 16B Poly1305 MAC tag):
+  - Defined `PacketType.uwbTokenExchange = 0x08`.
+  - Created 30-byte `UWBTokenExchangePayload`: 1B `action` (`.tokenRequest`, `.tokenResponse`, `.stopRanging`) + 1B `sequenceId` + 1B `fragmentIndex` + 1B `totalFragments` + 1B `dataLength` + 25B `fragmentData`.
+  - Transmits a 297-byte discovery token across exactly 12 small 56-byte packets over direct radio connection in <5ms.
+  - Enforced strict 1-hop limit (`uwbHopLimit = 1`): UWB token exchanges are direct peer-to-peer and never relayed over multi-hop mesh.
+
+#### 3. Changes Made & Files Touched
+- [`Config/Info.plist`](../Config/Info.plist):
+  - Added `NSNearbyInteractionUsageDescription` permission description string.
+- [`TeeKum Prototype/Models/TeeKumConfiguration.swift`](../TeeKum%20Prototype/Models/TeeKumConfiguration.swift):
+  - Added `uwbHopLimit = 1` in `TeeKumConfiguration.Network`.
+  - Added `uwbMaxRangingDistanceMeters = 8.0` and `uwbSessionTimeoutSeconds = 30.0` in `TeeKumConfiguration.Navigation`.
+- [`TeeKum Prototype/Models/Packet.swift`](../TeeKum%20Prototype/Models/Packet.swift):
+  - Added `PacketType.uwbTokenExchange = 0x08`.
+  - Added `UWBAction` enum and `UWBTokenExchangePayload` struct (30 bytes).
+  - Added `PacketConstants.uwbHopLimit`.
+- [`TeeKum Prototype/Services/PriorityOutboxQueue.swift`](../TeeKum%20Prototype/Services/PriorityOutboxQueue.swift):
+  - Added `.uwbTokenExchange` to `isUrgent` priority lane so tokens dispatch immediately without delay or drop.
+- [`TeeKum Prototype/Services/PacketForwarder.swift`](../TeeKum%20Prototype/Services/PacketForwarder.swift):
+  - Enforced `effectiveLimit = PacketConstants.uwbHopLimit` (1 hop) for `.uwbTokenExchange`.
+- [`TeeKum Prototype/Services/NearbyInteractionService.swift`](../TeeKum%20Prototype/Services/NearbyInteractionService.swift):
+  - Created `@MainActor NearbyInteractionService` conforming to `NISessionDelegate`.
+  - Manages `NISession` lifecycle, token archiving/unarchiving, multi-fragment reassembly buffer, timeout watchdogs, and AirTag-style distance-scaled haptic pulses (`UIImpactFeedbackGenerator`).
+- [`TeeKum Prototype/Views/Components/Radar/PrecisionFindingOverlay.swift`](../TeeKum%20Prototype/Views/Components/Radar/PrecisionFindingOverlay.swift):
+  - Created AirTag-style guidance overlay with rotating 3D directional arrow, concentric expanding sonar pulses, centimeter metric readout (`1.2 m` / `65 cm`), contextual coaching text (*"Directly ahead"*, *"Turn right"*, *"Here! Within arm's reach"*), and stop action button.
+- [`TeeKum Prototype/Views/FinderBeaconView.swift`](../TeeKum%20Prototype/Views/FinderBeaconView.swift):
+  - Added `session` and `peerTransport` parameters.
+  - Added "Start Precision Finding" and "Stop Precision Finding" buttons in `selectedTargetHUD`.
+  - Added unsupported hardware indicator ("Precision Finding requires iPhone 11+ with U1/U2 chip").
+  - Seamlessly renders `PrecisionFindingOverlay` in main canvas when precision finding is active.
+- [`TeeKum Prototype/Views/MainMapView.swift`](../TeeKum%20Prototype/Views/MainMapView.swift):
+  - Passed `sessionViewModel.activeSession` and `peerTransport` to `FinderBeaconView`.
+- [`TeeKum Prototype/Views/MeshDebuggerView.swift`](../TeeKum%20Prototype/Views/MeshDebuggerView.swift):
+  - Added `.uwbTokenExchange: "UWB Precision Token"` display name.
+- [`TeeKum Prototype/App/TeeKumApp.swift`](../TeeKum%20Prototype/App/TeeKumApp.swift):
+  - Routed inbound `.uwbTokenExchange` packets to `NearbyInteractionService.shared.handleInboundUWBPayload`.
+  - Added `NearbyInteractionTests.runAllTests()` to automated test harness.
+- [`TeeKum Prototype/Tests/NearbyInteractionTests.swift`](../TeeKum%20Prototype/Tests/NearbyInteractionTests.swift):
+  - Added comprehensive unit test suite verifying payload serialization, malformed size rejection, 12-fragment token chunking and byte-perfect reassembly, 1-hop limit enforcement, and service state transitions.
+- [`docs/TechnicalRequirements.md`](TechnicalRequirements.md), [`docs/phase3/PAYLOAD_GUIDE.md`](phase3/PAYLOAD_GUIDE.md), [`docs/agent.md`](agent.md):
+  - Documented Decision D19, Type 8 wire layout, and Section 16 master configuration reference.
+
+#### 4. Verification & Results
+- `xcodebuild -scheme "TeeKum Prototype"` succeeded cleanly (`** BUILD SUCCEEDED **`).
+- Automated in-app test suite executed on Simulator (`com.academy.teekum.TeeKum-Prototype`):
+  - `NearbyInteractionTests`: **6/6 passed (100%)**.
+  - Full suite (`-runAllTests`): **17/17 test suites passed (100%)** with zero regressions.
+
+---
+
 ### [2026-11-04 13:10] — Inactivity Guard ("Man Down" Auto-SOS) Architecture, Implementation & Verification
 - **Contributor / Agent:** Lead iOS & Systems Engineer (Antigravity)
 - **Status:** Completed & Fully Verified (100% Automated Test Suite Pass Rate, Build Succeeded)

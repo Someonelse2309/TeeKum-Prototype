@@ -26,6 +26,10 @@ nonisolated public enum PacketConstants {
         get { TeeKumConfiguration.Network.chatHopLimit }
         set { TeeKumConfiguration.Network.chatHopLimit = newValue }
     }
+    public static var uwbHopLimit: UInt8 {
+        get { TeeKumConfiguration.Network.uwbHopLimit }
+        set { TeeKumConfiguration.Network.uwbHopLimit = newValue }
+    }
     public static var maxHopLimit: UInt8 {
         get { TeeKumConfiguration.Network.maxHopLimit }
         set { TeeKumConfiguration.Network.maxHopLimit = newValue }
@@ -53,6 +57,7 @@ public enum PacketType: UInt8, CaseIterable, Sendable {
     case routeResp     = 0x05
     case ack           = 0x06
     case chatMessage   = 0x07
+    case uwbTokenExchange = 0x08
 }
 
 // MARK: - Emergency & ACK Enums
@@ -404,42 +409,6 @@ public struct LocationPingPayload: Equatable, Sendable {
         self.colorCode = colorCode
     }
     
-    /// Deprecated compatibility initializer for legacy callers during Phase 3 migration
-    @available(*, deprecated, message: "statusCode and targetRefId are retired from LocationPingPayload (Phase 3 Option B).")
-    public init(
-        coordinate: CLLocationCoordinate2D,
-        timestamp: Date = Date(),
-        accuracy: UInt8,
-        statusCode: StatusCode?,
-        targetRefId: UInt32? = nil,
-        senderInitials: String,
-        batteryLevel: UInt8,
-        heading: UInt8 = 0,
-        colorCode: UInt8 = 0
-    ) {
-        self.init(
-            coordinate: coordinate,
-            timestamp: timestamp,
-            accuracy: accuracy,
-            senderInitials: senderInitials,
-            batteryLevel: batteryLevel,
-            heading: heading,
-            colorCode: colorCode
-        )
-    }
-    
-    @available(*, deprecated, message: "Status code has been retired from LocationPingPayload.")
-    public var statusCode: StatusCode {
-        get { .available }
-        set { }
-    }
-    
-    @available(*, deprecated, message: "targetRefId has been retired from LocationPingPayload.")
-    public var targetRefId: UInt32? {
-        get { nil }
-        set { }
-    }
-    
     public func serialize() -> Data {
         var data = Data(capacity: PacketConstants.encryptedPayloadSize)
         let latRaw = Int32((coordinate.latitude * 1_000_000.0).rounded()).bigEndian
@@ -551,7 +520,7 @@ public struct SOSPayload: Equatable, Sendable {
         var lon = lonRaw; data.append(Data(bytes: &lon, count: 4))
         var ts = tsRaw; data.append(Data(bytes: &ts, count: 4))
         data.append(accuracy)
-        data.append(StatusCode.sos.rawValue)
+        data.append(0x01) // Fixed urgent SOS status marker byte
         
         var eventId = sosEventId.bigEndian
         data.append(Data(bytes: &eventId, count: 4))
@@ -1097,5 +1066,89 @@ public struct ChatMessagePayload: Equatable, Sendable {
             }
         }
         return accumulated
+    }
+}
+
+// MARK: - UWB Action & Token Exchange Payload
+
+public enum UWBAction: UInt8, CaseIterable, Sendable {
+    case tokenRequest  = 0x01
+    case tokenResponse = 0x02
+    case stopRanging   = 0x03
+}
+
+/// 30-byte fixed-size encrypted payload for exchanging serialized Apple Ultra-Wideband NIDiscoveryToken fragments.
+public struct UWBTokenExchangePayload: Equatable, Sendable {
+    public static let payloadSize: Int = 30
+    public static let maxFragmentDataBytes: Int = 25
+    
+    public var action: UWBAction
+    public var sequenceId: UInt8
+    public var fragmentIndex: UInt8
+    public var totalFragments: UInt8
+    public var dataLength: UInt8
+    public var fragmentData: Data // Up to 25 bytes
+    
+    public init(
+        action: UWBAction,
+        sequenceId: UInt8,
+        fragmentIndex: UInt8,
+        totalFragments: UInt8,
+        fragmentData: Data = Data()
+    ) {
+        self.action = action
+        self.sequenceId = sequenceId
+        self.fragmentIndex = fragmentIndex
+        self.totalFragments = totalFragments
+        let len = min(Self.maxFragmentDataBytes, fragmentData.count)
+        self.dataLength = UInt8(len)
+        self.fragmentData = fragmentData.prefix(len)
+    }
+    
+    /// Serializes to exactly 30 bytes.
+    public func serialize() -> Data {
+        var data = Data(capacity: Self.payloadSize)
+        data.append(action.rawValue)
+        data.append(sequenceId)
+        data.append(fragmentIndex)
+        data.append(totalFragments)
+        data.append(dataLength)
+        data.append(fragmentData)
+        
+        let paddingNeeded = Self.payloadSize - data.count
+        if paddingNeeded > 0 {
+            data.append(Data(repeating: 0, count: paddingNeeded))
+        }
+        return data
+    }
+    
+    /// Deserializes from exactly 30 bytes.
+    public static func deserialize(from data: Data) throws -> UWBTokenExchangePayload {
+        guard data.count == Self.payloadSize else {
+            throw PacketCodecError.invalidPacketSize(expected: Self.payloadSize, actual: data.count)
+        }
+        let start = data.startIndex
+        guard let action = UWBAction(rawValue: data[start]) else {
+            throw PacketCodecError.payloadDeserializationFailed
+        }
+        let sequenceId = data[start + 1]
+        let fragmentIndex = data[start + 2]
+        let totalFragments = data[start + 3]
+        let dataLength = data[start + 4]
+        
+        guard Int(dataLength) <= Self.maxFragmentDataBytes else {
+            throw PacketCodecError.payloadDeserializationFailed
+        }
+        
+        let chunkEnd = start + 5 + Int(dataLength)
+        let fragmentData = data.subdata(in: (start + 5)..<chunkEnd)
+        
+        return UWBTokenExchangePayload(
+            action: action,
+            sequenceId: sequenceId,
+            fragmentIndex: fragmentIndex,
+            totalFragments: totalFragments,
+            fragmentData: fragmentData
+        )
     }
 }

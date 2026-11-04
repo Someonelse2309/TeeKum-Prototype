@@ -41,9 +41,6 @@ public struct FriendDetailView: View {
                         // Header Member Card
                         headerCard
                         
-                        // Status Card
-                        statusCard
-                        
                         // Location & Freshness Telemetry Card
                         freshnessCard
                         
@@ -85,20 +82,33 @@ public struct FriendDetailView: View {
         HStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .fill(member.status.code.isEmergency ? Color.red.opacity(0.3) : member.color.swiftUIColor.opacity(0.2))
+                    .fill(member.isEmergency ? Color.red.opacity(0.3) : member.color.swiftUIColor.opacity(0.2))
                     .frame(width: 60, height: 60)
                     .overlay(
-                        Circle().stroke(member.color.swiftUIColor, lineWidth: 2)
+                        Circle().stroke(member.isEmergency ? Color.red : member.color.swiftUIColor, lineWidth: 2)
                     )
                 
-                Text(member.status.code.emoji)
-                    .font(.system(size: 32))
+                Text(member.initials)
+                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .foregroundStyle(member.isEmergency ? .red : member.color.swiftUIColor)
             }
             
             VStack(alignment: .leading, spacing: 4) {
-                Text(member.name)
-                    .font(.title2.bold())
-                    .foregroundStyle(.white)
+                HStack(spacing: 6) {
+                    Text(member.name)
+                        .font(.title2.bold())
+                        .foregroundStyle(.white)
+                    
+                    if member.isEmergency {
+                        Text("SOS")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.red)
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+                }
                 
                 HStack(spacing: 8) {
                     Text("Initials: \(member.id)")
@@ -118,47 +128,6 @@ public struct FriendDetailView: View {
             }
             
             Spacer()
-        }
-        .padding()
-        .background(Color(white: 0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-    
-    // MARK: - Status
-    
-    private var statusCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Latest Known Status", systemImage: "sparkles")
-                .font(.caption.bold())
-                .foregroundStyle(.gray)
-                .textCase(.uppercase)
-            
-            HStack {
-                Text(member.status.code.emoji)
-                    .font(.title)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(member.status.code.title)
-                        .font(.headline)
-                        .foregroundStyle(member.status.code.isEmergency ? .red : .white)
-                    
-                    Text("Reported \(timeAgo(since: member.status.updatedAt))")
-                        .font(.caption2)
-                        .foregroundStyle(.gray)
-                }
-                
-                Spacer()
-                
-                if member.status.code.isEmergency {
-                    Text("EMERGENCY")
-                        .font(.caption2.bold())
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.red)
-                        .clipShape(Capsule())
-                        .foregroundStyle(.white)
-                }
-            }
         }
         .padding()
         .background(Color(white: 0.1))

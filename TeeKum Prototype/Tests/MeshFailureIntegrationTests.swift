@@ -472,8 +472,6 @@ public enum MeshFailureIntegrationTests {
             coordinate: CLLocationCoordinate2D(latitude: 37.77, longitude: -122.41),
             timestamp: clock.now().addingTimeInterval(600), // 10 minutes in the future exceeds 5m clock skew
             accuracy: 5,
-            statusCode: .available,
-            targetRefId: nil,
             senderInitials: "ALI",
             batteryLevel: 80,
             heading: 0

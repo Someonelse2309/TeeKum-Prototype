@@ -120,9 +120,6 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     /// True if GPS hardware is functioning, authorized, and actively providing valid fixes.
     public private(set) var isGPSAvailable: Bool = false
     
-    /// Local user status to coalesce into the next normal location ping.
-    public private(set) var currentStatus: UserStatus = UserStatus(code: .available)
-    
     /// Configurable cadence settings (moving, stationary, survival, stale threshold).
     public var cadenceConfig: CadenceConfiguration
     
@@ -143,11 +140,11 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     // MARK: - Publication Callbacks & Streams
     
     /// Direct closure callback invoked when a location ping is ready to publish.
-    public var onPublishLocationPing: ((LocationPin, UserStatus) -> Void)?
+    public var onPublishLocationPing: ((LocationPin) -> Void)?
     
     /// Async stream yielding location pings for reactive consumers.
-    public private(set) var publishedPings: AsyncStream<(location: LocationPin, status: UserStatus)>
-    private var publishedPingsContinuation: AsyncStream<(location: LocationPin, status: UserStatus)>.Continuation!
+    public private(set) var publishedPings: AsyncStream<LocationPin>
+    private var publishedPingsContinuation: AsyncStream<LocationPin>.Continuation!
     
     // MARK: - Initialization
     
@@ -167,7 +164,7 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         self.motionActivityManager = CMMotionActivityManager.isActivityAvailable() ? CMMotionActivityManager() : nil
         #endif
         
-        var streamContinuation: AsyncStream<(location: LocationPin, status: UserStatus)>.Continuation!
+        var streamContinuation: AsyncStream<LocationPin>.Continuation!
         self.publishedPings = AsyncStream { streamContinuation = $0 }
         self.publishedPingsContinuation = streamContinuation
         
@@ -286,7 +283,7 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     
     /// Recreates the publishedPings stream and continuation to recover from task cancellation across sessions.
     public func resetPublishedPingsStream() {
-        var streamContinuation: AsyncStream<(location: LocationPin, status: UserStatus)>.Continuation!
+        var streamContinuation: AsyncStream<LocationPin>.Continuation!
         self.publishedPings = AsyncStream { streamContinuation = $0 }
         self.publishedPingsContinuation = streamContinuation
     }
@@ -359,15 +356,6 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         #endif
         
         stopMotionTracking()
-    }
-    
-    // MARK: - Status Coalescing (Acceptance Criteria 3)
-    
-    /// Updates local user status immediately.
-    /// Does NOT send a separate ordinary status packet over the air; the new status
-    /// is coalesced and included into the next normal location ping.
-    public func updateStatus(_ status: UserStatus) {
-        self.currentStatus = status
     }
     
     // MARK: - Emergency SOS Location Access (Acceptance Criteria 6)
@@ -455,7 +443,7 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         }
     }
     
-    /// Dispatches the latest useful location and current user status together.
+    /// Dispatches the latest useful location ping.
     /// If no valid location fix has been acquired yet, does not manufacture fake coordinates.
     public func publishCurrentState() {
         guard isLiveSharingEnabled else { return }
@@ -464,9 +452,8 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
             return
         }
         
-        let status = currentStatus
-        onPublishLocationPing?(location, status)
-        publishedPingsContinuation.yield((location, status))
+        onPublishLocationPing?(location)
+        publishedPingsContinuation.yield(location)
     }
     
     // MARK: - Monotonic Location Updates & Validation (Acceptance Criteria 4)

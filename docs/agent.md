@@ -27,7 +27,7 @@
 
 Build an **offline-first iOS app for finding friends at crowded
 concerts, festivals, and venues**. Users form a group, share their
-latest location and status, see other members on a map, choose meeting
+latest location, chat across the mesh, see other members on a map, choose meeting
 points, and navigate toward a selected person.
 
 The system is designed for venues with weak or unavailable internet.
@@ -39,8 +39,9 @@ Relay participation must be explicit and opt-in.
 
 1.  **Offline-first:** Core group coordination must never require a cloud
     server during an active offline session.
-2.  **Location + status:** Ordinary periodic updates carry the sender's
-    latest available location and current status together.
+2.  **Pure Location Telemetry:** Ordinary periodic updates carry the sender's
+    latest available coordinates and sensor telemetry (battery, heading, color).
+    Chat messages and status presets are transmitted independently via multi-hop mesh chat.
 3.  **SOS is exceptional:** SOS is sent immediately, independently of
     the normal location-ping interval, and receives high-priority
     bounded forwarding.
@@ -87,11 +88,10 @@ Relay participation must be explicit and opt-in.
     all session tracking, encryption keys, and cached relay data are wiped immediately
     from memory and local storage. No persistent tracking history is retained.
 
-### 2.2 Location and Status Behavior
+### 2.2 Location and Mesh Telemetry Behavior
 
 -   **Latest Local State:** The app maintains the latest locally available location,
     its measurement timestamp, and reported accuracy.
--   **User Status State:** The app maintains the user's current status as local state.
 -   **User-Controlled "Live Sharing" Toggle:**
     -   When **ON**: The app actively publishes periodic location pings while
         the user is walking or navigating.
@@ -99,12 +99,12 @@ Relay participation must be explicit and opt-in.
         privacy while watching a performance).
     -   **SOS Override**: Triggering SOS broadcasts immediately regardless of the
         Live Sharing toggle state.
--   **Normal Location Ping:** Includes the latest available location and current status.
--   **Ordinary Status Change:** Update local state immediately, but include the
-    changed status in the *next normal location ping*. Do not send a separate
-    status packet.
--   **Status Chips with Smart Targets:** Statuses can attach an optional target reference
-    (e.g., status `0x07 GOING_TO` + target ID of a friend or a venue meeting point).
+-   **Normal Location Ping (Pure Telemetry):** Carries sender coordinates, measurement
+    timestamp, accuracy, battery level, facing heading (0..360°), and personal member color.
+    Status codes are completely removed from location wire frames (Option B).
+-   **Independent Group Mesh Chat & Status Presets:** Status updates, intentions, and
+    messages are transmitted independently as dedicated 20-byte mesh chat packets
+    (`Type 0x07`), ensuring location pings never overwrite chat messages.
 -   **SOS Emergency Trigger:**
     -   **3-Second Hold:** Users must press and hold the SOS button for 3 seconds
         to trigger, preventing accidental pocket taps while dancing.
@@ -117,25 +117,18 @@ Relay participation must be explicit and opt-in.
 -   **Disconnected State:** Keep only the relevant latest state rather than queuing
     obsolete past pings.
 
-### 2.3 Expanded Festival Status Enum (Coded Hashes)
+### 2.3 Festival Group Mesh Chat & Quick-Tap Preset Chips
 
-Statuses are processed locally on the device and transmitted strictly as **1-byte compact coded hashes**
-over the air to preserve radio bandwidth. Display strings are localized on the receiver.
-
--   `0x00 AVAILABLE` (Default green indicator / idle)
--   `0x01 SOS` (Urgent emergency siren / high-priority event)
--   `0x02 OMW` (On My Way)
--   `0x03 LOST` ("I'm lost!")
--   `0x04 EXPLORING` (Roaming the venue)
--   `0x05 WAIT` ("Wait for me")
--   `0x06 COME_TO_ME` ("Please come to me")
--   `0x07 GOING_TO` (Attaches target friend ID or meeting point ID)
--   `0x08 CANCEL_MEETING` ("Meeting cancelled")
--   `0x09 AT_MEETING_POINT` ("At the meeting point")
--   `0x0A GETTING_DRINKS` ("Grabbing drinks / at bar")
--   `0x0B RESTROOM` ("In restroom / toilet line")
--   `0x0C FOOD_MERCH` ("Getting food / merchandise")
--   `0x0D MEDICAL` ("At first aid / medical tent")
+The legacy canned status system (`StatusCode`, `UserStatus`, and horizontal `StatusPickerView`) has been fully retired in favor of the **Festival Group Mesh Chat** (`ChatMessagePayload`, `Type 0x07`):
+- Transmits compact 20-byte UTF-8 messages across the multi-hop mesh.
+- Features quick-tap preset chips for instant one-handed communication in dense festival crowds:
+  - *"Beer line"*
+  - *"At Main Stage"*
+  - *"Restroom"*
+  - *"Where are you?"*
+  - *"On my way"*
+  - *"Lost"*
+- Delivery acknowledgements (`Type 0x06`) provide transparent per-recipient confirmation (*"Sent"*, *"Relayed"*, *"Delivered to 3/3"*).
 
 ---
 
@@ -145,8 +138,8 @@ over the air to preserve radio bandwidth. Display strings are localized on the r
 graph TD
     subgraph UserStories ["End-to-End User Stories and Screen Flows"]
         US1["1. Serverless Group Creation (Online Link / Offline QR)"]
-        US2["2. Main MapKit Preview (Friend Pins and Live Sharing Toggle)"]
-        US3["3. Status Updates via Coded Hashes (OMW, Drinks, Lost)"]
+        US2["2. Main MapKit Preview (Friend Pins, Facing Cones & Live Sharing)"]
+        US3["3. Festival Group Mesh Chat & Quick Presets (Type 0x07)"]
         US4["4. Single Active Meeting Point (Pick Landmark / One-Tap Accept)"]
         US5["5. Directed Navigation via Tactical Radar (Forward-Up Polar Projection & UWB)"]
         US6["6. Visual Finder Beacon (Screen Strobe Torch)"]
@@ -173,7 +166,7 @@ graph TD
 
 #### User Story 2: Main Map View & Live Sharing
 - **Goal:** See all group members on the venue map.
-- **UI:** MapKit preview rendering friend pins with initials/avatars and current status emojis.
+- **UI:** MapKit preview rendering friend pins with initials/avatars, personal neon color rings, and facing orientation vision cones.
 - **Live Sharing Toggle:** Prominent toggle on map (`Live Sharing: ON/OFF`). When OFF, GPS is paused to save battery; when ON, updates broadcast every 3–5 seconds.
 - **Honest UX:** Friends out of direct radio range appear as faded pins with badges: *"Last seen 4 mins ago near Stage B"*.
 
@@ -195,10 +188,10 @@ graph TD
   2. **Curated Dropdown Menu:** The `SetMeetingPointSheet` provides a pre-populated dropdown picker (`PremadeMeetingLocation`) containing 16 popular festival landmarks (*"Main Stage"*, *"Sound Booth"*, *"Medical Tent"*, *"Water Station"*, *"Food Court"*, *"Merch Tent"*, etc.) with a sensible default of `"Meeting Point"`. This eliminates the need for frustrating freeform text typing on high-glare festival grounds.
 - **Acceptance:** Friends receive a non-intrusive banner notification and tap **"I'll be there"** or **"Can't make it"**, syncing attendance status to everyone's map in real time.
 
-#### User Story 5: Status Updates via Coded Hashes
-- **Goal:** Quickly inform friends of current activity with one hand without typing text.
-- **UI:** Horizontal quick-tap carousel docked directly below the map.
-- **Interaction:** Tapping a chip (e.g., `Getting Drinks`, `Restroom`, `Lost`) updates local state and transmits the 1-byte coded hash on the next ping. Tapping `Coming to...` opens a 1-tap sheet to select a friend or meeting point.
+#### User Story 5: Festival Group Mesh Chat & Quick Preset Chips
+- **Goal:** Rapidly communicate status, location hints, or rendezvous intentions with friends across the festival mesh.
+- **UI:** Docked bottom chat overlay sheet (`ChatSheetView`) with quick-tap preset chips (*"Beer line"*, *"At Main Stage"*, *"Restroom"*, *"On my way"*, *"Lost"*), 20-byte text input with real-time `ByteMeterView`, and per-recipient delivery tracking chips (`Sent`, `Relayed`, `Delivered`).
+- **Interaction:** Tapping any preset chip or typing a short custom message dispatches a 56-byte ChaCha20-encrypted packet (`Type 0x07`) over multi-hop mesh with FIFO outbox retry management and dedicated hop limit budget (`chatHopLimit`).
 
 #### User Story 6: MapKit Venue Preview
 - **Goal:** Navigate venue geography offline.
@@ -269,7 +262,7 @@ flowchart TD
         MainMap["MainMapView (Offline MapKit & Overlays)"]
         Radar["FinderBeaconView / RadarView (Tactical Polar Radar)"]
         Pairing["GroupPairingView (QR Barcode & Link Share)"]
-        StatusPicker["StatusPickerView (Coded Chips Carousel)"]
+        ChatSheet["ChatSheetView (Mesh Chat & Preset Chips)"]
         SOSBtn["SOSButtonView (3-Second Hold Trigger)"]
         MeetView["MeetingPointsView / SetMeetingPointSheet"]
         DiagHUD["DiagnosticsView (Debug HUD)"]
@@ -282,6 +275,7 @@ flowchart TD
         SessionVM["GroupSessionViewModel"]
         MeetingVM["MeetingPointViewModel"]
         SOSVM["SOSViewModel"]
+        ChatVM["ChatViewModel"]
         DebuggerVM["MeshDebuggerViewModel"]
     end
 
@@ -338,17 +332,16 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── InitialsCodec.swift          // 2-byte Base-27 initials compressor (1..3 chars A-Z, 18,278 keys)
 │   │   ├── LocationPin.swift            // CoreLocation Coordinate (Double), accuracy, ~11cm Int32 quantization
 │   │   ├── MeetingPoint.swift           // Single active rendezvous point model & PremadeMeetingLocation options
-│   │   ├── Member.swift                 // Member identity, initials, lastSeen, status, battery, heading, stale helpers
+│   │   ├── Member.swift                 // Member identity, initials, lastSeen, isEmergency, battery, heading, stale helpers
 │   │   ├── MemberColor.swift            // 1-byte personal color enum, 8 neon colors, deterministic hash fallback
 │   │   ├── ChatMessage.swift            // Ephemeral group chat message & per-recipient delivery tracking
 │   │   ├── Packet.swift                 // 56-byte binary wire packet (Protocol v3), envelope, payloads, codecs
 │   │   ├── SessionActivityAttributes.swift // ActivityKit Live Activity attributes for Lock Screen & Dynamic Island
 │   │   ├── SOSDeliveryState.swift       // Honest UX delivery state machine
-│   │   └── Status.swift                 // 1-byte compact festival activity status hash enum & target references
+│   │   └── TeeKumConfiguration.swift    // Master single-source configurable variables & thresholds
 │   ├── Views/
 │   │   ├── MainMapView.swift            // MapKit view, friend pins, long-press rendezvous drop, Live Sharing toggle
 │   │   ├── GroupPairingView.swift       // QR barcode display/scanner, URL share, clipboard paste, mesh compact gate
-│   │   ├── StatusPickerView.swift       // One-handed horizontal status chips carousel
 │   │   ├── SOSButtonView.swift          // 3-second hold emergency button & visual circular progress ring
 │   │   ├── FinderBeaconView.swift       // Tactical Radar container, HUD banner, strobe torch & UWB transition
 │   │   ├── MeetingPointsView.swift      // Meeting point proposal sheet, attendance cards, dropdown menu
@@ -372,10 +365,11 @@ TeeKum Prototype/ (Root Repository)
 │   │       └── Radar/
 │   │           ├── RadarView.swift      // Forward-up polar projection, clamping at 60m, dual selection
 │   │           ├── RadarGridBackground.swift // Radial gradient background, concentric rings (15m, 30m, 60m), ticks
-│   │           ├── RadarBlipView.swift  // Friend avatar blip, activity status emoji, SOS pulse, clamped edge arrow
+│   │           ├── RadarBlipView.swift  // Friend avatar blip, SOS pulse, clamped edge arrow
 │   │           ├── RadarFriendCard.swift // Bottom carousel card with clock direction ("Ahead", "2 o'clock")
 │   │           ├── RadarCenterMarker.swift // User position indicator aligned with forward device heading
-│   │           └── RadarTheme.swift     // AMOLED dark palette, radial scaling constants, polar-to-Cartesian math
+│   │           ├── RadarTheme.swift     // AMOLED dark palette, radial scaling constants, polar-to-Cartesian math
+│   │           └── PrecisionFindingOverlay.swift // AirTag-style 3D directional arrow, centimeter readout, coaching hints
 │   ├── ViewModels/
 │   │   ├── GroupSessionViewModel.swift  // Group session lifecycle, QR/Link pairing, pendingInvite agreement
 │   │   ├── MapViewModel.swift           // Map viewport state, friend pins, offline filtering, Live Sharing, radar
@@ -388,11 +382,13 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── PeerTransportService.swift   // Network.framework P2P datagram actor (AWDL Bonjour _teekum._tcp)
 │   │   ├── MeshProtocols.swift          // Phase 2 multi-hop mesh protocol interfaces, MeshClock & PacketKey
 │   │   ├── StreamMessageFramer.swift    // 56-byte binary stream delimiter, chunk reconstruction, resynchronization
-│   │   ├── PriorityOutboxQueue.swift    // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting) + coalesced Location
+│   │   ├── PriorityOutboxQueue.swift    // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting/UWB) + coalesced Location
 │   │   ├── CryptoServiceProtocol.swift  // Cryptographic service interface
 │   │   ├── CryptoService.swift          // ChaChaPoly AEAD, AAD envelope binding & Keychain store (actor)
 │   │   ├── NotificationService.swift    // System local notifications (UNUserNotificationCenter) & in-app toasts
 │   │   ├── ChatMessageEngine.swift      // Phase 3 multi-hop chat engine, FIFO outbox, retries & ACK tracking
+│   │   ├── NearbyInteractionService.swift // Apple NearbyInteraction (NISession), UWB token exchange, AirTag haptics
+│   │   ├── InactivityGuardService.swift // Man Down / Auto-SOS motion watchdog & 30s pre-alarm warning countdown
 │   │   ├── SessionStorageProtocol.swift // Ephemeral SQLite crash recovery storage interface
 │   │   ├── LocationServiceProtocol.swift // Location service contract & dynamic accuracy interface
 │   │   ├── LocationService.swift        // CoreLocation wrapper, CoreMotion adaptive cadence & dynamic accuracy
@@ -418,6 +414,17 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── LocationPublishingTests.swift // 14 automated tests: Live Sharing, cadence, dynamic adaptive accuracy
 │   │   ├── SOSEndToEndTests.swift       // 11 automated tests: 3s hold, preemption, ACKs, duplicate sirens
 │   │   ├── MultiHopSOSTests.swift       // 11 automated tests: Multi-hop flooding, hopCount increment, reverse ACK
+│   │   ├── UIStateTests.swift           // 13 automated tests: pairing, freshness, dropdown, tactical radar projection
+│   │   ├── RoutingForwardingTests.swift // 12 automated tests: blind relay, 8-hop limit, rate limiting, deduplication
+│   │   ├── RouteDiscoveryTests.swift    // 14 automated tests: AODV RREQ/RREP, stale peer two-tier discovery, burst
+│   │   ├── NeighborDiscoveryTests.swift // 13 automated tests: Bonjour _teekum._tcp peering, TXT relay flag, RSSI
+│   │   ├── RelayPolicyTests.swift       // 12 automated tests: 3 modes, hard 20% cutoff, survival mode, Live Activity
+│   │   ├── LiveActivityTests.swift      // 6 automated tests: ActivityKit lifecycle, dynamic island, lock screen toggle
+│   │   ├── MeshFailureIntegrationTests.swift // 12 automated tests: link breakage, partitions, loops, corruption resync
+│   │   ├── MeshDebuggerTests.swift      // 10 automated tests: 1-tap triage, 56B packet inspector, injection, sandbox
+│   │   ├── ChatEngineTests.swift        // 12 automated tests: ChatMessagePayload, outbox retries, delivery ACKs
+│   │   ├── InactivityGuardTests.swift   // 9 automated tests: stillness timer, 30s pre-alarm countdown, auto-SOS
+│   │   └── NearbyInteractionTests.swift // 6 automated tests: UWB token codec, 12-chunk reassembly, 1-hop limit
 │   │   ├── UIStateTests.swift           // 13 automated tests: pairing, freshness, dropdown, tactical radar projection
 │   │   ├── RoutingForwardingTests.swift // 12 automated tests: blind relay, 8-hop limit, rate limiting, deduplication
 │   │   ├── RouteDiscoveryTests.swift    // 14 automated tests: AODV RREQ/RREP, stale peer two-tier discovery, burst
@@ -562,8 +569,8 @@ The app utilizes a **Fixed 56-Byte Secure Binary Wire Format** transmitted over 
 
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
-| **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | High 4 bits = Version (`0x3` for Protocol v3), Low 4 bits = Type (`0x1` Ping, `0x2` SOS, `0x3` Meeting, `0x4` RouteReq, `0x5` RouteResp, `0x6` ACK, `0x7` Chat). |
-| **1** | `hopLimit` | `UInt8` | `UInt8` | Maximum forwarding hop budget ($1\dots 15$, default 8 for pings, 8 for SOS). Authenticated in AAD. |
+| **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | High 4 bits = Version (`0x3` for Protocol v3), Low 4 bits = Type (`0x1` Ping, `0x2` SOS, `0x3` Meeting, `0x4` RouteReq, `0x5` RouteResp, `0x6` ACK, `0x7` Chat, `0x8` UWB). |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Maximum forwarding hop budget ($1\dots 15$, default 8 for pings, 8 for SOS, 1 for UWB). Authenticated in AAD. |
 | **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hop counter ($0\dots \text{hopLimit}$, starts at `0`). Mutated per relay hop; masked to `0x00` in AAD. |
 | **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian hash identifying the group session network (`0x000001...0xFFFFFF`). |
 | **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian partitioned counter: 8-bit `memberSlot` (high) + 24-bit counter (low) for replay protection & duplicate cache key. |
@@ -571,10 +578,11 @@ The app utilizes a **Fixed 56-Byte Secure Binary Wire Format** transmitted over 
 | **14..17** | `longitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Signed 32-bit big-endian integer. Conversion: `Int32((longitude * 1_000_000).rounded())` (~11cm precision). |
 | **18..21** | `timestamp` | `UInt32` | `Date` | Big-endian Unix epoch seconds (`UInt32(date.timeIntervalSince1970)`). Fixed measurement time. |
 | **22** | `accuracy` | `UInt8` | `CLLocationAccuracy` (`Double`) | Horizontal accuracy radius in meters (`UInt8(min(255, max(0, accuracy.rounded())))`). |
-| **23** | `statusCode` | `UInt8` | `StatusCode` (`enum: UInt8`) | Compact 1-byte festival activity hash (`0x00` Available, `0x0A` Drinks, `0x0B` Restroom, etc.). |
-| **24..27** | `targetRefId` | `UInt32` | `UInt32?` | Optional 32-bit big-endian ID of target member or meeting point (`0x00000000` if none). |
-| **28..29** | `senderInitials` | `UInt16` | `String` (1 to 3 Chars A-Z) | 2-byte Base-27 encoded 1 to 3-letter initials (formula: `(a*729) + (b*27) + c`). Eliminates radio handshake. |
-| **30..39** | `variantData` | `10 Bytes` | `VariantSpecificData` | 10 bytes reserved for variant-specific payloads (see Section 6.2). |
+| **23..24** | `senderInitials` | `UInt16` | `String` (1 to 3 Chars A-Z) | 2-byte Base-27 encoded 1 to 3-letter initials (formula: `(a*729) + (b*27) + c`). Eliminates radio handshake. |
+| **25** | `batteryLevel` | `UInt8` | `Float` | Sender battery percentage (`0` to `100`%). |
+| **26** | `heading` | `UInt8` | `CLLocationDirection` (`Double`) | Compass heading quantized to 0..255 (1.4° precision). Drives directional cones. |
+| **27** | `colorCode` | `UInt8` | `MemberColor` (`enum: UInt8`) | 1-byte personal neon color code (`0x00` unset/hash, `0x01`..`0x08` palette). |
+| **28..39** | `reserved` | `12 Bytes` | `Data` | Reserved contiguous block for floorLevel & barometric altimetry (zero padding). |
 | **40..55** | `authTag` | `16 Bytes` | `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM authentication tag verifying payload + envelope AAD. |
 
 #### 6.1.1 2-Byte Base-27 Initials Codec & Serverless QR Group Pairing
@@ -678,7 +686,7 @@ Every packet is strictly **56 bytes** total. Below are the exact byte layouts fo
 | **14..17** | `longitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Freshest available longitude (`Double * 1_000_000`, signed 32-bit big-endian). |
 | **18..21** | `timestamp` | `UInt32` | `Date` | Measurement timestamp of that coordinate (epoch seconds). |
 | **22** | `accuracy` | `UInt8` | `CLLocationAccuracy` (`Double`) | Accuracy radius in meters at measurement time. |
-| **23** | `statusCode` | `UInt8` | `StatusCode` | Fixed urgent status code: `0x01` (`SOS`). |
+| **23** | `fixedSOSCode` | `UInt8` | `UInt8` | Fixed urgent status marker: `0x01` (`SOS`). |
 | **24..27** | `sosEventId` | `UInt32` | `UInt32` | Unique random 32-bit event ID (used to deduplicate multi-hop copies). |
 | **28..29** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of member in distress. |
 | **30** | `emergencyType` | `UInt8` | `SOSType` (`enum: UInt8`) | `0x01` Medical, `0x02` Lost/Separated, `0x03` Harassment/Security, `0x00` General. |
@@ -763,6 +771,24 @@ Every packet is strictly **56 bytes** total. Below are the exact byte layouts fo
 | **17..36** | `textContent` | `20 Bytes` | `String` / `[UInt8]` | Direct UTF-8 encoded text bytes (zero-padded for unused bytes). |
 | **37..39** | `reserved` | `3 Bytes` | `Data` | Reserved zero padding (`0x000000`). |
 | **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 MAC tag sealing payload + envelope AAD. |
+
+#### Type 8: `0x08` — `UWB_TOKEN_EXCHANGE` (Ultra-Wideband Precision Finding Handshake)
+*Transmitted strictly direct peer-to-peer (hopLimit = 1, never relayed) to exchange Apple Nearby Interaction tokens (`NIDiscoveryToken`) for centimeter-accurate AirTag-style directional navigation.*
+
+| Byte Range | Field Name | Wire Type | Swift Type | Description & Endianness |
+| :--- | :--- | :--- | :--- | :--- |
+| **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x38` (High nibble = Version `3`, Low nibble = Type `8`). |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Fixed at `1` (`uwbHopLimit = 1`). Never forwarded over multi-hop mesh. |
+| **2** | `hopCount` | `UInt8` | `UInt8` | Fixed at `0`. |
+| **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian group session ID. |
+| **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
+| **10** | `action` | `UInt8` | `UWBAction` (`enum: UInt8`) | `0x01` tokenRequest, `0x02` tokenResponse, `0x03` stopRanging. |
+| **11** | `sequenceId` | `UInt8` | `UInt8` | Session handshake correlation identifier ($0 \dots 255$). |
+| **12** | `fragmentIndex` | `UInt8` | `UInt8` | 0-based fragment sequence number ($0 \dots \text{totalFragments}-1$). |
+| **13** | `totalFragments` | `UInt8` | `UInt8` | Total number of fragments in transfer ($1 \dots 16$, typically 12). |
+| **14** | `dataLength` | `UInt8` | `UInt8` | Number of valid token bytes in this chunk ($1 \dots 25$). |
+| **15..39** | `fragmentData` | `25 Bytes` | `[UInt8]` | Chunk of serialized `NIDiscoveryToken` (zero-padded). |
+| **40..55** | `authTag` | `16 Bytes` | `Data` (CryptoKit Tag) | 128-bit Poly1305 MAC tag verifying group signature. |
 
 ---
 
@@ -887,7 +913,7 @@ Use a **Hybrid AODV-inspired on-demand routing approach** with bounded flooding 
 -   [x] Direct Apple Peer-to-Peer transport service (`PeerTransportService`).
 -   [x] Live Sharing toggle & smart adaptive location publisher.
 -   [x] MapKit offline preview with friend pins, accuracy rings, and status pills.
--   [x] Horizontal status chips carousel with festival activity codes (`Drinks`, `Restroom`, `Lost`, etc.).
+-   [x] Pure location telemetry broadcasting with Option B contiguous packing (status system fully retired in favor of Phase 3 Group Mesh Chat).
 -   [x] Single Active Meeting Point creation & one-tap attendance sync.
 -   [x] Directed navigation: 360° Compass Arrow -> Seamless Ultra-Wideband Radar transition.
 -   [x] 1-Tap Screen Strobe Beacon for visual crowd finding.
@@ -951,8 +977,8 @@ Use a **Hybrid AODV-inspired on-demand routing approach** with bounded flooding 
 
 ## 13. Non-Negotiable Summary
 
-1.  Normal pings carry **location + current status**.
-2.  Ordinary status changes are piggybacked on the **next normal ping**.
+1.  Normal pings carry **pure geographic telemetry** (Option B contiguous packing with 12 bytes reserved).
+2.  Status updates and intentions are transmitted independently via **Festival Group Mesh Chat** (`Type 0x07`).
 3.  SOS is a **separate immediate, high-priority event** (3-second hold to trigger) and never waits for the normal interval.
 4.  SOS is signed and authenticated; unauthenticated stranger SOS packets are rejected.
 5.  Location broadcasting is governed by the **Live Sharing** user toggle.
@@ -1061,6 +1087,7 @@ Any developer or AI agent can modify parameters in this single file to immediate
 | `maxHopLimit` | `UInt8` | `15` | `1...15` | Absolute maximum hop limit ceiling permitted in the 4-bit nibble. |
 | `defaultHopLimit` | `UInt8` | `8` | `4...12` | Hop limit budget for standard periodic Location Ping datagrams (`Type 0x01`). |
 | **`chatHopLimit`** | `UInt8` | `8` | `3...12` | **Differentiated hop limit for Chat messages (`Type 0x07`) and Delivery ACKs (`Type 0x06`). Tune to restrict chat to immediate stage/camp radius or expand across entire venue.** |
+| `uwbHopLimit` | `UInt8` | `1` | Fixed `1` | Strict direct-link 1-hop limit for Ultra-Wideband token exchange packets (`Type 0x08`). Never relayed. |
 | `meetingPointHopLimit` | `UInt8` | `15` | `8...15` | High-reach hop limit for Group Rendezvous proposals and cancellations (`Type 0x03`). |
 | `sosHopLimit` | `UInt8` | `15` | Fixed `15` | Maximum-urgency hop limit for Emergency SOS siren alerts (`Type 0x02`). |
 
@@ -1133,4 +1160,6 @@ Any developer or AI agent can modify parameters in this single file to immediate
 | :--- | :--- | :--- | :--- | :--- |
 | `tacticalRadarRangeMeters` | `Double` | `60.0m` | `40.0m...100.0m`| Outer polar perimeter distance clamped on tactical radar screen. |
 | `uwbTransitionDistanceMeters`| `Double` | `6.0m` | `4.0m...10.0m` | Proximity range where tactical radar transitions into UWB precision radar. |
+| `uwbMaxRangingDistanceMeters`| `Double` | `8.0m` | `5.0m...10.0m` | Maximum physical ranging distance of Apple U1/U2 Ultra-Wideband chips. |
+| `uwbSessionTimeoutSeconds` | `TimeInterval` | `30.0s`| `15.0s...60.0s`| Inactivity timeout before an idle UWB ranging session is stopped to preserve battery. |
 | `visionConeFOV` | `Double` | `50.0°` | `30.0°...70.0°` | Angular field of view for attendee facing orientation vision cones. |

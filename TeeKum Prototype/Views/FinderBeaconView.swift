@@ -18,8 +18,11 @@ public struct FinderBeaconView: View {
     public let currentHeading: CLLocationDirection?
     public let locationService: (any LocationServiceProvider)?
     public let userColor: Color?
+    public let session: GroupSession?
+    public let peerTransport: (any PeerTransport)?
     public let onDismiss: () -> Void
     
+    @ObservedObject private var nearbyService = NearbyInteractionService.shared
     @State private var selectedMember: Member?
     @State private var isStrobeActive: Bool = false
     @State private var strobeColorIndex: Int = 0
@@ -27,7 +30,7 @@ public struct FinderBeaconView: View {
     
     private let strobeColors: [Color] = [.yellow, .cyan, .green, .white]
     
-    /// Primary initializer supporting the multi-peer tactical radar.
+    /// Primary initializer supporting the multi-peer tactical radar and UWB precision finding.
     public init(
         members: [Member],
         initialSelectedMember: Member? = nil,
@@ -35,6 +38,8 @@ public struct FinderBeaconView: View {
         currentHeading: CLLocationDirection? = nil,
         locationService: (any LocationServiceProvider)? = nil,
         userColor: Color? = nil,
+        session: GroupSession? = nil,
+        peerTransport: (any PeerTransport)? = nil,
         onDismiss: @escaping () -> Void
     ) {
         self.members = members
@@ -43,6 +48,8 @@ public struct FinderBeaconView: View {
         self.currentHeading = currentHeading
         self.locationService = locationService
         self.userColor = userColor
+        self.session = session
+        self.peerTransport = peerTransport
         self.onDismiss = onDismiss
     }
     
@@ -52,6 +59,8 @@ public struct FinderBeaconView: View {
         userLocation: LocationPin? = nil,
         currentHeading: CLLocationDirection? = nil,
         locationService: (any LocationServiceProvider)? = nil,
+        session: GroupSession? = nil,
+        peerTransport: (any PeerTransport)? = nil,
         onDismiss: @escaping () -> Void
     ) {
         self.init(
@@ -60,6 +69,8 @@ public struct FinderBeaconView: View {
             userLocation: userLocation,
             currentHeading: currentHeading,
             locationService: locationService,
+            session: session,
+            peerTransport: peerTransport,
             onDismiss: onDismiss
         )
     }
@@ -78,6 +89,9 @@ public struct FinderBeaconView: View {
         }
         .onDisappear {
             locationService?.setTacticalRadarActive(false)
+            Task {
+                await nearbyService.stopPrecisionFinding(session: session, transport: peerTransport)
+            }
         }
     }
     
@@ -141,16 +155,36 @@ public struct FinderBeaconView: View {
                 }
                 
                 // MARK: - Main Radar Canvas
-                RadarView(
-                    members: members,
-                    userLocation: userLocation,
-                    currentHeading: currentHeading,
-                    selectedMember: $selectedMember,
-                    theme: .standard,
-                    userColor: userColor
-                )
-                .padding(.horizontal, 8)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let target = selectedMember,
+                   nearbyService.rangingState == .active,
+                   nearbyService.activeTargetMemberId == target.id {
+                    PrecisionFindingOverlay(
+                        targetMember: target,
+                        distanceMeters: nearbyService.currentDistance,
+                        direction: nearbyService.currentDirection,
+                        horizontalAngle: nearbyService.currentHorizontalAngle,
+                        rangingState: nearbyService.rangingState,
+                        onStop: {
+                            Task {
+                                await nearbyService.stopPrecisionFinding(session: session, transport: peerTransport)
+                            }
+                        }
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 24))
+                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    RadarView(
+                        members: members,
+                        userLocation: userLocation,
+                        currentHeading: currentHeading,
+                        selectedMember: $selectedMember,
+                        theme: .standard,
+                        userColor: userColor
+                    )
+                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                 
                 // MARK: - Bottom Horizontal Friend Cards Carousel
                 if !members.isEmpty {
@@ -220,58 +254,110 @@ public struct FinderBeaconView: View {
         let dist = computeDistance(to: target)
         let relBearing = computeRelativeBearing(to: target)
         
-        return HStack(spacing: 12) {
-            // Target Initials Badge
-            Text(target.initials)
-                .font(.system(size: 14, weight: .black, design: .rounded))
-                .padding(8)
-                .background(Color.yellow)
-                .foregroundStyle(.black)
-                .clipShape(Circle())
-            
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(target.name)
-                        .font(.headline.bold())
-                        .foregroundStyle(.white)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                // Target Initials Badge
+                Text(target.initials)
+                    .font(.system(size: 14, weight: .black, design: .rounded))
+                    .padding(8)
+                    .background(Color.yellow)
+                    .foregroundStyle(.black)
+                    .clipShape(Circle())
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(target.name)
+                            .font(.headline.bold())
+                            .foregroundStyle(.white)
+                    }
                     
-                    Text(target.status.code.emoji)
-                        .font(.subheadline)
+                    HStack(spacing: 8) {
+                        if let d = dist {
+                            Text(d < 8.0 ? "VERY CLOSE (<8m)" : (d >= 1000 ? String(format: "%.1f km", d / 1000.0) : String(format: "%.0f m", d)))
+                                .font(.caption.bold().monospaced())
+                                .foregroundStyle(d < 8.0 ? .yellow : .green)
+                        } else {
+                            Text("No GPS Fix")
+                                .font(.caption)
+                                .foregroundStyle(.gray)
+                        }
+                        
+                        if let bearing = relBearing {
+                            Text("• \(clockDirection(for: bearing))")
+                                .font(.caption.bold())
+                                .foregroundStyle(.cyan)
+                        }
+                    }
                 }
                 
-                HStack(spacing: 8) {
-                    if let d = dist {
-                        Text(d < 8.0 ? "VERY CLOSE (<8m)" : (d >= 1000 ? String(format: "%.1f km", d / 1000.0) : String(format: "%.0f m", d)))
-                            .font(.caption.bold().monospaced())
-                            .foregroundStyle(d < 8.0 ? .yellow : .green)
-                    } else {
-                        Text("No GPS Fix")
-                            .font(.caption)
-                            .foregroundStyle(.gray)
+                Spacer()
+                
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedMember = nil
                     }
-                    
-                    if let bearing = relBearing {
-                        Text("• \(clockDirection(for: bearing))")
-                            .font(.caption.bold())
-                            .foregroundStyle(.cyan)
-                    }
+                } label: {
+                    Text("Clear")
+                        .font(.caption.bold())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color.white.opacity(0.15))
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
                 }
             }
             
-            Spacer()
-            
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    selectedMember = nil
+            // Ultra-Wideband Precision Finding Action Bar
+            HStack(spacing: 8) {
+                if nearbyService.isSupported {
+                    if nearbyService.rangingState == .active && nearbyService.activeTargetMemberId == target.id {
+                        Button {
+                            Task {
+                                await nearbyService.stopPrecisionFinding(session: session, transport: peerTransport)
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "stop.circle.fill")
+                                Text("Stop Precision Finding")
+                                    .font(.caption.bold())
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.red.opacity(0.25))
+                            .foregroundStyle(.red)
+                            .clipShape(Capsule())
+                        }
+                    } else {
+                        Button {
+                            guard let session = session, let transport = peerTransport else { return }
+                            Task {
+                                await nearbyService.startPrecisionFinding(for: target, session: session, transport: transport)
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "dot.radiowaves.left.and.right")
+                                Text(nearbyService.rangingState == .requestingToken ? "Requesting UWB..." : "Start Precision Finding")
+                                    .font(.caption.bold())
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.cyan.opacity(0.25))
+                            .foregroundStyle(.cyan)
+                            .clipShape(Capsule())
+                        }
+                        .disabled(nearbyService.rangingState == .requestingToken || session == nil || peerTransport == nil)
+                    }
+                } else {
+                    HStack(spacing: 5) {
+                        Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                            .font(.caption2)
+                            .foregroundStyle(.gray)
+                        Text("Precision Finding requires iPhone 11+ with U1/U2 chip")
+                            .font(.caption2)
+                            .foregroundStyle(.gray)
+                    }
+                    .padding(.vertical, 2)
                 }
-            } label: {
-                Text("Clear")
-                    .font(.caption.bold())
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.white.opacity(0.15))
-                    .foregroundStyle(.white)
-                    .clipShape(Capsule())
             }
         }
         .padding(.horizontal, 12)

@@ -82,12 +82,11 @@ public enum MultiHopSOSTests {
         var isGPSAvailable: Bool = true
         var isLocationStale: Bool = false
         var locationAge: TimeInterval? = 2.0
-        var currentStatus: UserStatus = UserStatus(code: .available)
         var currentCadenceInterval: TimeInterval = 4.0
         var cadenceConfig: CadenceConfiguration = CadenceConfiguration()
         
-        let publishedPings: AsyncStream<(location: LocationPin, status: UserStatus)>
-        private let publishedPingsContinuation: AsyncStream<(location: LocationPin, status: UserStatus)>.Continuation
+        let publishedPings: AsyncStream<LocationPin>
+        private let publishedPingsContinuation: AsyncStream<LocationPin>.Continuation
         
         init(lat: Double = -6.2088, lon: Double = 106.8456) {
             let loc = LocationPin(
@@ -96,7 +95,7 @@ public enum MultiHopSOSTests {
                 timestamp: Date()
             )
             self.currentLocation = loc
-            var continuation: AsyncStream<(location: LocationPin, status: UserStatus)>.Continuation!
+            var continuation: AsyncStream<LocationPin>.Continuation!
             self.publishedPings = AsyncStream { continuation = $0 }
             self.publishedPingsContinuation = continuation
         }
@@ -104,7 +103,6 @@ public enum MultiHopSOSTests {
         func requestPermissions() async -> Bool { true }
         func startTracking() throws {}
         func stopTracking() {}
-        func updateStatus(_ status: UserStatus) { self.currentStatus = status }
         func getLatestLocationForSOS() -> LocationPin? { currentLocation }
     }
     

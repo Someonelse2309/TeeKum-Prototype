@@ -42,6 +42,7 @@ To maintain single-digit millisecond radio airtime, prevent radio collisions on 
 | `0x05` | `.routeResp` | `0x5` | `0x35` | On-demand AODV route discovery response. |
 | `0x06` | `.ack` | `0x6` | `0x36` | Delivery acknowledgement confirmation. |
 | `0x07` | `.chatMessage` | `0x7` | `0x37` | **(Phase 3 NEW)** Group mesh chat & independent status presets. |
+| `0x08` | `.uwbTokenExchange` | `0x8` | `0x38` | **(Phase 3 NEW)** Apple Ultra-Wideband (U1/U2) discovery token fragment exchange. Strictly direct link (`hopLimit = 1`). |
 
 ---
 
@@ -161,6 +162,38 @@ Preset chips are pre-validated to never exceed the 20-byte wire limit:
 - `"Where are you?"` (14 bytes UTF-8)
 - `"On my way"` (9 bytes UTF-8)
 - `"Lost"` (4 bytes UTF-8)
+
+---
+
+### Type 8: `0x08` — `UWB_TOKEN_EXCHANGE` (Ultra-Wideband Discovery Token Fragments)
+*Strictly direct peer-to-peer transmission (`hopLimit = 1`). Exchanges serialized Apple `NIDiscoveryToken` fragments (25 bytes per fragment) out-of-band to establish bidirectional Ultra-Wideband (U1/U2) precision ranging sessions.*
+
+```text
++---------------------------------------------------------------------------------------+
+| Outer Cleartext Envelope (Bytes 0..9)                                                 |
+| Byte 0: 0x38 | Byte 1: hopLimit (1) | Byte 2: hopCount (0) | Bytes 3..5: sid | Seq    |
++---------------------------------------------------------------------------------------+
+| Encrypted Payload (Bytes 10..39 — 30 Bytes):                                          |
+| Byte 10: action (UInt8: 0x01=tokenRequest, 0x02=tokenResponse, 0x03=stopRanging)     |
+| Byte 11: sequenceId (UInt8: unique multi-fragment transaction correlation identifier)|
+| Byte 12: fragmentIndex (UInt8: 0-indexed fragment number, 0..totalFragments-1)       |
+| Byte 13: totalFragments (UInt8: total chunk count, e.g. 12 for 297B discovery token)  |
+| Byte 14: dataLength (UInt8: number of valid fragment bytes in this frame, 1..25)      |
+| Bytes 15..39: fragmentData (25 bytes chunk data, zero-padded for unused bytes)        |
++---------------------------------------------------------------------------------------+
+| Bytes 40..55: authTag (16 bytes Poly1305 MAC)                                         |
++---------------------------------------------------------------------------------------+
+```
+
+| Payload Byte | Wire Type | Field Name | Description |
+| :---: | :--- | :--- | :--- |
+| **0** | `UInt8` | `action` | `0x01` = `tokenRequest`, `0x02` = `tokenResponse`, `0x03` = `stopRanging`. |
+| **1** | `UInt8` | `sequenceId` | Transaction correlation identifier ($1 \dots 255$). |
+| **2** | `UInt8` | `fragmentIndex` | Zero-based index of this fragment ($0 \dots \text{totalFragments}-1$). |
+| **3** | `UInt8` | `totalFragments` | Total fragments comprising the complete archived `NIDiscoveryToken` ($1 \dots 15$). |
+| **4** | `UInt8` | `dataLength` | Exact byte count of `fragmentData` in this packet ($1 \dots 25$). |
+| **5..29** | `25 Bytes` | `fragmentData` | Raw slice of `NSKeyedArchiver` discovery token data, zero-padded for trailing slice. |
+
 
 ---
 

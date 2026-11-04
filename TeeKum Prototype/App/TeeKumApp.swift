@@ -250,12 +250,21 @@ struct TeeKumApp: App {
                     fflush(stdout)
                     _ = await InactivityGuardTests.runAllTests()
                     fflush(stdout)
+                    _ = await NearbyInteractionTests.runAllTests()
+                    fflush(stdout)
                     print(">>> ALL AUTOMATED TEST RUNS FINISHED <<<")
                     fflush(stdout)
                     if shouldExit {
                         exit(0)
                     }
                 } else {
+                    if args.contains("-runNearbyInteractionTests") || envRunner == "nearby" {
+                        _ = await NearbyInteractionTests.runAllTests()
+                        fflush(stdout)
+                        if shouldExit {
+                            exit(0)
+                        }
+                    }
                     if args.contains("-runInactivityTests") || envRunner == "inactivity" {
                         _ = await InactivityGuardTests.runAllTests()
                         fflush(stdout)
@@ -529,7 +538,6 @@ struct TeeKumApp: App {
         locationService.hasDistantPeersProvider = nil
         locationService.hasStalePeers = false
         locationService.hasStalePeersProvider = nil
-        locationService.updateStatus(UserStatus(code: .available))
         sosViewModel.stopListening()
         sosViewModel.reset()
         sosViewModel.dismissIncomingAlert()
@@ -597,7 +605,7 @@ struct TeeKumApp: App {
                     lastSeen: inbound.receivedAt,
                     coordinate: sos.coordinate,
                     horizontalAccuracy: CLLocationAccuracy(sos.accuracy),
-                    status: UserStatus(code: .sos),
+                    isEmergency: true,
                     batteryLevel: Float(sos.batteryLevel) / 100.0,
                     heading: sessionViewModel.members.first(where: { $0.id == sos.senderInitials })?.heading,
                     isDirectPeer: envelope.hopCount == 0,
@@ -623,14 +631,14 @@ struct TeeKumApp: App {
             let resolvedName = ping.senderInitials
             let memberColor = MemberColor.resolve(code: ping.colorCode, initials: ping.senderInitials)
             
-            let existingStatus = sessionViewModel.members.first(where: { $0.id == ping.senderInitials })?.status ?? UserStatus(code: .available)
+            let existingEmergency = sessionViewModel.members.first(where: { $0.id == ping.senderInitials })?.isEmergency ?? false
             let member = Member(
                 id: ping.senderInitials,
                 name: resolvedName,
                 lastSeen: inbound.receivedAt,
                 coordinate: ping.coordinate,
                 horizontalAccuracy: CLLocationAccuracy(ping.accuracy),
-                status: existingStatus,
+                isEmergency: existingEmergency,
                 batteryLevel: Float(ping.batteryLevel) / 100.0,
                 heading: ping.headingDegrees,
                 isDirectPeer: envelope.hopCount == 0,
@@ -692,6 +700,22 @@ struct TeeKumApp: App {
                 }
             }
             await relayMeshPacketIfNeeded(inbound, for: session)
+            
+        case .uwbTokenExchange:
+            let symKey = SymmetricKey(data: session.symmetricKeyData)
+            if let decrypted = try? await cryptoService.open(
+                ciphertext: inbound.rawPacket.ciphertext,
+                envelope: inbound.rawPacket.envelope,
+                authTag: inbound.rawPacket.authTag,
+                using: symKey
+            ), let payload = try? UWBTokenExchangePayload.deserialize(from: decrypted) {
+                await NearbyInteractionService.shared.handleInboundUWBPayload(
+                    payload,
+                    fromPeerId: inbound.sourcePeerId,
+                    session: session,
+                    transport: peerTransport
+                )
+            }
             
         default:
             break

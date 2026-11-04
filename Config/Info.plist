@@ -22,5 +22,7 @@
 	<array>
 		<string>location</string>
 	</array>
+	<key>NSNearbyInteractionUsageDescription</key>
+	<string>TeeKum uses Ultra-Wideband to provide high-precision direction and centimeter distance guidance to locate friends in crowded festival venues.</string>
 </dict>
 </plist>

@@ -178,8 +178,7 @@ public actor SimulatedMeshNode {
     }
     
     public func sendLocationPing(
-        coordinate: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
-        status: StatusCode = .available
+        coordinate: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
     ) async throws {
         guard let activeSession = session else { throw TransportError.notStarted }
         sequenceCounter += 1
@@ -188,8 +187,6 @@ public actor SimulatedMeshNode {
             coordinate: coordinate,
             timestamp: clock.now(),
             accuracy: 5,
-            statusCode: status,
-            targetRefId: nil,
             senderInitials: initials,
             batteryLevel: 90,
             heading: 0

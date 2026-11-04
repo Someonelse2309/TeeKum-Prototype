@@ -144,9 +144,6 @@ public protocol LocationServiceProvider: AnyObject {
     /// Time elapsed in seconds since the current location was measured by hardware GPS (nil if no fix acquired yet).
     var locationAge: TimeInterval? { get }
     
-    /// Local user status to coalesce into the next normal location ping.
-    var currentStatus: UserStatus { get }
-    
     /// Current target publishing interval in seconds based on movement, stationary state, and battery.
     var currentCadenceInterval: TimeInterval { get }
     
@@ -154,7 +151,7 @@ public protocol LocationServiceProvider: AnyObject {
     var cadenceConfig: CadenceConfiguration { get set }
     
     /// Async stream yielding location pings ready for radio publishing.
-    var publishedPings: AsyncStream<(location: LocationPin, status: UserStatus)> { get }
+    var publishedPings: AsyncStream<LocationPin> { get }
     
     /// Requests standard iOS CoreLocation permissions with friendly educational primer.
     func requestPermissions() async -> Bool
@@ -164,9 +161,6 @@ public protocol LocationServiceProvider: AnyObject {
     
     /// Pauses GPS receiver and stops compass monitoring to conserve battery.
     func stopTracking()
-    
-    /// Updates local user status immediately without creating a separate ordinary network packet.
-    func updateStatus(_ status: UserStatus)
     
     /// Retrieves the latest available location immediately for emergency SOS dispatch.
     /// Does not wait for a fresh GPS fix or a normal ping interval, and operates regardless of Live Sharing state.

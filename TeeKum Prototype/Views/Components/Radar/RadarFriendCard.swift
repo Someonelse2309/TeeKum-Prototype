@@ -34,7 +34,7 @@ public struct RadarFriendCard: View {
     }
     
     private var isEmergency: Bool {
-        member.status.code.isEmergency
+        member.isEmergency
     }
     
     private var isStale: Bool {
@@ -69,18 +69,8 @@ public struct RadarFriendCard: View {
                     Text(member.initials)
                         .font(.system(size: 13, weight: .black, design: .rounded))
                         .foregroundStyle(isEmergency ? .white : (isSelected ? .black : member.color.swiftUIColor))
-                    
-                    // Emoji overlay
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            Text(member.status.code.emoji)
-                                .font(.system(size: 11))
-                        }
-                    }
-                    .frame(width: 38, height: 38)
                 }
+                .frame(width: 38, height: 38)
                 
                 // Name & Distance Details
                 VStack(alignment: .leading, spacing: 2) {

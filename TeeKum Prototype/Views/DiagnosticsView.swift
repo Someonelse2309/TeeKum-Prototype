@@ -165,10 +165,12 @@ public struct DiagnosticsView: View {
                             ForEach(sessionViewModel.members) { member in
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
-                                        Text(member.status.code.emoji)
+                                        Circle()
+                                            .fill(member.color.swiftUIColor)
+                                            .frame(width: 8, height: 8)
                                         Text(member.name).bold()
                                         
-                                        if member.status.code.isEmergency {
+                                        if member.isEmergency {
                                             Text("SOS ACTIVE")
                                                 .font(.caption2.bold())
                                                 .foregroundStyle(.red)

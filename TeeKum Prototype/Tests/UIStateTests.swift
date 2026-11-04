@@ -21,7 +21,7 @@ public struct UIStateTests {
         
         if !(await testGroupPairingLifecycle()) { passed = false }
         if !(await testLocationFreshnessIndicators()) { passed = false }
-        if !(await testStatusPickerState()) { passed = false }
+        if !(await testStatusSystemRetirement()) { passed = false }
         if !(await testLiveSharingToggle()) { passed = false }
         if !(await testSOSContinuousHoldAndCancellation()) { passed = false }
         if !(await testHonestDeliveryStateTransitions()) { passed = false }
@@ -171,34 +171,20 @@ public struct UIStateTests {
         return true
     }
     
-    // MARK: - 3. Status Picker State
+    // MARK: - 3. Status System Retirement
     
     @MainActor
-    private static func testStatusPickerState() async -> Bool {
-        print("[TEST] testStatusPickerState...")
+    private static func testStatusSystemRetirement() async -> Bool {
+        print("[TEST] testStatusSystemRetirement...")
         let mapVM = MapViewModel()
         
-        guard mapVM.currentStatus.code == .available else {
-            print("FAILED: default status should be .available")
+        // Status system is cleanly retired from MapViewModel and UI
+        guard mapVM.selectedMember == nil else {
+            print("FAILED: default selected member should be nil")
             return false
         }
         
-        // Update to drinks
-        mapVM.updateUserStatus(UserStatus(code: .gettingDrinks))
-        guard mapVM.currentStatus.code == .gettingDrinks else {
-            print("FAILED: currentStatus should be .gettingDrinks")
-            return false
-        }
-        
-        // All enum cases must have valid title, emoji, and systemImage
-        for code in StatusCode.allCases {
-            guard !code.title.isEmpty, !code.emoji.isEmpty, !code.systemImage.isEmpty else {
-                print("FAILED: missing display metadata for status \(code)")
-                return false
-            }
-        }
-        
-        print("PASSED: testStatusPickerState")
+        print("PASSED: testStatusSystemRetirement")
         return true
     }
     
@@ -666,12 +652,12 @@ public struct UIStateTests {
             id: "ALX",
             name: "ALX",
             coordinate: CLLocationCoordinate2D(latitude: 33.6800, longitude: -116.2300),
-            status: UserStatus(code: .available),
+            isEmergency: false,
             isDirectPeer: true
         )
         sessionVM.updateMember(initialMember)
         
-        guard let m1 = sessionVM.members.first, !m1.status.code.isEmergency else {
+        guard let m1 = sessionVM.members.first, !m1.isEmergency else {
             print("FAILED: Member should initially have non-emergency status")
             return false
         }
@@ -684,7 +670,7 @@ public struct UIStateTests {
             lastSeen: Date(),
             coordinate: emergencyCoord,
             horizontalAccuracy: 5.0,
-            status: UserStatus(code: .sos),
+            isEmergency: true,
             batteryLevel: 0.85,
             isDirectPeer: false // Relayed via mesh
         )
@@ -695,8 +681,8 @@ public struct UIStateTests {
             return false
         }
         
-        guard m2.status.code == .sos, m2.status.code.isEmergency else {
-            print("FAILED: Member status must be .sos and isEmergency must be true")
+        guard m2.isEmergency else {
+            print("FAILED: Member isEmergency must be true")
             return false
         }
         guard !m2.isDirectPeer else {
@@ -949,7 +935,7 @@ public struct UIStateTests {
             id: "CLS",
             name: "Close Friend",
             coordinate: closeFriendCoord,
-            status: UserStatus(code: .available)
+            isEmergency: false
         )
         
         // Friend 2: ~150 meters East (well beyond 60m boundary)
@@ -958,7 +944,7 @@ public struct UIStateTests {
             id: "FAR",
             name: "Far Friend",
             coordinate: farFriendCoord,
-            status: UserStatus(code: .omw)
+            isEmergency: false
         )
         
         let closeDist = userPin.distance(to: closeFriendCoord)

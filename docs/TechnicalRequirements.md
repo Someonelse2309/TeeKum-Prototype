@@ -15,14 +15,14 @@
 **UI framework:** SwiftUI (Modern Swift Observation `@Observable`, Pure MVVM)  
 
 **Description:**  
-TeeKum is an offline-first iOS app designed to help friends locate one another in crowded concerts, music festivals, and large venues where cellular data or internet access is weak or unavailable. Users form private groups, share their real-time coordinates and current activity status, view friends on an offline map, establish meeting points, and navigate directly toward a selected person.
+TeeKum is an offline-first iOS app designed to help friends locate one another in crowded concerts, music festivals, and large venues where cellular data or internet access is weak or unavailable. Users form private groups, share their real-time coordinates, chat across the mesh, view friends on an offline map, establish meeting points, and navigate directly toward a selected person.
 
 The system is designed to be completely serverless (*100% serverless*). Devices communicate directly peer-to-peer (Phase 1 MVP) via Apple Wireless Direct Link (AWDL) and Wi-Fi Direct using `Network.framework`. Devices also opportunistically relay encrypted packets across an ad-hoc multi-hop mesh network for fellow festival attendees (Phase 2). Relay participation is entirely opt-in, and privacy is strictly guaranteed through end-to-end authenticated encryption (zero-knowledge relaying).
 
 ### 1.1 Scope and Product Decisions
 
 - **100% Serverless:** No cloud backend, external databases, or user accounts are required. Groups are formed either offline (via QR barcodes) or online (via URL share links) with symmetric encryption keys embedded directly inside the URL fragment.
-- **Location + Status Coded Hash:** Periodic updates transmit location coordinates and current status together. Status strings are processed locally, and only a 1-byte compact coded hash is broadcast over the air to minimize radio bandwidth.
+- **Pure Location Telemetry & Mesh Chat:** Periodic location updates transmit coordinates, battery, heading, and personal member color contiguously (Option B with 12 bytes reserved). Status updates, intentions, and rendezvous requests are communicated through the new **Festival Group Mesh Chat** (`ChatMessagePayload`, Type `0x07`) with quick-tap preset chips, completely retiring legacy canned status codes.
 - **SOS Is Exceptional:** The SOS emergency button requires a 3-second continuous press-and-hold to prevent accidental triggers while dancing. SOS packets are dispatched immediately through an urgent priority path, preempting normal queues, and receive maximum forwarding priority.
 - **User-Controlled Live Sharing:** Users maintain complete control via a *Live Sharing* toggle on the map screen. When OFF, GPS polling and broadcasting are paused to preserve battery and privacy while watching performances. When ON, updates are broadcast every 3–5 seconds while moving, or 15–30 seconds while stationary.
 - **Single Active Meeting Point:** A group has strictly one active meeting point at any given time to eliminate confusion. Friends confirm attendance with a single tap (*"I'll be there"*).
@@ -56,6 +56,7 @@ The system is designed to be completely serverless (*100% serverless*). Devices 
 | **D16 — Integrated On-Device Mesh Debugger & Virtual Simulation Lab** | Native on-device diagnostic and testing suite (`MeshDebuggerView`, `MeshDebuggerViewModel`) featuring 1-tap automated triage health check, live 56-byte packet stream logger and bitfield inspector, packet injection (valid/fault corrupted MAC), and virtual multi-node topology sandbox with real-time link breaking. |
 | **D17 — Phase 3 Festival Group Mesh Chat & 20-Character Text Engine (Approved via /grill-me)** | Serverless, offline group chat channel (`PacketType.chatMessage = 0x07`) broadcast across the multi-hop mesh. Transmits concise messages up to 20 characters encoded directly as standard UTF-8/ASCII bytes (eliminating radix codec complexity and supporting full lowercase, uppercase, numbers, and standard punctuation). The 30-byte encrypted payload is cleanly structured as: 2B Base-27 sender initials + 4B Unix epoch timestamp + 1B text length ($0 \dots 20$) + 20B text content + 3B reserved padding. Transmitted via a dedicated FIFO outbox lane ahead of stranger relays (up to 2 retries, 3s cooldown). Employs individual per-person ACK tracking (`Delivered M/N` friends) utilizing existing `ACKPayload` (Type `0x06`). Embedded as a non-intrusive bottom sheet overlay on `MainMapView` (`ChatSheetView`) with quick-tap festival preset chips above keyboard ("Beer line", "At Main Stage", "Restroom", "Where are you?"). Strictly ephemeral (in-memory only, purged on exit) and auto-suspended at <20% battery (Festival Survival Mode). |
 | **D18 — Phase 3 Peer Facing Direction & Live Map Orientation** | Real-time visualization of peer and local user compass heading on `MainMapView`. Telemetry heading (`0...255` UInt8 on wire) is reconstructed via `LocationPingPayload.headingDegrees` ($0.0^\circ \dots 359.9^\circ$). Friend map annotations feature `DirectionalHeadingIndicator`: a glowing $50^\circ$ translucent vision beam cone (`HeadingVisionCone`) and a crisp directional pointer chevron on the avatar rim rotated to match the friend's physical facing orientation. The friend detail sheet (`FriendDetailView`) renders exact compass bearing and cardinal direction (`180° (S)`). |
+| **D19 — Native Apple Ultra-Wideband (U1/U2) Precision Finding & Token Fragmentation (Approved via /grill-me)** | Native integration of Apple `NearbyInteraction.framework` (`NISession`, `NISessionDelegate`, `NIDiscoveryToken`) for sub-meter directional guidance and centimeter-level distance tracking. Discovery tokens (~297 bytes) are securely fragmented across 25-byte wire chunks in Type `0x08` (`UWBTokenExchangePayload`), authenticated with ChaCha20-Poly1305, and strictly limited to a direct 1-hop link (`uwbHopLimit = 1`). User initiates ranging via an explicit "Start Precision Finding" button in `FinderBeaconView`, triggering an automatic silent background handshake with the target peer. The active session renders an AirTag-style overlay with dynamic 3D directional arrow (`simd_float3` / `horizontalAngle`), live centimeter readout, coaching hints, and rhythmic distance-scaled haptics (`UIImpactFeedbackGenerator`). Gracefully disables and indicates hardware requirements on unsupported devices (e.g. iPhone SE or Simulator). |
 
 ---
 
@@ -285,7 +286,7 @@ final class LocationSamplingPolicy {
 | Method / Function / Class | What it does | How we use it in our app | File |
 | :--- | :--- | :--- | :--- |
 | `Map` (SwiftUI) | Declarative container for presenting camera viewports, overlays, and annotations. | Renders the primary festival map interface in `MainMapView`. | `MainMapView.swift` |
-| `Annotation` | Displays custom interactive map pins at specified coordinates. | Renders friend avatars, current status emoji badges, and meeting point icons. | `MainMapView.swift` |
+| `Annotation` | Displays custom interactive map pins at specified coordinates. | Renders friend avatars with personal neon color rings, facing orientation vision cones, and meeting point icons. | `MainMapView.swift` |
 | `MapCircle` | Renders a geographic circle overlay with an explicit radius in meters. | Displays coordinate accuracy rings that fade as signals degrade in crowds. | `MainMapView.swift` |
 
 ---
@@ -370,7 +371,7 @@ flowchart TD
         MainMap["MainMapView (Offline MapKit & Overlays)"]
         Radar["FinderBeaconView / RadarView (Tactical Polar Radar)"]
         Pairing["GroupPairingView (QR Barcode & Link Share)"]
-        StatusPicker["StatusPickerView (Coded Chips Carousel)"]
+        ChatSheet["ChatSheetView (Mesh Chat & Preset Chips)"]
         SOSBtn["SOSButtonView (3-Second Hold Trigger)"]
         MeetView["MeetingPointsView / SetMeetingPointSheet"]
         DiagHUD["DiagnosticsView (Debug HUD)"]
@@ -383,6 +384,7 @@ flowchart TD
         SessionVM["GroupSessionViewModel"]
         MeetingVM["MeetingPointViewModel"]
         SOSVM["SOSViewModel"]
+        ChatVM["ChatViewModel"]
         DebuggerVM["MeshDebuggerViewModel"]
     end
 
@@ -443,7 +445,7 @@ To eliminate out-of-band P2P connection handshakes while allowing flexible 1, 2,
 
 | Component | What it does | What it must NOT do | Files / folders |
 | :--- | :--- | :--- | :--- |
-| **Models** | Pure Swift data models (`Member`, `LocationPin`, `Status`, `MeetingPoint`, `Packet`). | Must not import SwiftUI, execute radio calls, or run database queries. | `Models/` |
+| **Models** | Pure Swift data models (`Member`, `LocationPin`, `MeetingPoint`, `ChatMessage`, `Packet`). | Must not import SwiftUI, execute radio calls, or run database queries. | `Models/` |
 | **Views** | Declarative UI rendering (maps, compass needle, strobe beacon, 3-second SOS button). | Must not perform cryptographic operations, raw byte serialization, or direct SQLite queries. | `Views/` |
 | **ViewModels** | Manage observable screen state (`@Observable`), format relative time, and trigger service actions. | Must not retain view references or open network sockets directly. | `ViewModels/` |
 | **Services** | Manage platform subsystems (P2P radio, GPS sampling, CryptoKit encryption, Keychain & SQLite storage). | Must not manage screen navigation or present UI alerts directly. | `Services/` |
@@ -460,15 +462,16 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── InitialsCodec.swift          // 2-byte Base-27 initials compressor (1..3 chars A-Z, 18,278 keys)
 │   │   ├── LocationPin.swift            // CoreLocation Coordinate (Double), accuracy, ~11cm Int32 quantization
 │   │   ├── MeetingPoint.swift           // Single active rendezvous point model & PremadeMeetingLocation options
-│   │   ├── Member.swift                 // Member identity, initials, lastSeen, status, battery, heading, stale helpers
+│   │   ├── Member.swift                 // Member identity, initials, lastSeen, isEmergency, battery, heading, stale helpers
+│   │   ├── MemberColor.swift            // 1-byte personal color enum, 8 neon colors, deterministic hash fallback
+│   │   ├── ChatMessage.swift            // Ephemeral group chat message & per-recipient delivery tracking
 │   │   ├── Packet.swift                 // 56-byte binary wire packet (Protocol v3), envelope, payloads, codecs
 │   │   ├── SessionActivityAttributes.swift // ActivityKit Live Activity attributes for Lock Screen & Dynamic Island
 │   │   ├── SOSDeliveryState.swift       // Honest UX delivery state machine
-│   │   └── Status.swift                 // 1-byte compact festival activity status hash enum & target references
+│   │   └── TeeKumConfiguration.swift    // Master single-source configurable variables & thresholds
 │   ├── Views/
 │   │   ├── MainMapView.swift            // MapKit view, friend pins, long-press rendezvous drop, Live Sharing toggle
 │   │   ├── GroupPairingView.swift       // QR barcode display/scanner, URL share, clipboard paste, mesh compact gate
-│   │   ├── StatusPickerView.swift       // One-handed horizontal status chips carousel
 │   │   ├── SOSButtonView.swift          // 3-second hold emergency button & visual circular progress ring
 │   │   ├── FinderBeaconView.swift       // Tactical Radar container, HUD banner, strobe torch & UWB transition
 │   │   ├── MeetingPointsView.swift      // Meeting point proposal sheet, attendance cards, dropdown menu
@@ -478,6 +481,7 @@ TeeKum Prototype/ (Root Repository)
 │   │   └── Components/
 │   │       ├── QRCodeView.swift         // CoreImage CIFilter QR generator with ShareLink template
 │   │       ├── QRScannerView.swift      // AVFoundation camera scanner with viewport overlay
+│   │       ├── ColorPickerView.swift    // Reusable 8-color neon palette bar & personal color picker sheet
 │   │       ├── SetMeetingPointSheet.swift // Compact bottom sheet with curated location dropdown menu
 │   │       ├── MeshAgreementView.swift  // Communal Mesh Compact agreement consent modal
 │   │       ├── RelaySettingsSheet.swift // Communal mesh relay mode picker (Always, Timed 30m, Disabled)
@@ -491,10 +495,11 @@ TeeKum Prototype/ (Root Repository)
 │   │       └── Radar/
 │   │           ├── RadarView.swift      // Forward-up polar projection, clamping at 60m, dual selection
 │   │           ├── RadarGridBackground.swift // Radial gradient background, concentric rings (15m, 30m, 60m), ticks
-│   │           ├── RadarBlipView.swift  // Friend avatar blip, activity status emoji, SOS pulse, clamped edge arrow
+│   │           ├── RadarBlipView.swift  // Friend avatar blip, SOS pulse, clamped edge arrow
 │   │           ├── RadarFriendCard.swift // Bottom carousel card with clock direction ("Ahead", "2 o'clock")
 │   │           ├── RadarCenterMarker.swift // User position indicator aligned with forward device heading
-│   │           └── RadarTheme.swift     // AMOLED dark palette, radial scaling constants, polar-to-Cartesian math
+│   │           ├── RadarTheme.swift     // AMOLED dark palette, radial scaling constants, polar-to-Cartesian math
+│   │           └── PrecisionFindingOverlay.swift // AirTag-style 3D directional arrow, centimeter readout, coaching hints
 │   ├── ViewModels/
 │   │   ├── GroupSessionViewModel.swift  // Group session lifecycle, QR/Link pairing, pendingInvite agreement
 │   │   ├── MapViewModel.swift           // Map viewport state, friend pins, offline filtering, Live Sharing, radar
@@ -507,11 +512,49 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── PeerTransportService.swift   // Network.framework P2P datagram actor (AWDL Bonjour _teekum._tcp)
 │   │   ├── MeshProtocols.swift          // Phase 2 multi-hop mesh protocol interfaces, MeshClock & PacketKey
 │   │   ├── StreamMessageFramer.swift    // 56-byte binary stream delimiter, chunk reconstruction, resynchronization
-│   │   ├── PriorityOutboxQueue.swift    // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting) + coalesced Location
+│   │   ├── PriorityOutboxQueue.swift    // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting/UWB) + coalesced Location
 │   │   ├── CryptoServiceProtocol.swift  // Cryptographic service interface
 │   │   ├── CryptoService.swift          // ChaChaPoly AEAD, AAD envelope binding & Keychain store (actor)
 │   │   ├── NotificationService.swift    // System local notifications (UNUserNotificationCenter) & in-app toasts
 │   │   ├── ChatMessageEngine.swift      // Phase 3 multi-hop chat engine, FIFO outbox, retries & ACK tracking
+│   │   ├── NearbyInteractionService.swift // Apple NearbyInteraction (NISession), UWB token exchange, AirTag haptics
+│   │   ├── InactivityGuardService.swift // Man Down / Auto-SOS motion watchdog & 30s pre-alarm warning countdown
+│   │   ├── SessionStorageProtocol.swift // Ephemeral SQLite crash recovery storage interface
+│   │   ├── LocationServiceProtocol.swift // Location service contract & dynamic accuracy interface
+│   │   ├── LocationService.swift        // CoreLocation wrapper, CoreMotion adaptive cadence & dynamic accuracy
+│   │   ├── LocationPublisher.swift      // Periodic publishing scheduler & SOS immediate preemption
+│   │   ├── SOSAudioAlert.swift          // Emergency siren & haptic notification generator
+│   │   ├── NeighborTable.swift          // Phase 2 neighbor table actor, link RSSI tracking & eviction
+│   │   ├── RoutingTable.swift           // Phase 2 AODV routing table actor, forward/reverse path caching
+│   │   ├── PacketForwarder.swift        // Phase 2 blind zero-knowledge relay actor (8-hop ceiling, AAD invariant)
+│   │   ├── RouteDiscoveryService.swift  // Phase 2 on-demand AODV discovery engine (RREQ/RREP, target reached)
+│   │   ├── RelayPolicyManager.swift     // Phase 2 relay policy manager (Always Active, Timed 30m, Disabled, 20% cutoff)
+│   │   ├── ForwardingRateLimiter.swift  // Dual-lane token bucket rate limiter (2 pkts/s ordinary, 4 pkts/s SOS)
+│   │   ├── SeenPacketCache.swift        // 7-byte composite key LRU deduplication cache (1,024 entries, 5m TTL)
+│   │   ├── SOSForwardingEngine.swift    // Phase 2 multi-hop SOS immediate preemption & reverse-route ACK routing
+│   │   ├── MeshTopologySimulator.swift  // In-memory virtual mesh simulator (linear & star topologies, fault injection)
+│   │   ├── SimulatedMeshTransport.swift // Virtual mock transport for deterministic testing & sandbox
+│   │   ├── LiveActivityManager.swift    // ActivityKit Live Activity presenter & Lock Screen relay intent handler
+│   │   ├── MeshTimingConfiguration.swift // Centralized timing configuration for cadence, AODV & stale recovery
+│   │   └── MeshDiagnostics.swift       // Phase 2 diagnostic metrics, counters & telemetry aggregation
+│   ├── Tests/
+│   │   ├── PacketCodecTests.swift       // 14 automated tests: 56-byte codec, MemberColor, InitialsCodec, Int32 quantization
+│   │   ├── CryptoSecurityTests.swift    // 13 automated tests: ChaChaPoly, AAD tamper, replays, Keychain
+│   │   ├── PeerTransportTests.swift     // 14 automated tests: 56B framer chunks, outbox priority, tie-breaking
+│   │   ├── LocationPublishingTests.swift // 14 automated tests: Live Sharing, cadence, dynamic adaptive accuracy
+│   │   ├── SOSEndToEndTests.swift       // 11 automated tests: 3s hold, preemption, ACKs, duplicate sirens
+│   │   ├── MultiHopSOSTests.swift       // 11 automated tests: Multi-hop flooding, hopCount increment, reverse ACK
+│   │   ├── UIStateTests.swift           // 13 automated tests: pairing, freshness, dropdown, tactical radar projection
+│   │   ├── RoutingForwardingTests.swift // 12 automated tests: blind relay, 8-hop limit, rate limiting, deduplication
+│   │   ├── RouteDiscoveryTests.swift    // 14 automated tests: AODV RREQ/RREP, stale peer two-tier discovery, burst
+│   │   ├── NeighborDiscoveryTests.swift // 13 automated tests: Bonjour _teekum._tcp peering, TXT relay flag, RSSI
+│   │   ├── RelayPolicyTests.swift       // 12 automated tests: 3 modes, hard 20% cutoff, survival mode, Live Activity
+│   │   ├── LiveActivityTests.swift      // 6 automated tests: ActivityKit lifecycle, dynamic island, lock screen toggle
+│   │   ├── MeshFailureIntegrationTests.swift // 12 automated tests: link breakage, partitions, loops, corruption resync
+│   │   ├── MeshDebuggerTests.swift      // 10 automated tests: 1-tap triage, 56B packet inspector, injection, sandbox
+│   │   ├── ChatEngineTests.swift        // 12 automated tests: ChatMessagePayload, outbox retries, delivery ACKs
+│   │   ├── InactivityGuardTests.swift   // 9 automated tests: stillness timer, 30s pre-alarm countdown, auto-SOS
+│   │   └── NearbyInteractionTests.swift // 6 automated tests: UWB token codec, 12-chunk reassembly, 1-hop limit
 │   │   ├── SessionStorageProtocol.swift // Ephemeral SQLite crash recovery storage interface
 │   │   ├── LocationServiceProtocol.swift // Location service contract & dynamic accuracy interface
 │   │   ├── LocationService.swift        // CoreLocation wrapper, CoreMotion adaptive cadence & dynamic accuracy
@@ -589,19 +632,19 @@ TeeKum Prototype/ (Root Repository)
 
 TeeKum employs a comprehensive, multi-layer testing strategy designed for offline-first, peer-to-peer radio resilience. Because physical radio attenuation cannot be fully emulated in unit tests, testing is partitioned into **Automated Unit & Integration Test Suites** (100% executable on simulator/CI and on-device via `runAllTests()`) and **Physical Multi-Device Field Protocols** (on real iPhones).
 
-### 4.1 Automated Test Suites (14 Suites, 168 Passing Tests)
+### 4.1 Automated Test Suites (17 Suites, 195+ Passing Tests)
 
-The automated test harness comprises 14 suites in `TeeKum Prototype/Tests/`, providing 100% pass rate verification across all core and multi-hop subsystems:
+The automated test harness comprises 17 suites in `TeeKum Prototype/Tests/`, providing 100% pass rate verification across all core, multi-hop, chat, and sensor subsystems:
 
 | Suite | File | Test Cases | Scope & Verification Coverage |
 | :--- | :--- | :---: | :--- |
-| **Packet Codec Tests** | `PacketCodecTests.swift` | 13 | 56-byte wire layout enforcement, 10-byte cleartext envelope big-endian serialization/deserialization, 2-byte Base-27 Initials Codec ($A \dots Z$, $18,278 \le 65,535$), Int32 coordinate quantization error (<11 cm), boundary coordinates ($-90^\circ, +90^\circ, -180^\circ, +180^\circ$), payload codecs (`LocationPing`, `SOS`, `MeetingUpdate`, `ACK`, Phase 2 `RouteReq`/`RouteResp`), and serverless URL fragment invite generation/parsing. |
+| **Packet Codec Tests** | `PacketCodecTests.swift` | 14 | 56-byte wire layout enforcement, 10-byte cleartext envelope big-endian serialization/deserialization, 2-byte Base-27 Initials Codec ($A \dots Z$, $18,278 \le 65,535$), Int32 coordinate quantization error (<11 cm), boundary coordinates ($-90^\circ, +90^\circ, -180^\circ, +180^\circ$), payload codecs (`LocationPing`, `SOS`, `MeetingUpdate`, `ACK`, Phase 2 `RouteReq`/`RouteResp`, Phase 3 `ChatMessage`), and serverless URL fragment invite generation/parsing. |
 | **Cryptographic Security Tests** | `CryptoSecurityTests.swift` | 13 | ChaCha20-Poly1305 AEAD sealing and opening, tampered ciphertext rejection (zero plaintext leakage), tampered authentication tag rejection, cleartext envelope AAD tampering rejection (version, type, hopLimit, sessionId, sequenceNumber), mutable hopCount invariance (intermediary relays increment hopCount without tag invalidation), wrong key rejection, nonce uniqueness across members via sequence number partitioning, 5-minute sliding LRU duplicate packet rejection, anti-replay monotonic sequence enforcement, stale location state replacement prevention, future timestamp clock skew guard (>300s), and iOS Keychain storage lifecycle & permanent teardown purge. |
 | **Peer Transport Tests** | `PeerTransportTests.swift` | 14 | `StreamMessageFramer` 56-byte frame delimiter, chunk fragmentation and partial read assembly, back-to-back datagram batching, corruption resynchronization over corrupted bytes, 64 KB buffer capacity protection, `PriorityOutboxQueue` urgent FIFO preemption (SOS cuts ahead of pings), single-slot location ping coalescing, bounded retry budgets with exponential backoff, hex peer ID tie-breaking, zero-handshake immediate framing, and `TransportDiagnostics` telemetry integrity. |
-| **Location & Dynamic Accuracy Tests** | `LocationPublishingTests.swift` | 14 | Live Sharing master switch (ON permits pings, OFF completely halts broadcasting), status changes piggybacked strictly inside next normal update without standalone packets, monotonic coordinate integrity, UI exposure of location age and accuracy, SOS immediate location acquisition without waiting for interval, adaptive cadence selection (3–5s moving, 15–30s stationary, 60s Survival Mode), stale peer cadence acceleration to 2.0s, response burst pings (3 pings @ 2.0s), and dynamic adaptive accuracy engine (`kCLLocationAccuracyBestForNavigation` dual-frequency GPS on radar, scaled down when stationary or survival mode). |
+| **Location & Dynamic Accuracy Tests** | `LocationPublishingTests.swift` | 14 | Live Sharing master switch (ON permits pings, OFF completely halts broadcasting), pure location telemetry broadcasting (Option B contiguous packing), monotonic coordinate integrity, UI exposure of location age and accuracy, SOS immediate location acquisition without waiting for interval, adaptive cadence selection (3–5s moving, 15–30s stationary, 60s Survival Mode), stale peer cadence acceleration to 2.0s, response burst pings (3 pings @ 2.0s), and dynamic adaptive accuracy engine (`kCLLocationAccuracyBestForNavigation` dual-frequency GPS on radar, scaled down when stationary or survival mode). |
 | **SOS End-to-End Tests** | `SOSEndToEndTests.swift` | 11 | 3-second continuous hold gesture state machine and early release cancellation, immediate dispatch independent of Live Sharing toggle and normal ping intervals, true hardware timestamp preservation (no false freshness), urgent queue preemption, honest delivery state machine progression (`acceptedLocally` $\rightarrow$ `forwardedToNextHop` $\rightarrow$ `relayedByMeshHop` $\rightarrow$ `deliveredToFriend`), bounded retries (3 attempts), unauthorized stranger and rogue packet rejection, duplicate suppression (no repeated audible sirens or duplicate alert banners), simulated two-device roundtrip, and empty peer list handling (`SEARCHING_PEERS`). |
 | **Multi-Hop SOS Tests** | `MultiHopSOSTests.swift` | 11 | Immediate SOS preemption through multi-hop mesh, multi-hop bounded flooding (max 8 hops), blind intermediate relay hopCount mutation (+1 per hop), reverse-route ACK routing, honest 5-state delivery machine progression across multiple hops, and duplicate suppression preventing repeat sirens. |
-| **UI & Tactical Radar Tests** | `UIStateTests.swift` | 13 | Group pairing lifecycle (creation, invite parsing, Communal Mesh Compact agreement gating, teardown), location freshness badges (*"Last seen Xm ago"*), status picker selection, Live Sharing toggle transitions, SOS countdown progress and cancellation, honest delivery state presentation, friend straight-line distance and magnetic forward bearing calculations, single active meeting point proposal with `PremadeMeetingLocation` dropdown menu selection, and Tactical Radar forward-up polar projection, 60m perimeter clamping with directional arrows, Cartesian coordinate conversion, and dual blip/carousel card selection. |
+| **UI & Tactical Radar Tests** | `UIStateTests.swift` | 13 | Group pairing lifecycle (creation, invite parsing, Communal Mesh Compact agreement gating, teardown), location freshness badges (*"Last seen Xm ago"*), Live Sharing toggle transitions, SOS countdown progress and cancellation, honest delivery state presentation, friend straight-line distance and magnetic forward bearing calculations, single active meeting point proposal with `PremadeMeetingLocation` dropdown menu selection, and Tactical Radar forward-up polar projection, 60m perimeter clamping with directional arrows, Cartesian coordinate conversion, and dual blip/carousel card selection. |
 | **Routing & Blind Relay Tests** | `RoutingForwardingTests.swift` | 12 | `PacketForwarder` blind relaying without decrypting payload, `hopCount` incrementation, `hopLimit` boundary enforcement (max 8 hops), 7-byte composite key `(sessionId, sequenceNumber)` LRU deduplication cache, dual-lane rate limiting (2 pkts/s ordinary traffic, 4 pkts/s SOS burst), and AAD invariance under relay mutation. |
 | **Route Discovery Tests** | `RouteDiscoveryTests.swift` | 14 | AODV on-demand path discovery (`ROUTE_REQ` / `ROUTE_RESP`), reverse path establishment, forward route caching, route TTL expiration (30s–60s forward, 15s reverse), link breakage invalidation and rediscovery, two-tier stale peer route discovery (>45s unseen), one-to-many multi-peer staggered sequential probing (2.5s interval), and target reached callback with response burst dispatch. |
 | **Neighbor Discovery Tests** | `NeighborDiscoveryTests.swift` | 13 | `NeighborTable` neighbor management actor, Bonjour discovery over `_teekum._tcp` with TXT `relay: 1/0` flag, peer connection tie-breaking, moving average RSSI signal tracking (dBm), link quality weighting, two-stage stale neighbor eviction, and open neighbor peering policy. |
@@ -609,6 +652,9 @@ The automated test harness comprises 14 suites in `TeeKum Prototype/Tests/`, pro
 | **Live Activity Tests** | `LiveActivityTests.swift` | 6 | `ActivityKit` Live Activity presentation lifecycle across Lock Screen and Dynamic Island, session name and direct peer count presentation, active meeting point distance updates, emergency SOS alert presentation, and Lock Screen communal relay toggle Intent handling. |
 | **Mesh Failure Integration Tests** | `MeshFailureIntegrationTests.swift` | 12 | In-memory simulated multi-node mesh topologies (`MeshTopologySimulator`), linear 2-hop, 3-hop, and 4-hop packet forwarding, star topology relay, split-brain network partition and recovery, circular routing loop prevention, packet corruption resynchronization, and intermediate node failure recovery. |
 | **Mesh Debugger Tests** | `MeshDebuggerTests.swift` | 10 | On-device 1-tap automated triage health check (Bluetooth, Location, Battery, Session, CryptoKit), live 56-byte packet stream capture and bitfield inspection, packet type filtering, packet injection (valid pings, SOS, ACKs), fault injection (corrupted Poly1305 MAC tags, sequence replays), virtual topology sandbox link fault toggling, and diagnostic report export. |
+| **Chat Engine Tests** | `ChatEngineTests.swift` | 12 | Phase 3 multi-hop chat engine, 20-byte payload serialization, FIFO outbox, exponential backoff retries, per-recipient ACK delivery states (`sent` $\rightarrow$ `relayed` $\rightarrow$ `delivered`), duplicate message suppression, and unread badge counters. |
+| **Inactivity Guard Tests** | `InactivityGuardTests.swift` | 9 | Opt-in motion stillness watchdog, 180s inactivity trigger, 30-second silent pre-alarm countdown with visual pulse, touch/motion cancellation, manual "I'M OK" button dismissal, auto-SOS dispatch (`SOSType.inactivity`), and friend device alert banner. |
+| **Nearby Interaction Tests** | `NearbyInteractionTests.swift` | 6 | 30-byte UWB token exchange packet wire codec, action codes, malformed length rejection, 12-fragment token chunking and reassembly (~297B discovery token), strict 1-hop limit enforcement (`uwbHopLimit = 1`), and `NearbyInteractionService` lifecycle and AirTag-style haptics. |
 
 ### 4.2 Test Execution Command & Verification
 
@@ -693,7 +739,7 @@ develop → feat/feature-name → PR to develop → PR to main → PR to prod
 -   [x] Direct Apple Peer-to-Peer transport service (`PeerTransportService`).
 -   [x] Live Sharing toggle & smart adaptive location publisher (3–5s moving, 15–30s stationary).
 -   [x] MapKit offline preview with friend pins, accuracy rings, and status pills.
--   [x] Horizontal status chips carousel with festival activity codes.
+-   [x] Pure location telemetry broadcasting with Option B contiguous packing (status system fully retired in favor of Phase 3 Group Mesh Chat).
 -   [x] Single Active Meeting Point creation & one-tap attendance sync with `PremadeMeetingLocation` dropdown.
 -   [x] Directed navigation: 360° Compass Arrow -> Seamless Ultra-Wideband Radar transition.
 -   [x] 1-Tap Screen Strobe Beacon for visual crowd finding.

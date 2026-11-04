@@ -39,7 +39,7 @@ public struct RadarBlipView: View {
     }
     
     private var isEmergency: Bool {
-        member.status.code.isEmergency
+        member.isEmergency
     }
     
     private var isStale: Bool {
@@ -120,10 +120,6 @@ public struct RadarBlipView: View {
                                 .overlay(
                                     Circle().stroke(Color.black, lineWidth: 1)
                                 )
-                        } else {
-                            Text(member.status.code.emoji)
-                                .font(.system(size: 9))
-                                .offset(x: 4, y: -4)
                         }
                     }
                     Spacer()

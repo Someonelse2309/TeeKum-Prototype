@@ -1034,6 +1034,7 @@ extension PacketType {
         case .routeResp: return "Route Response"
         case .ack: return "Delivery ACK"
         case .chatMessage: return "Group Chat"
+        case .uwbTokenExchange: return "UWB Precision Token"
         }
     }
 }
