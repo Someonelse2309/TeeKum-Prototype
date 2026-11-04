@@ -430,9 +430,14 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         triggerOutboxFlush()
     }
     
-    /// Transmits a 56-byte wire datagram to a specific connected peer.
+    /// Transmits a 56-byte wire datagram to a specific connected peer, or broadcasts to direct peers if peerId is not an active transport connection key.
     public func sendPacket(_ data: Data, to peerId: String) async throws {
-        _ = try await sendFrame(data, to: peerId)
+        if let peer = connections[peerId], peer.isReady {
+            _ = try await sendFrame(data, to: peerId)
+        } else {
+            // Direct connection key not mapped (e.g. member initials target); broadcast over 1-hop direct link
+            try await broadcastPacket(data)
+        }
     }
     
     /// Returns the number of direct peer connections currently established and operational.

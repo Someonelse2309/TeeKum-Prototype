@@ -99,6 +99,9 @@ public protocol LocationServiceProvider: AnyObject {
     /// Latest magnetic compass heading in degrees (0..<360).
     var currentHeading: CLLocationDirection? { get }
     
+    /// Optional high-frequency callback invoked whenever a hardware compass heading fix is received.
+    var onHeadingUpdate: ((CLLocationDirection) -> Void)? { get set }
+    
     /// Motion coprocessor activity state (`true` if user is standing/dancing in place; `false` if walking).
     var isStationary: Bool { get }
     
@@ -177,6 +180,10 @@ public protocol LocationServiceProvider: AnyObject {
 }
 
 extension LocationServiceProvider {
+    public var onHeadingUpdate: ((CLLocationDirection) -> Void)? {
+        get { nil }
+        set {}
+    }
     public var isPreciseLocationAuthorized: Bool { true }
     public var isTacticalRadarActive: Bool { false }
     public func setTacticalRadarActive(_ active: Bool) {}

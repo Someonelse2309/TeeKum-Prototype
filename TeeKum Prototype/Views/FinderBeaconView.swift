@@ -25,6 +25,7 @@ public struct FinderBeaconView: View {
     private var nearbyService = NearbyInteractionService.shared
     @State private var selectedMember: Member?
     @State private var isPrecisionFindingActive: Bool = false
+    @State private var liveHeading: CLLocationDirection? = nil
     @State private var isStrobeActive: Bool = false
     @State private var strobeColorIndex: Int = 0
     @State private var strobeTask: Task<Void, Never>?
@@ -67,6 +68,13 @@ public struct FinderBeaconView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             locationService?.setTacticalRadarActive(true)
+            self.liveHeading = locationService?.currentHeading ?? currentHeading
+            locationService?.onHeadingUpdate = { heading in
+                self.liveHeading = heading
+                if isPrecisionFindingActive, let target = selectedMember {
+                    nearbyService.updateSimulatedTelemetry(for: target, userLocation: userLocation, currentHeading: heading)
+                }
+            }
             if isPrecisionFindingActive, let target = selectedMember {
                 launchPrecisionFinding(for: target)
             } else if selectedMember == nil && members.count == 1 {
@@ -75,16 +83,20 @@ public struct FinderBeaconView: View {
         }
         .onDisappear {
             locationService?.setTacticalRadarActive(false)
+            locationService?.onHeadingUpdate = nil
             stopPrecisionFindingAction()
         }
         .onChange(of: userLocation) { _, newLoc in
             if isPrecisionFindingActive, let target = selectedMember {
-                nearbyService.updateSimulatedTelemetry(for: target, userLocation: newLoc, currentHeading: currentHeading)
+                nearbyService.updateSimulatedTelemetry(for: target, userLocation: newLoc, currentHeading: liveHeading ?? currentHeading)
             }
         }
         .onChange(of: currentHeading) { _, newHeading in
+            if liveHeading == nil {
+                self.liveHeading = newHeading
+            }
             if isPrecisionFindingActive, let target = selectedMember {
-                nearbyService.updateSimulatedTelemetry(for: target, userLocation: userLocation, currentHeading: newHeading)
+                nearbyService.updateSimulatedTelemetry(for: target, userLocation: userLocation, currentHeading: liveHeading ?? newHeading)
             }
         }
     }
@@ -178,7 +190,8 @@ public struct FinderBeaconView: View {
                         targetMember: target,
                         distanceMeters: nearbyService.currentDistance ?? computeDistance(to: target).map { Float($0) },
                         direction: nearbyService.currentDirection,
-                        horizontalAngle: nearbyService.currentHorizontalAngle ?? computeSimulatedHorizontalAngle(to: target),
+                        horizontalAngle: nearbyService.currentHorizontalAngle,
+                        simulatedAngle: computeSimulatedHorizontalAngle(to: target),
                         rangingState: nearbyService.rangingState,
                         isSimulated: nearbyService.isSimulated || !nearbyService.isSupported,
                         onStop: {
@@ -193,7 +206,7 @@ public struct FinderBeaconView: View {
                     RadarView(
                         members: members,
                         userLocation: userLocation,
-                        currentHeading: currentHeading,
+                        currentHeading: liveHeading ?? currentHeading,
                         selectedMember: $selectedMember,
                         theme: .standard,
                         userColor: userColor
@@ -458,7 +471,7 @@ public struct FinderBeaconView: View {
                 session: session,
                 transport: peerTransport,
                 userLocation: userLocation,
-                currentHeading: currentHeading
+                currentHeading: liveHeading ?? currentHeading
             )
         }
     }
@@ -482,7 +495,7 @@ public struct FinderBeaconView: View {
     private func computeRelativeBearing(to member: Member) -> Double? {
         guard let userLoc = userLocation, let friendCoord = member.coordinate else { return nil }
         let bearingToTarget = userLoc.bearing(to: friendCoord)
-        let heading = currentHeading ?? 0.0
+        let heading = liveHeading ?? currentHeading ?? 0.0
         let relative = bearingToTarget - heading
         return (relative + 360.0).truncatingRemainder(dividingBy: 360.0)
     }

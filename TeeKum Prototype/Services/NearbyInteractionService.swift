@@ -125,7 +125,11 @@ public final class NearbyInteractionService: NSObject, NISessionDelegate {
             // Dispatch urgent wire packets over local radio transport
             for payload in payloads {
                 let wireData = try encryptPayload(payload, session: groupSession, memberSlot: groupSession.memberSlot)
-                try await radioTransport.sendPacket(wireData, to: member.id)
+                do {
+                    try await radioTransport.sendPacket(wireData, to: member.id)
+                } catch {
+                    try await radioTransport.broadcastPacket(wireData)
+                }
             }
             
             // Schedule timeout watchdog
@@ -163,10 +167,10 @@ public final class NearbyInteractionService: NSObject, NISessionDelegate {
         } else {
             if self.currentDistance == nil {
                 self.currentDistance = 4.2
-                self.currentHorizontalAngle = 0.0
-                self.currentDirection = simd_float3(0, 0, -1)
-                self.lastUpdate = Date()
             }
+            self.currentHorizontalAngle = nil
+            self.currentDirection = nil
+            self.lastUpdate = Date()
         }
     }
     
@@ -184,7 +188,11 @@ public final class NearbyInteractionService: NSObject, NISessionDelegate {
                 fragmentData: Data()
             )
             if let wireData = try? encryptPayload(stopPayload, session: session, memberSlot: session.memberSlot) {
-                try? await transport.sendPacket(wireData, to: targetId)
+                do {
+                    try await transport.sendPacket(wireData, to: targetId)
+                } catch {
+                    try? await transport.broadcastPacket(wireData)
+                }
             }
         }
         
@@ -230,7 +238,11 @@ public final class NearbyInteractionService: NSObject, NISessionDelegate {
                         
                         for p in respPayloads {
                             let wireData = try encryptPayload(p, session: session, memberSlot: session.memberSlot)
-                            try await transport.sendPacket(wireData, to: fromPeerId)
+                            do {
+                                try await transport.sendPacket(wireData, to: fromPeerId)
+                            } catch {
+                                try await transport.broadcastPacket(wireData)
+                            }
                         }
                     }
                     

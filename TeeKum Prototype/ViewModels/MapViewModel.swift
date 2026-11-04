@@ -21,6 +21,10 @@ public final class MapViewModel {
         didSet {
             if let service = locationService {
                 self.isLiveSharingEnabled = service.isLiveSharingEnabled
+                self.currentHeading = service.currentHeading
+                service.onHeadingUpdate = { [weak self] heading in
+                    self?.currentHeading = heading
+                }
             }
         }
     }
@@ -40,10 +44,8 @@ public final class MapViewModel {
     /// Backing store for user location when no service is attached.
     private var _userLocation: LocationPin?
     
-    /// Current magnetic compass heading in degrees (0..<360).
-    public var currentHeading: CLLocationDirection? {
-        locationService?.currentHeading ?? userLocation?.heading
-    }
+    /// Current magnetic compass heading in degrees (0..<360), tracked for reactive UI updates.
+    public var currentHeading: CLLocationDirection?
     
     /// Current user's local location.
     public var userLocation: LocationPin? {
@@ -114,6 +116,10 @@ public final class MapViewModel {
         self.locationService = locationService
         self.isLiveSharingEnabled = locationService?.isLiveSharingEnabled ?? isLiveSharingEnabled
         self.selectedMember = selectedMember
+        self.currentHeading = locationService?.currentHeading
+        locationService?.onHeadingUpdate = { [weak self] heading in
+            self?.currentHeading = heading
+        }
     }
     
     /// Toggles the user-controlled Live Sharing master switch.

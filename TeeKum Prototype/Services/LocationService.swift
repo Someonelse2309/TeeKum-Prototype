@@ -50,6 +50,9 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     /// Latest magnetic compass heading in degrees (0..<360).
     public private(set) var currentHeading: CLLocationDirection?
     
+    /// Optional high-frequency callback invoked whenever a hardware compass heading fix is received.
+    public var onHeadingUpdate: ((CLLocationDirection) -> Void)?
+    
     /// Motion state (`true` if user is stationary/resting; `false` if walking/moving).
     public private(set) var isStationary: Bool = false
     
@@ -524,7 +527,9 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         Task { @MainActor [weak self] in
             guard let self else { return }
             guard newHeading.headingAccuracy >= 0 else { return }
-            self.currentHeading = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+            let heading = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+            self.currentHeading = heading
+            self.onHeadingUpdate?(heading)
         }
     }
     
