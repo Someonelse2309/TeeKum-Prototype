@@ -104,9 +104,10 @@ public struct LocationPublishingTests {
         if !(await testMultiSessionStreamRenewal()) { passed = false }
         if !(await testStalePeerAcceleratedCadenceAndTwoTierRecovery()) { passed = false }
         if !(await testDynamicAdaptiveAccuracyAndRadarMode()) { passed = false }
+        if !(await testPeerHeadingDegreesAndOrientationVisualization()) { passed = false }
         
         if passed {
-            print("--- [LocationPublishingTests] ALL 14 LOCATION TESTS PASSED SUCCESSFULLY! ---")
+            print("--- [LocationPublishingTests] ALL 15 LOCATION TESTS PASSED SUCCESSFULLY! ---")
         } else {
             print("--- [LocationPublishingTests] SOME LOCATION TESTS FAILED! ---")
         }
@@ -610,12 +611,12 @@ public struct LocationPublishingTests {
         )
         
         let deserializedPayload = try! LocationPingPayload.deserialize(from: decryptedData)
-        guard deserializedPayload.statusCode == .omw else {
-            print("FAILED: Status code mismatch: expected .omw, got \(deserializedPayload.statusCode)")
-            return false
-        }
         guard deserializedPayload.senderInitials == "ALX" else {
             print("FAILED: Sender initials mismatch.")
+            return false
+        }
+        guard deserializedPayload.batteryLevel == 100 else {
+            print("FAILED: Battery level mismatch: expected 100, got \(deserializedPayload.batteryLevel)")
             return false
         }
         guard abs(deserializedPayload.coordinate.latitude - coord.latitude) < 0.000002 else {
@@ -1019,6 +1020,61 @@ public struct LocationPublishingTests {
         }
         
         print("  ✓ Dynamic adaptive accuracy and Tactical Radar high-precision mode successfully validated!")
+        return true
+    }
+    
+    // MARK: - Test 15: Peer Heading & Orientation Telemetry
+    
+    @MainActor
+    public static func testPeerHeadingDegreesAndOrientationVisualization() async -> Bool {
+        print("[Test 15] Peer Heading Degrees & Orientation Telemetry...")
+        
+        let testHeadings: [(degrees: CLLocationDirection, expectedByte: UInt8)] = [
+            (0.0, 0),
+            (90.0, 64),
+            (180.0, 128),
+            (270.0, 191),
+            (359.0, 254)
+        ]
+        
+        for (degrees, _) in testHeadings {
+            let headingByte = UInt8(min(255, max(0, Int((degrees * 255.0 / 360.0).rounded()))))
+            let ping = LocationPingPayload(
+                coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+                accuracy: 5,
+                senderInitials: "BOB",
+                batteryLevel: 80,
+                heading: headingByte
+            )
+            
+            let reconstructed = ping.headingDegrees
+            let diff = abs(reconstructed - degrees)
+            // 8-bit quantization gives 360 / 255 ≈ 1.41 degrees resolution
+            guard diff <= 2.0 else {
+                print("FAILED: Heading \(degrees) reconstructed as \(reconstructed), error \(diff) > 2.0°")
+                return false
+            }
+            
+            let member = Member(
+                id: "BOB",
+                name: "Bob",
+                lastSeen: Date(),
+                coordinate: ping.coordinate,
+                horizontalAccuracy: 5.0,
+                status: UserStatus(code: .available),
+                batteryLevel: 0.8,
+                heading: ping.headingDegrees,
+                isDirectPeer: true,
+                color: .skyBlue
+            )
+            
+            guard let memHeading = member.heading, abs(memHeading - degrees) <= 2.0 else {
+                print("FAILED: Member heading \(String(describing: member.heading)) does not match target \(degrees)")
+                return false
+            }
+        }
+        
+        print("  ✓ Peer heading degrees quantization, reconstruction, and Member orientation telemetry verified!")
         return true
     }
 }

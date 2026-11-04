@@ -533,6 +533,8 @@ public final class MeshDebuggerViewModel: @unchecked Sendable {
                     payloadSummary = "SOS [\(sos.senderInitials)] Type:\(sos.emergencyType.title) EventID:0x\(String(format: "%06X", sos.sosEventId))"
                 } else if pType == .ack, let ack = try? ACKPayload.deserialize(from: decrypted) {
                     payloadSummary = "ACK [\(ack.responderInitials)] for seq:\(ack.ackedSeqNumber) status:\(ack.ackStatus)"
+                } else if pType == .chatMessage, let chat = try? ChatMessagePayload.deserialize(from: decrypted) {
+                    payloadSummary = "Chat [\(chat.senderInitials)] \"\(chat.text)\""
                 }
             }
         }

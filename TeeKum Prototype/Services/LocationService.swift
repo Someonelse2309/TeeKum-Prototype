@@ -75,6 +75,9 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     /// True when device battery is <20% or in Low Power Mode (Festival Survival Mode).
     public private(set) var isSurvivalModeActive: Bool = false
     
+    /// True when device is in iOS Low Power Mode.
+    public private(set) var isLowPowerMode: Bool = false
+    
     /// Current device battery percentage (0.0 ... 1.0).
     public private(set) var currentBatteryLevel: Float = 1.0
     
@@ -184,7 +187,35 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
         }
         #endif
         
+        #if canImport(UIKit)
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePowerOrBatteryChange),
+            name: NSNotification.Name.NSProcessInfoPowerStateDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePowerOrBatteryChange),
+            name: UIDevice.batteryLevelDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePowerOrBatteryChange),
+            name: UIDevice.batteryStateDidChangeNotification,
+            object: nil
+        )
+        #endif
+        
         updateBatteryState()
+    }
+    
+    deinit {
+        #if canImport(UIKit)
+        NotificationCenter.default.removeObserver(self)
+        #endif
     }
     
     // MARK: - Computed Properties for UI
@@ -642,6 +673,12 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     
     // MARK: - Battery & Survival Mode Monitoring
     
+    @objc private nonisolated func handlePowerOrBatteryChange() {
+        Task { @MainActor [weak self] in
+            self?.updateBatteryState()
+        }
+    }
+    
     public func updateBatteryState() {
         #if canImport(UIKit)
         UIDevice.current.isBatteryMonitoringEnabled = true
@@ -659,6 +696,7 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     
     public func applyBatteryLevel(_ level: Float, isLowPower: Bool = false) {
         self.currentBatteryLevel = min(1.0, max(0.0, level))
+        self.isLowPowerMode = isLowPower
         let survival = (currentBatteryLevel < 0.20) || isLowPower
         
         if isSurvivalModeActive != survival {

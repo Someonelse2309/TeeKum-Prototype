@@ -88,3 +88,25 @@ public nonisolated struct SessionActivityAttributes: ActivityAttributes, Sendabl
         self.userInitials = userInitials
     }
 }
+
+// MARK: - AppIntent for Live Activity Interactive Controls
+
+import AppIntents
+
+public struct EndSessionIntent: AppIntent {
+    public static var title: LocalizedStringResource = "End Session"
+    public static var description = IntentDescription("Ends the active TeeKum festival session and dismisses the Live Activity.")
+    public static var isDiscoverable: Bool = false
+    public static var openAppWhenRun: Bool = false
+    
+    public init() {}
+    
+    public func perform() async throws -> some IntentResult {
+        UserDefaults.standard.removeObject(forKey: "com.teekum.activeGroupSession")
+        for activity in Activity<SessionActivityAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        return .result()
+    }
+}
+

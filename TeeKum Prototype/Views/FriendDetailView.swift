@@ -231,6 +231,25 @@ public struct FriendDetailView: View {
                         .foregroundStyle(.gray)
                 }
             }
+            
+            // Facing Orientation / Heading
+            if let heading = member.heading {
+                HStack {
+                    Text("Facing Orientation")
+                        .font(.footnote)
+                        .foregroundStyle(.gray)
+                    Spacer()
+                    HStack(spacing: 5) {
+                        Image(systemName: "location.north.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(member.color.swiftUIColor)
+                            .rotationEffect(.degrees(heading))
+                        Text(String(format: "%.0f° (%@)", heading, cardinalDirection(heading)))
+                            .font(.footnote.bold())
+                            .foregroundStyle(.white)
+                    }
+                }
+            }
         }
         .padding()
         .background(Color(white: 0.1))

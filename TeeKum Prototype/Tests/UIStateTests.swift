@@ -384,14 +384,24 @@ public struct UIStateTests {
             return false
         }
         
+        let targetCoord = CLLocationCoordinate2D(latitude: 33.6820, longitude: -116.2350)
+        let meetupDate = Date().addingTimeInterval(1800) // in 30 mins
+        
         mpVM.proposeMeetingPoint(
-            name: "Stage 2 Sound Booth",
-            coordinate: CLLocationCoordinate2D(latitude: 33.6820, longitude: -116.2350),
-            proposerId: "ALX"
+            coordinate: targetCoord,
+            meetupTime: meetupDate,
+            isRightNow: false,
+            anchorToProposerGPS: false,
+            proposerId: "ALX",
+            arrivalRadiusMeters: 25.0
         )
         
-        guard let active = mpVM.activeMeetingPoint, active.name == "Stage 2 Sound Booth" else {
+        guard let active = mpVM.activeMeetingPoint else {
             print("FAILED: active meeting point should be set")
+            return false
+        }
+        guard active.proposerId == "ALX", active.title == "ALX's Meetup" else {
+            print("FAILED: active meeting point title mismatch, got '\(active.title)'")
             return false
         }
         guard mpVM.localAttendanceStatus == .attending else {
@@ -406,76 +416,48 @@ public struct UIStateTests {
             return false
         }
         
-        // Single active rule: Cancel
-        mpVM.cancelMeetingPoint()
-        guard mpVM.activeMeetingPoint == nil, mpVM.localAttendanceStatus == nil else {
-            print("FAILED: cancel should remove active meeting point")
+        // Auto-arrival detection test: user far away (150m) -> no arrival
+        let farUserLocation = CLLocationCoordinate2D(latitude: 33.6835, longitude: -116.2350)
+        mpVM.checkArrival(userLocation: farUserLocation)
+        guard mpVM.localAttendanceStatus == .attending else {
+            print("FAILED: user should not be marked arrived when far away")
             return false
         }
         
-        // Map-dropped pin proposal with coordinate formatting
-        let droppedCoord = CLLocationCoordinate2D(latitude: 33.6841, longitude: -116.2369)
-        let defaultFormattedName = String(format: "Meeting Point (%.4f, %.4f)", droppedCoord.latitude, droppedCoord.longitude)
+        // Auto-arrival detection test: user within 25m -> marked arrived (.atMeetingPoint)
+        let closeUserLocation = CLLocationCoordinate2D(latitude: 33.68205, longitude: -116.23502) // ~8 meters
+        mpVM.checkArrival(userLocation: closeUserLocation)
+        guard mpVM.localAttendanceStatus == .atMeetingPoint else {
+            print("FAILED: user within arrival radius should be automatically marked .atMeetingPoint")
+            return false
+        }
+        
+        // Auto-expiration test: expired meeting point (> 1 hour past target time)
+        let expiredCoord = CLLocationCoordinate2D(latitude: 33.6810, longitude: -116.2340)
+        let pastDate = Date().addingTimeInterval(-3700) // 1 hour 1 min in the past
         mpVM.proposeMeetingPoint(
-            name: defaultFormattedName,
-            coordinate: droppedCoord,
+            coordinate: expiredCoord,
+            meetupTime: pastDate,
+            isRightNow: false,
+            anchorToProposerGPS: false,
             proposerId: "ALX"
         )
-        guard let mapActive = mpVM.activeMeetingPoint, mapActive.name == defaultFormattedName else {
-            print("FAILED: map-dropped meeting point name mismatch")
+        guard let expiredPoint = mpVM.activeMeetingPoint, expiredPoint.isExpired else {
+            print("FAILED: meeting point in the past must evaluate isExpired == true")
             return false
         }
-        guard abs(mapActive.coordinate.latitude - 33.6841) < 0.0001,
-              abs(mapActive.coordinate.longitude - (-116.2369)) < 0.0001 else {
-            print("FAILED: map-dropped meeting point coordinate mismatch")
-            return false
-        }
-        
-        // Replace active meeting point directly (seamless overwrite)
-        let replacedCoord = CLLocationCoordinate2D(latitude: 33.6822, longitude: -116.2355)
-        mpVM.proposeMeetingPoint(
-            name: "Main Stage Sound Booth",
-            coordinate: replacedCoord,
-            proposerId: "ALX",
-            landmarkId: 1
-        )
-        guard let replacedActive = mpVM.activeMeetingPoint, replacedActive.name == "Main Stage Sound Booth" else {
-            print("FAILED: active meeting point was not replaced cleanly")
-            return false
-        }
-        guard replacedActive.landmarkId == 1 else {
-            print("FAILED: landmarkId was not preserved on replaced point")
+        mpVM.checkExpiration()
+        guard mpVM.activeMeetingPoint == nil else {
+            print("FAILED: checkExpiration should clear expired rendezvous point")
             return false
         }
         
         // Clean up
         mpVM.cancelMeetingPoint()
-        
-        // Premade Meeting Location Dropdown Verification
-        guard PremadeMeetingLocation.defaultName == "Meeting Point" else {
-            print("FAILED: PremadeMeetingLocation defaultName must be 'Meeting Point'")
+        guard mpVM.activeMeetingPoint == nil, mpVM.localAttendanceStatus == nil else {
+            print("FAILED: cancel should remove active meeting point")
             return false
         }
-        guard PremadeMeetingLocation.allLocations.first == "Meeting Point" else {
-            print("FAILED: PremadeMeetingLocation first option must be 'Meeting Point'")
-            return false
-        }
-        guard PremadeMeetingLocation.allLocations.contains("Ferris Wheel"),
-              PremadeMeetingLocation.allLocations.contains("Main Stage Sound Booth") else {
-            print("FAILED: PremadeMeetingLocation missing key festival landmarks")
-            return false
-        }
-        
-        mpVM.proposeMeetingPoint(
-            name: PremadeMeetingLocation.defaultName,
-            coordinate: CLLocationCoordinate2D(latitude: 33.6820, longitude: -116.2350),
-            proposerId: "ALX"
-        )
-        guard mpVM.activeMeetingPoint?.name == "Meeting Point" else {
-            print("FAILED: default dropdown meeting point proposal failed")
-            return false
-        }
-        mpVM.cancelMeetingPoint()
         
         print("PASSED: testMeetingPointProposalAndAttendance")
         return true
@@ -754,14 +736,16 @@ public struct UIStateTests {
             transport: hostTransport
         )
         
-        // 1. Propose meeting point at Main Stage Sound Booth (Landmark ID 1)
+        // 1. Propose meeting point
         let coord = CLLocationCoordinate2D(latitude: 33.6822, longitude: -116.2355)
+        let meetupDate = Date().addingTimeInterval(1800)
         hostVM.proposeMeetingPoint(
-            name: "Main Stage Sound Booth",
             coordinate: coord,
-            targetTime: Date(timeIntervalSince1970: 1729000000),
+            meetupTime: meetupDate,
+            isRightNow: false,
+            anchorToProposerGPS: false,
             proposerId: "ALX",
-            landmarkId: 1
+            arrivalRadiusMeters: 25.0
         )
         
         // Allow async broadcast Task to execute
@@ -825,8 +809,8 @@ public struct UIStateTests {
             print("FAILED: Sender initials mismatch, got \(update.senderInitials)")
             return false
         }
-        guard update.landmarkId == 1 else {
-            print("FAILED: Landmark ID mismatch, got \(String(describing: update.landmarkId))")
+        guard update.arrivalRadiusMeters == 25 else {
+            print("FAILED: Arrival radius mismatch, got \(update.arrivalRadiusMeters)")
             return false
         }
         
@@ -846,8 +830,8 @@ public struct UIStateTests {
         )
         
         peerVM.applyInboundUpdate(update)
-        guard let peerActive = peerVM.activeMeetingPoint, peerActive.name == "Main Stage Sound Booth" else {
-            print("FAILED: Peer VM active meeting point name should be resolved from landmark ID")
+        guard let peerActive = peerVM.activeMeetingPoint, peerActive.title == "ALX's Meetup" else {
+            print("FAILED: Peer VM active meeting point title should be ALX's Meetup")
             return false
         }
         guard peerActive.proposerId == "ALX" else {

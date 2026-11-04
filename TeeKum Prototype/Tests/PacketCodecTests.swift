@@ -7,6 +7,7 @@
 
 import Foundation
 import CoreLocation
+import CryptoKit
 
 /// Exhaustive Test Suite for Packet Serialization, Deserialization, and Boundary Verification.
 public enum PacketCodecTests {
@@ -31,6 +32,12 @@ public enum PacketCodecTests {
         if !testDeterministicTestVector() { passed = false }
         if !testInitialsCodecBase26() { passed = false }
         if !testMemberColorPayloadRoundtripAndInitialsHashFallback() { passed = false }
+        if !testChatMessagePayloadSerializationRoundtrip() { passed = false }
+        if !testChatMessagePayloadUTF8EncodingAndMultiByte() { passed = false }
+        if !testChatMessagePayloadMalformedInputsAndValidation() { passed = false }
+        if !testChatMessageWirePacketRoundtripAndCryptoAEAD() { passed = false }
+        if !testLocationPingOptionBContiguousPackingAndRegression() { passed = false }
+        if !testAllExistingPacketTypesRegression() { passed = false }
         
         print("========================================")
         print(passed ? "ALL CODEC TESTS PASSED SUCCESSFULLY!" : "CODEC TESTS FAILED!")
@@ -256,11 +263,10 @@ public enum PacketCodecTests {
             coordinate: coordinate,
             timestamp: timestamp,
             accuracy: 8,
-            statusCode: .gettingDrinks,
-            targetRefId: 0xCAFEBABE,
             senderInitials: "DNA",
             batteryLevel: 85,
-            heading: 180
+            heading: 180,
+            colorCode: 0
         )
         
         let data = payload.serialize()
@@ -279,8 +285,6 @@ public enum PacketCodecTests {
                 return false
             }
             guard decoded.accuracy == 8,
-                  decoded.statusCode == .gettingDrinks,
-                  decoded.targetRefId == 0xCAFEBABE,
                   decoded.senderInitials == "DNA",
                   decoded.batteryLevel == 85,
                   decoded.heading == 180 else {
@@ -380,11 +384,14 @@ public enum PacketCodecTests {
         let payload = MeetingUpdatePayload(
             coordinate: coord,
             meetupTime: Date(timeIntervalSince1970: 1729003600),
+            createdAt: Date(timeIntervalSince1970: 1729000000),
             action: .accept,
             attendanceStatus: .attending,
             meetingPointId: 0x55556666,
             senderInitials: "SAM",
-            landmarkId: 0x00000001
+            arrivalRadiusMeters: 25,
+            isRightNow: false,
+            anchorToProposerGPS: true
         )
         
         let data = payload.serialize()
@@ -399,7 +406,9 @@ public enum PacketCodecTests {
                   decoded.senderInitials == "SAM",
                   decoded.action == .accept,
                   decoded.attendanceStatus == .attending,
-                  decoded.landmarkId == 0x00000001 else {
+                  decoded.arrivalRadiusMeters == 25,
+                  decoded.anchorToProposerGPS == true,
+                  decoded.isRightNow == false else {
                 print("  FAIL: MeetingUpdate decoded payload fields mismatch.")
                 return false
             }
@@ -641,9 +650,9 @@ public enum PacketCodecTests {
             return false
         }
         
-        // Byte 22 must contain MemberColor.neonPink.rawValue (0x01)
-        guard pingData[22] == MemberColor.neonPink.rawValue else {
-            print("  FAIL: Byte 22 expected \(MemberColor.neonPink.rawValue), got \(pingData[22])")
+        // Byte 17 must contain MemberColor.neonPink.rawValue (0x01) in Option B layout
+        guard pingData[17] == MemberColor.neonPink.rawValue else {
+            print("  FAIL: Byte 17 expected \(MemberColor.neonPink.rawValue), got \(pingData[17])")
             return false
         }
         
@@ -714,8 +723,8 @@ public enum PacketCodecTests {
             colorCode: 0 // Legacy 0x00
         )
         let legacyData = legacyPing.serialize()
-        guard legacyData[22] == 0x00 else {
-            print("  FAIL: Legacy ping Byte 22 should be 0x00")
+        guard legacyData[17] == 0x00 else {
+            print("  FAIL: Legacy ping Byte 17 should be 0x00")
             return false
         }
         
@@ -757,6 +766,580 @@ public enum PacketCodecTests {
         }
         
         print("  PASS: MemberColor payload roundtrip, legacy backward compatibility, and deterministic hashing verified.")
+        return true
+    }
+    
+    // MARK: - Test 15: ChatMessagePayload Serialization & Deserialization Roundtrip
+    
+    public static func testChatMessagePayloadSerializationRoundtrip() -> Bool {
+        print("[Test 15] ChatMessagePayload 30-byte serialization and roundtrip...")
+        
+        let testCases: [(initials: String, text: String)] = [
+            ("NIC", ""), // 0 bytes text
+            ("A", "H"), // 1 byte text
+            ("AB", "Stage 2"), // 7 bytes text
+            ("DNA", "Beer? Stage 2 - OMW"), // 19 bytes text
+            ("ALX", "12345678901234567890"), // exactly 20 bytes text
+            ("SAM", ChatMessagePayload.presetBeerLine), // 9 bytes
+            ("BOB", ChatMessagePayload.presetAtMainStage), // 13 bytes
+            ("CHA", ChatMessagePayload.presetRestroom), // 8 bytes
+            ("DAN", ChatMessagePayload.presetWhereAreYou), // 14 bytes
+            ("EVE", ChatMessagePayload.presetOnMyWay), // 9 bytes
+            ("FRANK", ChatMessagePayload.presetLost) // 4 bytes (initials sanitized to FRA)
+        ]
+        
+        let timestamp = Date(timeIntervalSince1970: 1730005000)
+        
+        for (initials, text) in testCases {
+            let payload = ChatMessagePayload(
+                senderInitials: initials,
+                timestamp: timestamp,
+                text: text
+            )
+            
+            do {
+                let data = try payload.serialize()
+                guard data.count == PacketConstants.encryptedPayloadSize else {
+                    print("  FAIL: ChatMessagePayload serialized count must be exactly 30 bytes, got \(data.count)")
+                    return false
+                }
+                
+                // Verify byte 6 contains exact text length in bytes
+                let expectedLen = UInt8(text.utf8.count)
+                guard data[6] == expectedLen else {
+                    print("  FAIL: Byte 6 expected length \(expectedLen), got \(data[6])")
+                    return false
+                }
+                
+                // Verify bytes 27..29 are zero padding
+                guard data[27] == 0 && data[28] == 0 && data[29] == 0 else {
+                    print("  FAIL: Reserved bytes 27..29 must be zero padding")
+                    return false
+                }
+                
+                // Verify unused text bytes are zero-padded
+                for i in (7 + Int(expectedLen))..<27 {
+                    guard data[i] == 0 else {
+                        print("  FAIL: Unused text byte at index \(i) was not zero-padded")
+                        return false
+                    }
+                }
+                
+                let decoded = try ChatMessagePayload.deserialize(from: data)
+                let expectedInitials = InitialsCodec.sanitize(initials)
+                guard decoded.senderInitials == expectedInitials else {
+                    print("  FAIL: Decoded initials '\(decoded.senderInitials)' != expected '\(expectedInitials)'")
+                    return false
+                }
+                guard abs(decoded.timestamp.timeIntervalSince1970 - timestamp.timeIntervalSince1970) < 1.0 else {
+                    print("  FAIL: Timestamp mismatch")
+                    return false
+                }
+                guard decoded.text == text else {
+                    print("  FAIL: Decoded text '\(decoded.text)' != expected '\(text)'")
+                    return false
+                }
+            } catch {
+                print("  FAIL: Serialization or deserialization threw: \(error)")
+                return false
+            }
+        }
+        
+        print("  PASS: ChatMessagePayload 30-byte roundtrip verified across ASCII, presets, and boundaries.")
+        return true
+    }
+    
+    // MARK: - Test 16: ChatMessagePayload UTF-8 Multi-Byte Encoding & Emoji Clamping
+    
+    public static func testChatMessagePayloadUTF8EncodingAndMultiByte() -> Bool {
+        print("[Test 16] ChatMessagePayload UTF-8 multi-byte encoding and byte-boundary clamping...")
+        
+        let ts = Date(timeIntervalSince1970: 1730006000)
+        
+        // 1. Accented characters (2-byte UTF-8): "Café 10" -> C(1)+a(1)+f(1)+é(2)+ (1)+1(1)+0(1) = 8 bytes
+        let cafePayload = ChatMessagePayload(senderInitials: "ALX", timestamp: ts, text: "Café 10")
+        do {
+            let data = try cafePayload.serialize()
+            guard data[6] == 8 else {
+                print("  FAIL: Expected 8 UTF-8 bytes for 'Café 10', got \(data[6])")
+                return false
+            }
+            let decoded = try ChatMessagePayload.deserialize(from: data)
+            guard decoded.text == "Café 10" else {
+                print("  FAIL: Decoded accented text mismatch")
+                return false
+            }
+        } catch {
+            print("  FAIL: Accented UTF-8 test failed: \(error)")
+            return false
+        }
+        
+        // 2. Standard 4-byte emoji: "Beer 🍺" -> B(1)+e(1)+e(1)+r(1)+ (1)+🍺(4) = 9 bytes
+        let emojiPayload = ChatMessagePayload(senderInitials: "NIC", timestamp: ts, text: "Beer 🍺")
+        do {
+            let data = try emojiPayload.serialize()
+            guard data[6] == 9 else {
+                print("  FAIL: Expected 9 UTF-8 bytes for 'Beer 🍺', got \(data[6])")
+                return false
+            }
+            let decoded = try ChatMessagePayload.deserialize(from: data)
+            guard decoded.text == "Beer 🍺" else {
+                print("  FAIL: Decoded emoji text mismatch")
+                return false
+            }
+        } catch {
+            print("  FAIL: Emoji UTF-8 test failed: \(error)")
+            return false
+        }
+        
+        // 3. Exactly 5 emojis (5 * 4 = 20 bytes): "🍺🎉🎸🍕🎪"
+        let maxEmojiPayload = ChatMessagePayload(senderInitials: "BOB", timestamp: ts, text: "🍺🎉🎸🍕🎪")
+        do {
+            guard maxEmojiPayload.text.utf8.count == 20 else {
+                print("  FAIL: 5 emojis must equal exactly 20 bytes")
+                return false
+            }
+            let data = try maxEmojiPayload.serialize()
+            guard data[6] == 20 else {
+                print("  FAIL: Expected 20 UTF-8 bytes, got \(data[6])")
+                return false
+            }
+            let decoded = try ChatMessagePayload.deserialize(from: data)
+            guard decoded.text == "🍺🎉🎸🍕🎪" else {
+                print("  FAIL: Decoded 20-byte emoji sequence mismatch")
+                return false
+            }
+        } catch {
+            print("  FAIL: 20-byte emoji test failed: \(error)")
+            return false
+        }
+        
+        // 4. Clamping helper: clampTo20Bytes should not bisect multi-byte code points
+        // 18 ASCII characters + 4-byte emoji = 22 bytes -> clamped must be 18 ASCII chars
+        let longMixed = "123456789012345678🍺"
+        let clamped = ChatMessagePayload.clampTo20Bytes(longMixed)
+        guard clamped.utf8.count <= 20 else {
+            print("  FAIL: Clamped UTF-8 bytes > 20: \(clamped.utf8.count)")
+            return false
+        }
+        guard clamped == "123456789012345678" else {
+            print("  FAIL: Clamped text should have excluded partial emoji: '\(clamped)'")
+            return false
+        }
+        
+        // 6 emojis (24 bytes) -> clamped to 5 emojis (20 bytes)
+        let sixEmojis = "🍺🎉🎸🍕🎪🔥"
+        let clampedEmojis = ChatMessagePayload.clampTo20Bytes(sixEmojis)
+        guard clampedEmojis.utf8.count == 20 && clampedEmojis == "🍺🎉🎸🍕🎪" else {
+            print("  FAIL: Clamped 6 emojis expected 5 emojis (20B), got '\(clampedEmojis)'")
+            return false
+        }
+        
+        print("  PASS: UTF-8 multi-byte encoding, emoji byte counts, and boundary clamping verified.")
+        return true
+    }
+    
+    // MARK: - Test 17: ChatMessagePayload Malformed Inputs & Bounds Validation
+    
+    public static func testChatMessagePayloadMalformedInputsAndValidation() -> Bool {
+        print("[Test 17] ChatMessagePayload malformed inputs and error handling...")
+        
+        let validPayload = ChatMessagePayload(senderInitials: "DNA", text: "Hello")
+        let validData = validPayload.serializeUnchecked()
+        
+        // 1. Buffer underflow: data count < 30 bytes
+        let shortData = validData.prefix(29)
+        do {
+            _ = try ChatMessagePayload.deserialize(from: shortData)
+            print("  FAIL: Short data (<30 bytes) should throw bufferUnderflow")
+            return false
+        } catch PacketCodecError.bufferUnderflow {
+            // Expected
+        } catch {
+            print("  FAIL: Unexpected error for buffer underflow: \(error)")
+            return false
+        }
+        
+        // 2. Length field exceeding 20 bytes (e.g. data[6] = 21)
+        var invalidLenData = validData
+        invalidLenData[6] = 21
+        do {
+            _ = try ChatMessagePayload.deserialize(from: invalidLenData)
+            print("  FAIL: Text length 21 should throw invalidTextLength")
+            return false
+        } catch PacketCodecError.invalidTextLength(let len) where len == 21 {
+            // Expected
+        } catch {
+            print("  FAIL: Unexpected error for invalid text length: \(error)")
+            return false
+        }
+        
+        // Length field = 255
+        invalidLenData[6] = 255
+        do {
+            _ = try ChatMessagePayload.deserialize(from: invalidLenData)
+            print("  FAIL: Text length 255 should throw invalidTextLength")
+            return false
+        } catch PacketCodecError.invalidTextLength(let len) where len == 255 {
+            // Expected
+        } catch {
+            print("  FAIL: Unexpected error for invalid text length 255: \(error)")
+            return false
+        }
+        
+        // 3. Malformed UTF-8 text bytes
+        // Set text length = 2, and put an invalid UTF-8 sequence [0xFF, 0x00]
+        var malformedUtf8Data = validData
+        malformedUtf8Data[6] = 2
+        malformedUtf8Data[7] = 0xFF
+        malformedUtf8Data[8] = 0x00
+        do {
+            _ = try ChatMessagePayload.deserialize(from: malformedUtf8Data)
+            print("  FAIL: Malformed UTF-8 bytes should throw invalidTextEncoding")
+            return false
+        } catch PacketCodecError.invalidTextEncoding {
+            // Expected
+        } catch {
+            print("  FAIL: Unexpected error for malformed UTF-8: \(error)")
+            return false
+        }
+        
+        // 4. Serialization with text exceeding 20 bytes throws invalidTextLength
+        let longText = "This text is definitely way longer than twenty bytes!"
+        let oversizedPayload = ChatMessagePayload(senderInitials: "NIC", text: longText)
+        do {
+            _ = try oversizedPayload.serialize()
+            print("  FAIL: Oversized text serialization should throw invalidTextLength")
+            return false
+        } catch PacketCodecError.invalidTextLength(let count) where count == longText.utf8.count {
+            // Expected
+        } catch {
+            print("  FAIL: Unexpected error for oversized serialization: \(error)")
+            return false
+        }
+        
+        // 5. serializeUnchecked clamps oversized text to at most 20 bytes
+        let clampedSerialized = oversizedPayload.serializeUnchecked()
+        guard clampedSerialized.count == 30 else {
+            print("  FAIL: serializeUnchecked count should be 30 bytes")
+            return false
+        }
+        guard clampedSerialized[6] == 20 else {
+            print("  FAIL: serializeUnchecked byte 6 should be clamped to 20, got \(clampedSerialized[6])")
+            return false
+        }
+        
+        // 6. Strict deserialization rejects corrupted reserved padding (Bytes 27..29)
+        var corruptedReservedData = validData
+        corruptedReservedData[27] = 0xAA
+        guard !ChatMessagePayload.hasValidReservedPadding(in: corruptedReservedData) else {
+            print("  FAIL: hasValidReservedPadding should be false when byte 27 is corrupted")
+            return false
+        }
+        do {
+            _ = try ChatMessagePayload.deserializeStrict(from: corruptedReservedData)
+            print("  FAIL: deserializeStrict should reject corrupted reserved padding")
+            return false
+        } catch PacketCodecError.payloadDeserializationFailed {
+            // Expected
+        } catch {
+            print("  FAIL: Unexpected error for strict deserialization: \(error)")
+            return false
+        }
+        
+        // 7. Strict deserialization rejects non-zero unused text padding
+        // For text "Hello" (length 5), byte 15 is unused and should be 0
+        var corruptedUnusedPadding = validData
+        corruptedUnusedPadding[15] = 0x01
+        guard !ChatMessagePayload.hasValidReservedPadding(in: corruptedUnusedPadding) else {
+            print("  FAIL: hasValidReservedPadding should be false when unused padding is corrupted")
+            return false
+        }
+        
+        print("  PASS: All malformed, underflow, oversized, and reserved padding errors rejected safely.")
+        return true
+    }
+    
+    // MARK: - Test 18: Chat Wire Packet Layout & ChaCha20-Poly1305 AEAD Cryptography
+    
+    public static func testChatMessageWirePacketRoundtripAndCryptoAEAD() -> Bool {
+        print("[Test 18] Chat wire packet 56-byte layout and ChaCha20-Poly1305 AEAD sealing...")
+        
+        let key = SymmetricKey(size: .bits256)
+        let sessionId: UInt16 = 0xCAFE
+        let sequenceNumber: UInt32 = CleartextEnvelope.makeSequenceNumber(memberSlot: 5, counter: 101)
+        
+        let envelope = CleartextEnvelope(
+            version: PacketConstants.protocolVersion,
+            type: .chatMessage,
+            hopLimit: 8,
+            hopCount: 0,
+            sessionId: sessionId,
+            sequenceNumber: sequenceNumber
+        )
+        
+        // 1. Verify envelope serialization: byte 0 must be 0x37 (version 3 | type 7)
+        let envData = envelope.serialize()
+        guard envData.count == 10 else {
+            print("  FAIL: Envelope must be 10 bytes, got \(envData.count)")
+            return false
+        }
+        guard envData[0] == 0x37 else {
+            print("  FAIL: Expected byte 0 to be 0x37, got 0x\(String(format: "%02X", envData[0]))")
+            return false
+        }
+        
+        // 2. Nonce test: domain tag "TKM3" and type 0x37
+        let nonce = envelope.constructNonce()
+        guard nonce.count == 12 else {
+            print("  FAIL: Nonce must be 12 bytes")
+            return false
+        }
+        guard nonce[7] == 0x37 else {
+            print("  FAIL: Nonce byte 7 must be 0x37")
+            return false
+        }
+        
+        // 3. Seal ChatMessagePayload using ChaChaPoly
+        let chat = ChatMessagePayload(senderInitials: "SAM", text: "Beer line")
+        guard let plainPayload = try? chat.serialize() else {
+            print("  FAIL: Chat serialization failed")
+            return false
+        }
+        
+        let aad = envelope.authenticatedAssociatedData()
+        guard aad.count == 10, aad[0] == 0x37, aad[2] == 0x00 else {
+            print("  FAIL: AAD malformed for chat packet")
+            return false
+        }
+        
+        do {
+            let chachaNonce = try ChaChaPoly.Nonce(data: nonce)
+            let sealed = try ChaChaPoly.seal(plainPayload, using: key, nonce: chachaNonce, authenticating: aad)
+            
+            guard sealed.ciphertext.count == 30 else {
+                print("  FAIL: Ciphertext must be 30 bytes, got \(sealed.ciphertext.count)")
+                return false
+            }
+            guard sealed.tag.count == 16 else {
+                print("  FAIL: Auth tag must be 16 bytes, got \(sealed.tag.count)")
+                return false
+            }
+            
+            // 4. Form 56-byte RawWirePacket
+            let rawPacket = RawWirePacket(envelope: envelope, ciphertext: sealed.ciphertext, authTag: sealed.tag)
+            let wireBytes = try rawPacket.toWireData()
+            guard wireBytes.count == 56 else {
+                print("  FAIL: Total wire packet must be exactly 56 bytes, got \(wireBytes.count)")
+                return false
+            }
+            
+            // 5. Parse 56 bytes back
+            let parsedRaw = try RawWirePacket.fromWireData(wireBytes)
+            guard parsedRaw.envelope.type == .chatMessage else {
+                print("  FAIL: Parsed envelope type should be .chatMessage")
+                return false
+            }
+            guard parsedRaw.envelope.sessionId == sessionId else {
+                print("  FAIL: SessionId mismatch")
+                return false
+            }
+            
+            // 6. Simulate mesh relay hop: mutate hopCount to 1
+            var relayedEnvelope = parsedRaw.envelope
+            relayedEnvelope.hopCount = 1
+            
+            // Decrypt with mutated hopCount: AAD normalizes hopCount to 0x00, so opening succeeds
+            let relayedAAD = relayedEnvelope.authenticatedAssociatedData()
+            let openedBox = try ChaChaPoly.SealedBox(nonce: chachaNonce, ciphertext: parsedRaw.ciphertext, tag: parsedRaw.authTag)
+            let decryptedData = try ChaChaPoly.open(openedBox, using: key, authenticating: relayedAAD)
+            
+            guard decryptedData == plainPayload else {
+                print("  FAIL: Decrypted payload != original plain bytes")
+                return false
+            }
+            
+            let decodedChat = try ChatMessagePayload.deserialize(from: decryptedData)
+            guard decodedChat.senderInitials == "SAM", decodedChat.text == "Beer line" else {
+                print("  FAIL: Decoded chat fields mismatch")
+                return false
+            }
+            
+            // 7. Tampering verification: mutate hopLimit in cleartext envelope
+            var tamperedEnvelope = relayedEnvelope
+            tamperedEnvelope.hopLimit = 15 // Attacker altered hopLimit
+            let tamperedAAD = tamperedEnvelope.authenticatedAssociatedData()
+            do {
+                _ = try ChaChaPoly.open(openedBox, using: key, authenticating: tamperedAAD)
+                print("  FAIL: Tampered hopLimit should have failed MAC verification")
+                return false
+            } catch {
+                // Expected Poly1305 MAC failure
+            }
+            
+            print("  PASS: 56-byte chat wire packet, AEAD authentication, hop masking, and tamper rejection verified.")
+            return true
+        } catch {
+            print("  FAIL: Exception in AEAD roundtrip: \(error)")
+            return false
+        }
+    }
+    
+    // MARK: - Test 19: LocationPing Option B Contiguous Packing & Reserved Padding
+    
+    public static func testLocationPingOptionBContiguousPackingAndRegression() -> Bool {
+        print("[Test 19] LocationPing Option B contiguous packing and 12-byte reserved padding...")
+        
+        let coord = CLLocationCoordinate2D(latitude: 37.774929, longitude: -122.419416)
+        let ts = Date(timeIntervalSince1970: 1730007000)
+        
+        let ping = LocationPingPayload(
+            coordinate: coord,
+            timestamp: ts,
+            accuracy: 6,
+            senderInitials: "DNA",
+            batteryLevel: 92,
+            heading: 240,
+            colorCode: MemberColor.skyBlue.rawValue
+        )
+        
+        let data = ping.serialize()
+        guard data.count == 30 else {
+            print("  FAIL: Option B LocationPing serialized size must be exactly 30 bytes, got \(data.count)")
+            return false
+        }
+        
+        // Verify byte positions:
+        // Byte 12: accuracy = 6
+        guard data[12] == 6 else {
+            print("  FAIL: Byte 12 expected accuracy 6, got \(data[12])")
+            return false
+        }
+        // Bytes 13..14: senderInitials "DNA"
+        let initialBytes = [data[13], data[14]]
+        guard InitialsCodec.decode(initialBytes) == "DNA" else {
+            print("  FAIL: Bytes 13..14 initials mismatch")
+            return false
+        }
+        // Byte 15: battery = 92
+        guard data[15] == 92 else {
+            print("  FAIL: Byte 15 expected battery 92, got \(data[15])")
+            return false
+        }
+        // Byte 16: heading = 240
+        guard data[16] == 240 else {
+            print("  FAIL: Byte 16 expected heading 240, got \(data[16])")
+            return false
+        }
+        // Byte 17: colorCode = skyBlue
+        guard data[17] == MemberColor.skyBlue.rawValue else {
+            print("  FAIL: Byte 17 expected colorCode \(MemberColor.skyBlue.rawValue), got \(data[17])")
+            return false
+        }
+        // Bytes 18..29: exactly 12 contiguous zero bytes reserved
+        let reservedSlice = data.subdata(in: 18..<30)
+        guard reservedSlice.count == 12 && reservedSlice.allSatisfy({ $0 == 0 }) else {
+            print("  FAIL: Bytes 18..29 must be 12 zero reserved bytes")
+            return false
+        }
+        
+        do {
+            let decoded = try LocationPingPayload.deserialize(from: data)
+            guard abs(decoded.coordinate.latitude - coord.latitude) < 0.000002,
+                  abs(decoded.coordinate.longitude - coord.longitude) < 0.000002,
+                  decoded.accuracy == 6,
+                  decoded.senderInitials == "DNA",
+                  decoded.batteryLevel == 92,
+                  decoded.heading == 240,
+                  decoded.colorCode == MemberColor.skyBlue.rawValue else {
+                print("  FAIL: Decoded Option B fields mismatch")
+                return false
+            }
+            
+            // Check underflow
+            let truncated = data.prefix(29)
+            do {
+                _ = try LocationPingPayload.deserialize(from: truncated)
+                print("  FAIL: Truncated location ping should throw bufferUnderflow")
+                return false
+            } catch PacketCodecError.bufferUnderflow {
+                // Expected
+            }
+            
+            print("  PASS: Option B contiguous packing (Bytes 0..17) and 12-byte reserved block verified.")
+            return true
+        } catch {
+            print("  FAIL: Deserialization failed: \(error)")
+            return false
+        }
+    }
+    
+    // MARK: - Test 20: Regression Test for All 7 Packet Types
+    
+    public static func testAllExistingPacketTypesRegression() -> Bool {
+        print("[Test 20] Regression test for all 7 PacketTypes (0x01..0x07)...")
+        
+        // 1. Verify PacketType raw values are distinct and contiguous 0x01..0x07
+        let allTypes = PacketType.allCases
+        guard allTypes.count == 7 else {
+            print("  FAIL: Expected exactly 7 PacketTypes, got \(allTypes.count)")
+            return false
+        }
+        
+        let expectedRawValues: [PacketType: UInt8] = [
+            .locationPing: 0x01,
+            .sos: 0x02,
+            .meetingUpdate: 0x03,
+            .routeReq: 0x04,
+            .routeResp: 0x05,
+            .ack: 0x06,
+            .chatMessage: 0x07
+        ]
+        
+        for (pType, expectedRaw) in expectedRawValues {
+            guard pType.rawValue == expectedRaw else {
+                print("  FAIL: PacketType \(pType) rawValue expected 0x\(String(format: "%02X", expectedRaw)), got 0x\(String(format: "%02X", pType.rawValue))")
+                return false
+            }
+        }
+        
+        // 2. Verify CleartextEnvelope byte0 for all 7 types with protocol version 3
+        let expectedByte0Values: [PacketType: UInt8] = [
+            .locationPing: 0x31,
+            .sos: 0x32,
+            .meetingUpdate: 0x33,
+            .routeReq: 0x34,
+            .routeResp: 0x35,
+            .ack: 0x36,
+            .chatMessage: 0x37
+        ]
+        
+        for (pType, expectedByte0) in expectedByte0Values {
+            let env = CleartextEnvelope(
+                version: PacketConstants.protocolVersion,
+                type: pType,
+                sessionId: 0x1234,
+                sequenceNumber: 1
+            )
+            let envData = env.serialize()
+            guard envData[0] == expectedByte0 else {
+                print("  FAIL: Envelope byte 0 for \(pType) expected 0x\(String(format: "%02X", expectedByte0)), got 0x\(String(format: "%02X", envData[0]))")
+                return false
+            }
+            
+            do {
+                let parsedEnv = try CleartextEnvelope.deserialize(from: envData)
+                guard parsedEnv.type == pType else {
+                    print("  FAIL: Parsed envelope type mismatch for \(pType)")
+                    return false
+                }
+            } catch {
+                print("  FAIL: Failed deserializing envelope for \(pType): \(error)")
+                return false
+            }
+        }
+        
+        print("  PASS: All 7 PacketTypes, byte 0 encodings, and envelope codecs verified.")
         return true
     }
 }

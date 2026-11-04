@@ -113,7 +113,19 @@ public actor PacketForwarder: PacketForwarding {
             return .dropHopLimitExceeded
         }
         
-        guard hopCount < PacketConstants.defaultHopLimit || packetType == .sos else {
+        let effectiveLimit: UInt8
+        switch packetType {
+        case .sos:
+            effectiveLimit = PacketConstants.sosHopLimit
+        case .meetingUpdate:
+            effectiveLimit = PacketConstants.meetingPointHopLimit
+        case .chatMessage, .ack:
+            effectiveLimit = PacketConstants.chatHopLimit
+        default:
+            effectiveLimit = PacketConstants.defaultHopLimit
+        }
+        
+        guard hopCount < effectiveLimit else {
             totalDroppedHopLimitCount += 1
             if let diag = policyManager as? RelayDiagnosticsProviding {
                 await diag.recordDropEvent(reason: .hopLimitExceeded)
@@ -165,6 +177,12 @@ public actor PacketForwarder: PacketForwarding {
                 } else if packetType == .sos, let sos = try? SOSPayload.deserialize(from: decrypted) {
                     let replayFilter = await crypto.replayFilter
                     guard await replayFilter.isTimestampValid(sos.timestamp, now: clock.now()) else {
+                        totalDroppedSecurityCount += 1
+                        return .dropSecurityVerificationFailed
+                    }
+                } else if packetType == .chatMessage, let chat = try? ChatMessagePayload.deserialize(from: decrypted) {
+                    let replayFilter = await crypto.replayFilter
+                    guard await replayFilter.isTimestampValid(chat.timestamp, now: clock.now()) else {
                         totalDroppedSecurityCount += 1
                         return .dropSecurityVerificationFailed
                     }

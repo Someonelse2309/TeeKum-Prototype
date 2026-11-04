@@ -12,7 +12,7 @@ import Foundation
 ///
 /// Easily tune these variables in code to optimize broadcasting intervals,
 /// link degradation thresholds, and distant relay retry policies.
-public struct MeshTimingConfiguration: Equatable, Sendable {
+nonisolated public struct MeshTimingConfiguration: Equatable, Sendable {
     
     // MARK: - 1. Broadcast Cadence Timings (Seconds)
     
@@ -47,13 +47,33 @@ public struct MeshTimingConfiguration: Equatable, Sendable {
     /// Backoff delay (seconds) between successive retries over distant or lossy links (recommended: 0.5s).
     public var distantLinkRetryDelay: TimeInterval
     
-    // MARK: - 4. Rate Limiter Budgets
+    // MARK: - 4. Rate Limiter Budgets & Token Buckets
     
     /// Maximum ordinary relay forwarding rate (packets per second, recommended: 2.0).
     public var ordinaryRelayRateLimit: Double
     
+    /// Burst capacity for ordinary relay token bucket (recommended: 4.0).
+    public var ordinaryRelayBurstCapacity: Double
+    
     /// Maximum urgent SOS forwarding rate (packets per second, recommended: 4.0).
     public var urgentSOSRateLimit: Double
+    
+    // MARK: - 5. Group Chat Engine Timings
+    
+    /// Enforced client-side cooldown between outgoing user chat messages (recommended: 3.0s).
+    public var chatUserCooldown: TimeInterval
+    
+    /// Maximum radio transmission retries for chat messages (recommended: 2 retries, 3 total attempts).
+    public var chatMaxRetries: Int
+    
+    /// Initial retry backoff delay for chat messages (recommended: 0.5s).
+    public var chatRetryBackoff: TimeInterval
+    
+    /// Multi-peer delivery ACK confirmation timeout window (recommended: 15.0s).
+    public var chatAckTimeout: TimeInterval
+    
+    /// Maximum randomized jitter delay before transmitting ACKs to avoid collisions (recommended: 0.35s).
+    public var chatAckJitterMax: TimeInterval
     
     // MARK: - 5. Stale Peer Accelerated Cadence & Two-Tier Probe Timings
     
@@ -90,17 +110,23 @@ public struct MeshTimingConfiguration: Equatable, Sendable {
     // MARK: - Initialization & Shared Default
     
     public init(
-        distantPeerInterval: TimeInterval = 2.0,
-        movingInterval: TimeInterval = 4.0,
-        stationaryInterval: TimeInterval = 20.0,
-        survivalInterval: TimeInterval = 60.0,
-        distantRSSIThreshold: Int8 = -75,
-        distantDistanceThresholdMeters: Double = 30.0,
+        distantPeerInterval: TimeInterval = TeeKumConfiguration.Timing.distantPeerInterval,
+        movingInterval: TimeInterval = TeeKumConfiguration.Timing.locationMovingInterval,
+        stationaryInterval: TimeInterval = TeeKumConfiguration.Timing.locationStationaryInterval,
+        survivalInterval: TimeInterval = TeeKumConfiguration.Timing.survivalInterval,
+        distantRSSIThreshold: Int8 = TeeKumConfiguration.Timing.distantRSSIThreshold,
+        distantDistanceThresholdMeters: Double = TeeKumConfiguration.Timing.distantDistanceThresholdMeters,
         distantLinkMaxRetries: Int = 2,
         distantLinkRetryDelay: TimeInterval = 0.5,
-        ordinaryRelayRateLimit: Double = 2.0,
-        urgentSOSRateLimit: Double = 4.0,
-        stalePeerThreshold: TimeInterval = 30.0,
+        ordinaryRelayRateLimit: Double = TeeKumConfiguration.Timing.ordinaryRelayRateLimit,
+        ordinaryRelayBurstCapacity: Double = TeeKumConfiguration.Timing.ordinaryRelayBurstCapacity,
+        urgentSOSRateLimit: Double = TeeKumConfiguration.Timing.urgentSOSRateLimit,
+        chatUserCooldown: TimeInterval = TeeKumConfiguration.Chat.cooldownDuration,
+        chatMaxRetries: Int = TeeKumConfiguration.Chat.maxRetries,
+        chatRetryBackoff: TimeInterval = TeeKumConfiguration.Chat.backoffInitialDelay,
+        chatAckTimeout: TimeInterval = TeeKumConfiguration.Chat.deliveryTimeout,
+        chatAckJitterMax: TimeInterval = 0.35,
+        stalePeerThreshold: TimeInterval = TeeKumConfiguration.Timing.stalePeerThreshold,
         staleRecoveryInterval: TimeInterval = 2.0,
         staleRouteReqDelay: TimeInterval = 15.0,
         staleRecoveryTimeout: TimeInterval = 60.0,
@@ -117,7 +143,13 @@ public struct MeshTimingConfiguration: Equatable, Sendable {
         self.distantLinkMaxRetries = distantLinkMaxRetries
         self.distantLinkRetryDelay = distantLinkRetryDelay
         self.ordinaryRelayRateLimit = ordinaryRelayRateLimit
+        self.ordinaryRelayBurstCapacity = ordinaryRelayBurstCapacity
         self.urgentSOSRateLimit = urgentSOSRateLimit
+        self.chatUserCooldown = chatUserCooldown
+        self.chatMaxRetries = chatMaxRetries
+        self.chatRetryBackoff = chatRetryBackoff
+        self.chatAckTimeout = chatAckTimeout
+        self.chatAckJitterMax = chatAckJitterMax
         self.stalePeerThreshold = stalePeerThreshold
         self.staleRecoveryInterval = staleRecoveryInterval
         self.staleRouteReqDelay = staleRouteReqDelay

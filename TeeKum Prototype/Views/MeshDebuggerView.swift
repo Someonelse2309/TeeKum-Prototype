@@ -1033,6 +1033,7 @@ extension PacketType {
         case .routeReq: return "Route Request"
         case .routeResp: return "Route Response"
         case .ack: return "Delivery ACK"
+        case .chatMessage: return "Group Chat"
         }
     }
 }

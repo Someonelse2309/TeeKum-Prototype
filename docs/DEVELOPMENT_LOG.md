@@ -5,6 +5,60 @@
 
 ---
 
+### [2026-11-04 13:10] — Inactivity Guard ("Man Down" Auto-SOS) Architecture, Implementation & Verification
+- **Contributor / Agent:** Lead iOS & Systems Engineer (Antigravity)
+- **Status:** Completed & Fully Verified (100% Automated Test Suite Pass Rate, Build Succeeded)
+- **Target Phase / Milestone:** Phase 3 — Emergency Safety, Sensor Intelligence & User Protection
+
+#### 1. Objective & Scope
+- Designed and implemented the Inactivity Guard ("Man Down" Auto-SOS) use case aligned via `/grill-me`.
+- Solves the problem of incapacitation/medical emergency when an attendee stops moving without triggering false emergency alarms during normal festival activities (sitting at camp, watching headliners, or resting).
+- **Core Mechanism:**
+  - Opt-in toggle (default: OFF) placed in the SOS sheet and app settings.
+  - Hybrid sensor detection: monitors accelerometer stillness ($|\sqrt{x^2+y^2+z^2} - 1.0g| < 0.15g$) AND zero screen touch/unlock interactions.
+  - 3-minute immobility window (`inactivityStillnessDuration = 180.0s`).
+  - 30-second silent pre-alarm warning countdown (`inactivityWarningCountdown = 30.0s`) with haptic pulses and visual on-screen banner/modal (**zero audible sound** on local device).
+  - Effortless cancellation: picking up/moving the device (accelerometer delta) OR tapping the prominent "I'M OK" button immediately resets the timer back to 0.
+  - Automatic SOS dispatch upon expiration: broadcasts a 56-byte binary datagram with `SOSType.inactivity = 0x04` across the mesh through the urgent priority outbox lane.
+  - Receiving friend UX: friend devices decrypt the packet, display a high-visibility `"MAN DOWN"` emergency banner, and sound full audio sirens to cut through 100+ dB venue noise.
+
+#### 2. Changes Made & Files Touched
+- [`TeeKum Prototype/Models/TeeKumConfiguration.swift`](../TeeKum%20Prototype/Models/TeeKumConfiguration.swift):
+  - In `TeeKumConfiguration.SOS`, added `inactivityStillnessDuration` (180.0s), `inactivityWarningCountdown` (30.0s), and `inactivityMotionThreshold` (0.15g).
+- [`TeeKum Prototype/Models/Packet.swift`](../TeeKum%20Prototype/Models/Packet.swift):
+  - Added `case inactivity = 0x04` to `SOSType` with title `"Inactivity / Man Down"`. Strictly preserved 56-byte wire format and 30-byte inner payload layout.
+- [`TeeKum Prototype/Services/InactivityGuardService.swift`](../TeeKum%20Prototype/Services/InactivityGuardService.swift):
+  - Created `@Observable @MainActor InactivityGuardService` governing motion tracking, stillness evaluation, 30s pre-alarm countdown, haptic pulses, and auto-SOS dispatch callbacks.
+- [`TeeKum Prototype/ViewModels/SOSViewModel.swift`](../TeeKum%20Prototype/ViewModels/SOSViewModel.swift):
+  - Integrated `inactivityGuard: InactivityGuardService`, wired `onTriggerSOS` callback to dispatch `SOSType.inactivity`, exposed `isInactivityGuardEnabled` toggle, and added reset handling.
+- [`TeeKum Prototype/Views/SOSButtonView.swift`](../TeeKum%20Prototype/Views/SOSButtonView.swift):
+  - Added `categoryBadgeText` support for `.inactivity`.
+  - Added `inactivityWarningBanner` rendering countdown timer and "I'M OK" cancel button.
+  - Added `inactivityGuardToggleRow` allowing attendees to opt in/out directly from the SOS interface.
+- [`TeeKum Prototype/Views/MainMapView.swift`](../TeeKum%20Prototype/Views/MainMapView.swift):
+  - Enhanced `incomingSOSBanner` to show `"MAN DOWN"` yellow badge and `"⚠️ Immobile for >3m"` description when receiving an inactivity alert.
+- [`TeeKum Prototype/Tests/InactivityGuardTests.swift`](../TeeKum%20Prototype/Tests/InactivityGuardTests.swift):
+  - Created 9 comprehensive automated tests verifying wire codecs, opt-in defaults, stillness thresholds, screen interaction resets, physical motion cancellation, "I'M OK" button cancellation, countdown auto-SOS dispatch, friend device reception and siren triggering, and reset lifecycle.
+- [`TeeKum Prototype/App/TeeKumApp.swift`](../TeeKum%20Prototype/App/TeeKumApp.swift):
+  - Integrated `InactivityGuardTests` into `-runAllTests` and `-runInactivityTests`, with CLI environment variable support.
+- [`docs/agent.md`](../docs/agent.md):
+  - Updated Section 16.4 and test suite metrics to 17 suites / 195+ tests.
+
+#### 3. Key Decisions & Rationale
+- **Zero Local Sound on Pre-Alarm Warning:** Local device uses intense haptic pulses and visual banner only during the 30s countdown to avoid startling the attendee or creating noise in quiet areas before an emergency is actually confirmed.
+- **Physical Motion Cancellation:** Picking up the phone automatically aborts the impending alert without requiring an accurate screen tap, minimizing stress for users who simply had their phone resting on a table.
+- **Survival Mode Continuity:** Accelerometer monitoring uses the low-power motion coprocessor (~0.1 mA draw) and continues operating even when battery is <20%, maintaining attendee safety when it is needed most.
+
+#### 4. Verification & Testing Performed
+- **Clean Xcode Compilation:** Built cleanly via `xcodebuild -project "TeeKum Prototype.xcodeproj" -scheme "TeeKum Prototype" -destination "id=C8804143-F5A1-4596-B7FE-4F4586528528" build` -> **BUILD SUCCEEDED** (0 errors).
+- **Automated Test Run on Booted Simulator:**
+  - `InactivityGuardTests`: **9 / 9 passed (100% pass rate)**.
+  - `SOSEndToEndTests`: **11 / 11 passed (100% pass rate)**.
+  - `MultiHopSOSTests`: **11 / 11 passed (100% pass rate)**.
+  - Full master suite run (`-runAllTests` across all 17 test suites / 195+ automated tests): **100% PASS RATE, 0 FAILURES**.
+
+---
+
 ### [2026-11-03 16:32] — Architectural Decision (ADR) Update: Phase 3 Festival Group Mesh Chat Simplified to Max 20 Characters (Decision D17)
 - **Contributor / Role:** Senior App Development Consultant & Technical Product Advisor
 - **Status:** Scoped, Updated & Formally Documented (Ready for Phase 3 Execution)

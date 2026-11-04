@@ -55,8 +55,14 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Bounded capacity for stranger blind relaying (Decision 7: 32 packets ring buffer).
     public let maxRelayCapacity: Int
     
+    /// Bounded capacity for local group chat FIFO lane (Decision D17: 16 packets).
+    public let maxChatCapacity: Int
+    
     /// High-priority FIFO queue (SOS, ACK, Meeting updates).
     private var urgentLane: [OutboxItem] = []
+    
+    /// Dedicated local group chat FIFO queue (Decision D17: 20-character chat messages).
+    private var localChatLane: [OutboxItem] = []
     
     /// Normal lane keyed by destination peer ID (`nil` key represented as empty string for broadcast).
     /// Holds strictly the freshest single location ping per destination.
@@ -74,29 +80,38 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Counter tracking urgent packets dropped due to urgent lane capacity overflow.
     public private(set) var urgentPacketsDroppedOverflow: Int = 0
     
+    /// Counter tracking local chat packets dropped due to chat lane capacity overflow.
+    public private(set) var chatPacketsDroppedOverflow: Int = 0
+    
     /// Total packets dropped across all lanes due to queue saturation.
     public var totalQueueSaturationDrops: Int {
-        relayPacketsDroppedOverflow + urgentPacketsDroppedOverflow
+        relayPacketsDroppedOverflow + urgentPacketsDroppedOverflow + chatPacketsDroppedOverflow
     }
     
-    public init(maxUrgentCapacity: Int = 16, maxRelayCapacity: Int = 32) {
+    public init(maxUrgentCapacity: Int = 16, maxRelayCapacity: Int = 32, maxChatCapacity: Int = 16) {
         self.maxUrgentCapacity = maxUrgentCapacity
         self.maxRelayCapacity = maxRelayCapacity
+        self.maxChatCapacity = maxChatCapacity
     }
     
     /// Total count of items currently waiting in the outbox across all lanes.
     public var totalQueuedCount: Int {
-        urgentLane.count + normalCoalescedLane.count + strangerRelayLane.count
+        urgentLane.count + localChatLane.count + normalCoalescedLane.count + strangerRelayLane.count
     }
     
     /// True when there are no items waiting to be sent across any lane.
     public var isEmpty: Bool {
-        urgentLane.isEmpty && normalCoalescedLane.isEmpty && strangerRelayLane.isEmpty
+        urgentLane.isEmpty && localChatLane.isEmpty && normalCoalescedLane.isEmpty && strangerRelayLane.isEmpty
     }
     
     /// Current count of pending urgent packets.
     public var urgentCount: Int {
         urgentLane.count
+    }
+    
+    /// Current count of pending local chat packets.
+    public var chatCount: Int {
+        localChatLane.count
     }
     
     /// Current count of pending stranger relay packets.
@@ -109,7 +124,8 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
         QueueDepth(
             urgentCount: urgentLane.count,
             normalCount: normalCoalescedLane.count,
-            relayCount: strangerRelayLane.count
+            relayCount: strangerRelayLane.count,
+            chatCount: localChatLane.count
         )
     }
     
@@ -177,6 +193,24 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
             )
             urgentLane.append(item)
             return item
+        } else if packetType == .chatMessage {
+            // Tier 3: Local Group Chat FIFO Lane (Cap: 16)
+            guard localChatLane.count < maxChatCapacity else {
+                chatPacketsDroppedOverflow += 1
+                throw TransportError.queueFull("Chat outbox queue is full (\(localChatLane.count)/\(maxChatCapacity) items).")
+            }
+            
+            let item = OutboxItem(
+                packetData: data,
+                packetType: packetType,
+                destinationPeerId: destinationPeerId,
+                attemptCount: 0,
+                maxRetries: MeshTimingConfiguration.default.chatMaxRetries,
+                isUrgent: false,
+                isRelay: false
+            )
+            localChatLane.append(item)
+            return item
         } else {
             // Normal Location Ping lane: Coalesce per destination
             let destKey = destinationPeerId ?? ""
@@ -201,11 +235,16 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Pops the next highest-priority item for transmission.
     /// Priority order:
     /// 1. Urgent lane (SOS, ACK, Meeting updates).
-    /// 2. Stranger relay lane (communal mesh packets forwarded for other devices).
-    /// 3. Normal coalesced lane (local routine location pings).
+    /// 2. Local chat lane (local user chat messages FIFO, max 16).
+    /// 3. Stranger relay lane (communal mesh packets forwarded for other devices).
+    /// 4. Normal coalesced lane (local routine location pings).
     public func dequeue() -> OutboxItem? {
         if !urgentLane.isEmpty {
             return urgentLane.removeFirst()
+        }
+        
+        if !localChatLane.isEmpty {
+            return localChatLane.removeFirst()
         }
         
         if !strangerRelayLane.isEmpty {
@@ -232,6 +271,9 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
         if item.isUrgent {
             urgentLane.insert(retryItem, at: 0) // Preempt back to front of urgent lane
             return true
+        } else if item.packetType == .chatMessage {
+            localChatLane.insert(retryItem, at: 0) // Preempt back to front of local chat lane
+            return true
         } else if item.isRelay {
             strangerRelayLane.insert(retryItem, at: 0) // Preempt back to front of stranger relay lane
             return true
@@ -250,6 +292,7 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Clears all pending packets across all lanes.
     public func clear() {
         urgentLane.removeAll()
+        localChatLane.removeAll()
         normalCoalescedLane.removeAll()
         strangerRelayLane.removeAll()
     }

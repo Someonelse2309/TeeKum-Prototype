@@ -17,6 +17,7 @@ public struct FinderBeaconView: View {
     public let userLocation: LocationPin?
     public let currentHeading: CLLocationDirection?
     public let locationService: (any LocationServiceProvider)?
+    public let userColor: Color?
     public let onDismiss: () -> Void
     
     @State private var selectedMember: Member?
@@ -33,6 +34,7 @@ public struct FinderBeaconView: View {
         userLocation: LocationPin? = nil,
         currentHeading: CLLocationDirection? = nil,
         locationService: (any LocationServiceProvider)? = nil,
+        userColor: Color? = nil,
         onDismiss: @escaping () -> Void
     ) {
         self.members = members
@@ -40,6 +42,7 @@ public struct FinderBeaconView: View {
         self.userLocation = userLocation
         self.currentHeading = currentHeading
         self.locationService = locationService
+        self.userColor = userColor
         self.onDismiss = onDismiss
     }
     
@@ -143,7 +146,8 @@ public struct FinderBeaconView: View {
                     userLocation: userLocation,
                     currentHeading: currentHeading,
                     selectedMember: $selectedMember,
-                    theme: .standard
+                    theme: .standard,
+                    userColor: userColor
                 )
                 .padding(.horizontal, 8)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

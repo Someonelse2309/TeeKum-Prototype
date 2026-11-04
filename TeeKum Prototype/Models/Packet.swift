@@ -11,20 +11,36 @@ import CoreLocation
 // MARK: - Constants
 
 nonisolated public enum PacketConstants {
-    public static let wirePacketSize: Int = 56
-    public static let cleartextEnvelopeSize: Int = 10
-    public static let encryptedPayloadSize: Int = 30
-    public static let authTagSize: Int = 16
-    public static let nonceSize: Int = 12
+    public static var wirePacketSize: Int { TeeKumConfiguration.Network.wirePacketSize }
+    public static var cleartextEnvelopeSize: Int { TeeKumConfiguration.Network.cleartextEnvelopeSize }
+    public static var encryptedPayloadSize: Int { TeeKumConfiguration.Network.encryptedPayloadSize }
+    public static var authTagSize: Int { TeeKumConfiguration.Network.authTagSize }
+    public static var nonceSize: Int { TeeKumConfiguration.Network.nonceSize }
     
-    public static let protocolVersion: UInt8 = 0x03
-    public static let defaultHopLimit: UInt8 = 8
-    public static let maxHopLimit: UInt8 = 15
-    public static let meetingPointHopLimit: UInt8 = 15
-    public static let sosHopLimit: UInt8 = 15
+    public static var protocolVersion: UInt8 { TeeKumConfiguration.Network.protocolVersion }
+    public static var defaultHopLimit: UInt8 {
+        get { TeeKumConfiguration.Network.defaultHopLimit }
+        set { TeeKumConfiguration.Network.defaultHopLimit = newValue }
+    }
+    public static var chatHopLimit: UInt8 {
+        get { TeeKumConfiguration.Network.chatHopLimit }
+        set { TeeKumConfiguration.Network.chatHopLimit = newValue }
+    }
+    public static var maxHopLimit: UInt8 {
+        get { TeeKumConfiguration.Network.maxHopLimit }
+        set { TeeKumConfiguration.Network.maxHopLimit = newValue }
+    }
+    public static var meetingPointHopLimit: UInt8 {
+        get { TeeKumConfiguration.Network.meetingPointHopLimit }
+        set { TeeKumConfiguration.Network.meetingPointHopLimit = newValue }
+    }
+    public static var sosHopLimit: UInt8 {
+        get { TeeKumConfiguration.Network.sosHopLimit }
+        set { TeeKumConfiguration.Network.sosHopLimit = newValue }
+    }
     
     /// 4-byte protocol domain tag used in nonce construction: 'T', 'K', 'M', '3'
-    public static let protocolDomainTag: [UInt8] = [0x54, 0x4B, 0x4D, 0x33]
+    public static var protocolDomainTag: [UInt8] { TeeKumConfiguration.Network.protocolDomainTag }
 }
 
 // MARK: - Packet Type
@@ -36,22 +52,25 @@ public enum PacketType: UInt8, CaseIterable, Sendable {
     case routeReq      = 0x04
     case routeResp     = 0x05
     case ack           = 0x06
+    case chatMessage   = 0x07
 }
 
 // MARK: - Emergency & ACK Enums
 
 public enum SOSType: UInt8, CaseIterable, Sendable {
-    case general   = 0x00
-    case medical   = 0x01
-    case separated = 0x02
-    case security  = 0x03
+    case general    = 0x00
+    case medical    = 0x01
+    case separated  = 0x02
+    case security   = 0x03
+    case inactivity = 0x04
     
     public var title: String {
         switch self {
-        case .general:   return "General Emergency"
-        case .medical:   return "Medical Assistance"
-        case .separated: return "Lost / Separated"
-        case .security:  return "Security Concern"
+        case .general:    return "General Emergency"
+        case .medical:    return "Medical Assistance"
+        case .separated:  return "Lost / Separated"
+        case .security:   return "Security Concern"
+        case .inactivity: return "Inactivity / Man Down"
         }
     }
 }
@@ -75,6 +94,8 @@ public enum PacketCodecError: Error, LocalizedError, Equatable {
     case payloadDeserializationFailed
     case bufferUnderflow
     case invalidInitials(String)
+    case invalidTextLength(Int)
+    case invalidTextEncoding
     
     public var errorDescription: String? {
         switch self {
@@ -100,6 +121,10 @@ public enum PacketCodecError: Error, LocalizedError, Equatable {
             return "Buffer underflow while reading wire bytes."
         case let .invalidInitials(i):
             return "Invalid 3-letter initials: '\(i)'. Must be exactly 3 uppercase letters A-Z."
+        case let .invalidTextLength(len):
+            return "Invalid text length: \(len) bytes. Must be between 0 and 20 bytes."
+        case .invalidTextEncoding:
+            return "Invalid text encoding: string content is not valid UTF-8."
         }
     }
 }
@@ -334,24 +359,37 @@ nonisolated public struct RawWirePacket: Equatable, Sendable {
 
 // MARK: - Decoded Inner Payloads (30 Bytes Each)
 
-/// Type 1: `0x01` — Location Ping Inner Payload
+/// Type 1: `0x01` — Location Ping Inner Payload (Option B — Pure Telemetry)
+///
+/// Encrypted 30-Byte Payload Layout:
+/// - Bytes 0..3: latitudeRaw (4B signed Int32 big-endian, ~11cm resolution)
+/// - Bytes 4..7: longitudeRaw (4B signed Int32 big-endian, ~11cm resolution)
+/// - Bytes 8..11: timestamp (4B Unix epoch seconds big-endian)
+/// - Byte 12: accuracy (1B horizontal uncertainty radius in meters: 0...255m)
+/// - Bytes 13..14: senderInitials (2B Base-27 compressed initials via InitialsCodec)
+/// - Byte 15: batteryLevel (1B percentage: 0...100%)
+/// - Byte 16: heading (1B compass degrees * 255 / 360, decoded via headingDegrees: 0.0..<360.0°)
+/// - Byte 17: colorCode (1B MemberColor code: 0x00...0x08)
+/// - Bytes 18..29: reserved (12B zero padding for Phase 3 vertical floor & barometry)
 public struct LocationPingPayload: Equatable, Sendable {
     public var coordinate: CLLocationCoordinate2D
     public var timestamp: Date
     public var accuracy: UInt8
-    public var statusCode: StatusCode
-    public var targetRefId: UInt32?
-    public var senderInitials: String // 3 uppercase characters A-Z
+    public var senderInitials: String // 1..3 uppercase characters A-Z
     public var batteryLevel: UInt8    // 0...100
     public var heading: UInt8         // 0...255 representing 0..<360 degrees
     public var colorCode: UInt8       // 0x00...0x08 MemberColor code
     
+    /// Reconstructed magnetic compass heading in degrees (0..<360).
+    public var headingDegrees: CLLocationDirection {
+        Double(heading) * 360.0 / 255.0
+    }
+    
+    /// Primary Initializer (Phase 3 Option B: Pure geographic & sensor telemetry)
     public init(
         coordinate: CLLocationCoordinate2D,
         timestamp: Date = Date(),
         accuracy: UInt8,
-        statusCode: StatusCode,
-        targetRefId: UInt32? = nil,
         senderInitials: String,
         batteryLevel: UInt8,
         heading: UInt8 = 0,
@@ -360,12 +398,46 @@ public struct LocationPingPayload: Equatable, Sendable {
         self.coordinate = coordinate
         self.timestamp = timestamp
         self.accuracy = accuracy
-        self.statusCode = statusCode
-        self.targetRefId = targetRefId
         self.senderInitials = InitialsCodec.sanitize(senderInitials)
         self.batteryLevel = min(batteryLevel, 100)
         self.heading = heading
         self.colorCode = colorCode
+    }
+    
+    /// Deprecated compatibility initializer for legacy callers during Phase 3 migration
+    @available(*, deprecated, message: "statusCode and targetRefId are retired from LocationPingPayload (Phase 3 Option B).")
+    public init(
+        coordinate: CLLocationCoordinate2D,
+        timestamp: Date = Date(),
+        accuracy: UInt8,
+        statusCode: StatusCode?,
+        targetRefId: UInt32? = nil,
+        senderInitials: String,
+        batteryLevel: UInt8,
+        heading: UInt8 = 0,
+        colorCode: UInt8 = 0
+    ) {
+        self.init(
+            coordinate: coordinate,
+            timestamp: timestamp,
+            accuracy: accuracy,
+            senderInitials: senderInitials,
+            batteryLevel: batteryLevel,
+            heading: heading,
+            colorCode: colorCode
+        )
+    }
+    
+    @available(*, deprecated, message: "Status code has been retired from LocationPingPayload.")
+    public var statusCode: StatusCode {
+        get { .available }
+        set { }
+    }
+    
+    @available(*, deprecated, message: "targetRefId has been retired from LocationPingPayload.")
+    public var targetRefId: UInt32? {
+        get { nil }
+        set { }
     }
     
     public func serialize() -> Data {
@@ -374,24 +446,28 @@ public struct LocationPingPayload: Equatable, Sendable {
         let lonRaw = Int32((coordinate.longitude * 1_000_000.0).rounded()).bigEndian
         let tsRaw = UInt32(timestamp.timeIntervalSince1970).bigEndian
         
+        // Bytes 0..3: latitudeRaw (4B signed Int32)
         var lat = latRaw; data.append(Data(bytes: &lat, count: 4))
+        // Bytes 4..7: longitudeRaw (4B signed Int32)
         var lon = lonRaw; data.append(Data(bytes: &lon, count: 4))
+        // Bytes 8..11: timestamp (4B UInt32 epoch seconds)
         var ts = tsRaw; data.append(Data(bytes: &ts, count: 4))
+        // Byte 12: accuracy (1B UInt8)
         data.append(accuracy)
-        data.append(statusCode.rawValue)
         
-        var target = (targetRefId ?? 0).bigEndian
-        data.append(Data(bytes: &target, count: 4))
-        
+        // Bytes 13..14: senderInitials (2B Base-27)
         let initialBytes = InitialsCodec.encode(senderInitials) ?? [0, 0]
         data.append(contentsOf: initialBytes)
         
+        // Byte 15: batteryLevel (1B UInt8)
         data.append(min(batteryLevel, 100))
+        // Byte 16: heading (1B UInt8)
         data.append(heading)
+        // Byte 17: colorCode (1B UInt8)
         data.append(colorCode)
         
-        // 7 bytes reserved zero padding (30 - 23 = 7)
-        data.append(Data(repeating: 0, count: 7))
+        // Bytes 18..29: 12 bytes consolidated reserved zero padding (30 - 18 = 12)
+        data.append(Data(repeating: 0, count: 12))
         return data
     }
     
@@ -399,19 +475,18 @@ public struct LocationPingPayload: Equatable, Sendable {
         guard data.count >= PacketConstants.encryptedPayloadSize else {
             throw PacketCodecError.bufferUnderflow
         }
-        let latRaw = data.subdata(in: 0..<4).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
-        let lonRaw = data.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
-        let tsRaw = data.subdata(in: 8..<12).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-        let accuracy = data[12]
-        let statusByte = data[13]
-        let targetRaw = data.subdata(in: 14..<18).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let start = data.startIndex
+        let latRaw = data.subdata(in: start..<(start + 4)).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
+        let lonRaw = data.subdata(in: (start + 4)..<(start + 8)).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
+        let tsRaw = data.subdata(in: (start + 8)..<(start + 12)).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let accuracy = data[start + 12]
         
-        let initialBytes = [data[18], data[19]]
+        let initialBytes = [data[start + 13], data[start + 14]]
         let initials = InitialsCodec.decode(initialBytes) ?? "UNK"
         
-        let battery = data[20]
-        let heading = data[21]
-        let colorCode = data.count > 22 ? data[22] : 0
+        let battery = data[start + 15]
+        let heading = data[start + 16]
+        let colorCode = data[start + 17]
         
         let lat = Double(latRaw) / 1_000_000.0
         let lon = Double(lonRaw) / 1_000_000.0
@@ -422,15 +497,11 @@ public struct LocationPingPayload: Equatable, Sendable {
         
         let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         let date = Date(timeIntervalSince1970: TimeInterval(tsRaw))
-        let status = StatusCode(rawValue: statusByte) ?? .available
-        let target = targetRaw == 0 ? nil : targetRaw
         
         return LocationPingPayload(
             coordinate: coord,
             timestamp: date,
             accuracy: accuracy,
-            statusCode: status,
-            targetRefId: target,
             senderInitials: initials,
             batteryLevel: min(battery, 100),
             heading: heading,
@@ -538,46 +609,87 @@ public struct SOSPayload: Equatable, Sendable {
     }
 }
 
-/// Type 3: `0x03` — Meeting Update Inner Payload
+/// Type 3: `0x03` — Meeting Update Inner Payload (Redesigned 30-Byte Fixed Format)
 public struct MeetingUpdatePayload: Equatable, Sendable {
     public var coordinate: CLLocationCoordinate2D
     public var meetupTime: Date
+    public var createdAt: Date
     public var action: MeetingAction
     public var attendanceStatus: AttendanceStatus
     public var meetingPointId: UInt32
-    public var senderInitials: String // 3 uppercase characters
-    public var landmarkId: UInt32?
-    public var customLabel: String?
+    public var senderInitials: String // 1-3 uppercase characters
+    public var arrivalRadiusMeters: UInt8 // default: 25 meters
+    public var flags: UInt8 // Bit 0: isRightNow, Bit 1: anchorToProposerGPS
+    
+    public var isRightNow: Bool {
+        (flags & 0x01) != 0
+    }
+    
+    public var anchorToProposerGPS: Bool {
+        (flags & 0x02) != 0
+    }
     
     public init(
         coordinate: CLLocationCoordinate2D,
-        meetupTime: Date,
+        meetupTime: Date = Date(),
+        createdAt: Date = Date(),
         action: MeetingAction,
         attendanceStatus: AttendanceStatus,
         meetingPointId: UInt32,
         senderInitials: String,
-        landmarkId: UInt32? = nil,
-        customLabel: String? = nil
+        arrivalRadiusMeters: UInt8 = 25,
+        flags: UInt8 = 0
     ) {
         self.coordinate = coordinate
         self.meetupTime = meetupTime
+        self.createdAt = createdAt
         self.action = action
         self.attendanceStatus = attendanceStatus
         self.meetingPointId = meetingPointId
         self.senderInitials = InitialsCodec.sanitize(senderInitials)
-        self.landmarkId = landmarkId
-        self.customLabel = customLabel
+        self.arrivalRadiusMeters = max(5, min(100, arrivalRadiusMeters))
+        self.flags = flags
+    }
+    
+    public init(
+        coordinate: CLLocationCoordinate2D,
+        meetupTime: Date = Date(),
+        createdAt: Date = Date(),
+        action: MeetingAction,
+        attendanceStatus: AttendanceStatus,
+        meetingPointId: UInt32,
+        senderInitials: String,
+        arrivalRadiusMeters: UInt8 = 25,
+        isRightNow: Bool = false,
+        anchorToProposerGPS: Bool = false
+    ) {
+        var computedFlags: UInt8 = 0
+        if isRightNow { computedFlags |= 0x01 }
+        if anchorToProposerGPS { computedFlags |= 0x02 }
+        self.init(
+            coordinate: coordinate,
+            meetupTime: meetupTime,
+            createdAt: createdAt,
+            action: action,
+            attendanceStatus: attendanceStatus,
+            meetingPointId: meetingPointId,
+            senderInitials: senderInitials,
+            arrivalRadiusMeters: arrivalRadiusMeters,
+            flags: computedFlags
+        )
     }
     
     public func serialize() -> Data {
         var data = Data(capacity: PacketConstants.encryptedPayloadSize)
         let latRaw = Int32((coordinate.latitude * 1_000_000.0).rounded()).bigEndian
         let lonRaw = Int32((coordinate.longitude * 1_000_000.0).rounded()).bigEndian
-        let tsRaw = UInt32(meetupTime.timeIntervalSince1970).bigEndian
+        let meetupTsRaw = UInt32(meetupTime.timeIntervalSince1970).bigEndian
+        let createdTsRaw = UInt32(createdAt.timeIntervalSince1970).bigEndian
         
         var lat = latRaw; data.append(Data(bytes: &lat, count: 4))
         var lon = lonRaw; data.append(Data(bytes: &lon, count: 4))
-        var ts = tsRaw; data.append(Data(bytes: &ts, count: 4))
+        var mts = meetupTsRaw; data.append(Data(bytes: &mts, count: 4))
+        var cts = createdTsRaw; data.append(Data(bytes: &cts, count: 4))
         data.append(action.rawValue)
         data.append(attendanceStatus.rawValue)
         
@@ -587,19 +699,11 @@ public struct MeetingUpdatePayload: Equatable, Sendable {
         let initialBytes = InitialsCodec.encode(senderInitials) ?? [0, 0]
         data.append(contentsOf: initialBytes)
         
-        var landmark = (landmarkId ?? 0).bigEndian
-        data.append(Data(bytes: &landmark, count: 4))
+        data.append(arrivalRadiusMeters)
+        data.append(flags)
         
-        // 6 bytes reserved padding / custom label (30 - 24 = 6)
-        if let custom = customLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
-            let labelData = custom.data(using: .utf8)?.prefix(6) ?? Data()
-            data.append(labelData)
-            if labelData.count < 6 {
-                data.append(Data(repeating: 0, count: 6 - labelData.count))
-            }
-        } else {
-            data.append(Data(repeating: 0, count: 6))
-        }
+        // 4 bytes reserved for future protocol revisions
+        data.append(Data(repeating: 0, count: 4))
         return data
     }
     
@@ -609,15 +713,17 @@ public struct MeetingUpdatePayload: Equatable, Sendable {
         }
         let latRaw = data.subdata(in: 0..<4).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
         let lonRaw = data.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
-        let tsRaw = data.subdata(in: 8..<12).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-        let actionByte = data[12]
-        let attendanceByte = data[13]
-        let mpId = data.subdata(in: 14..<18).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let meetupTsRaw = data.subdata(in: 8..<12).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let createdTsRaw = data.subdata(in: 12..<16).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let actionByte = data[16]
+        let attendanceByte = data[17]
+        let mpId = data.subdata(in: 18..<22).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
         
-        let initialBytes = [data[18], data[19]]
+        let initialBytes = [data[22], data[23]]
         let initials = InitialsCodec.decode(initialBytes) ?? "UNK"
         
-        let landmarkRaw = data.subdata(in: 20..<24).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+        let arrivalRadius = data[24]
+        let flagsByte = data[25]
         
         let lat = Double(latRaw) / 1_000_000.0
         let lon = Double(lonRaw) / 1_000_000.0
@@ -627,29 +733,21 @@ public struct MeetingUpdatePayload: Equatable, Sendable {
         }
         
         let coord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-        let date = Date(timeIntervalSince1970: TimeInterval(tsRaw))
+        let meetupDate = Date(timeIntervalSince1970: TimeInterval(meetupTsRaw))
+        let createdDate = Date(timeIntervalSince1970: TimeInterval(createdTsRaw))
         let action = MeetingAction(rawValue: actionByte) ?? .propose
         let attendance = AttendanceStatus(rawValue: attendanceByte) ?? .attending
-        let landmark = landmarkRaw == 0 ? nil : landmarkRaw
-        
-        var customLabel: String?
-        if landmark == nil {
-            let labelBytes = data.subdata(in: 24..<30)
-            let trimmedBytes = labelBytes.prefix(while: { $0 != 0 })
-            if !trimmedBytes.isEmpty, let str = String(data: trimmedBytes, encoding: .utf8) {
-                customLabel = str
-            }
-        }
         
         return MeetingUpdatePayload(
             coordinate: coord,
-            meetupTime: date,
+            meetupTime: meetupDate,
+            createdAt: createdDate,
             action: action,
             attendanceStatus: attendance,
             meetingPointId: mpId,
             senderInitials: initials,
-            landmarkId: landmark,
-            customLabel: customLabel
+            arrivalRadiusMeters: arrivalRadius,
+            flags: flagsByte
         )
     }
 }
@@ -841,5 +939,163 @@ public struct RouteRespPayload: Equatable, Sendable {
         let nonce = data.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
         let cost = data[8]
         return RouteRespPayload(originatorInitials: orig, targetInitials: target, discoveryNonce: nonce, routeCost: cost)
+    }
+}
+
+// MARK: - Type 7: 0x07 — Group Chat Message Inner Payload (Phase 3)
+
+/// Type 7: `0x07` — Group Chat Message Inner Payload (Phase 3)
+///
+/// Encrypted 30-Byte Payload Layout:
+/// - Bytes 0..1: senderInitials (2B Base-27 compressed via InitialsCodec)
+/// - Bytes 2..5: timestamp (4B Unix epoch seconds big-endian)
+/// - Byte 6: textLength (1B, exact UTF-8 byte count: 0...20)
+/// - Bytes 7..26: textContent (20B UTF-8 direct bytes, zero-padded for unused bytes)
+/// - Bytes 27..29: reserved (3B zero padding: 0x000000)
+public struct ChatMessagePayload: Equatable, Sendable {
+    public static let maxTextBytes: Int = 20
+    public static let reservedBytesCount: Int = 3
+    
+    // MARK: - Festival Preset Quick-Tap Chips (Independent Status Transmission)
+    public static let presetBeerLine = "Beer line"
+    public static let presetAtMainStage = "At Main Stage"
+    public static let presetRestroom = "Restroom"
+    public static let presetWhereAreYou = "Where are you?"
+    public static let presetOnMyWay = "On my way"
+    public static let presetLost = "Lost"
+    
+    public static let standardPresets: [String] = [
+        presetBeerLine,
+        presetAtMainStage,
+        presetRestroom,
+        presetWhereAreYou,
+        presetOnMyWay,
+        presetLost
+    ]
+    
+    public var senderInitials: String // 1..3 uppercase characters A-Z
+    public var timestamp: Date
+    public var text: String           // Capped at 20 UTF-8 bytes
+    
+    public init(senderInitials: String, timestamp: Date = Date(), text: String) {
+        self.senderInitials = InitialsCodec.sanitize(senderInitials)
+        self.timestamp = timestamp
+        self.text = text
+    }
+    
+    /// Checks whether the text length does not exceed the 20-byte wire allocation.
+    public var isTextLengthValid: Bool {
+        text.utf8.count <= Self.maxTextBytes
+    }
+    
+    /// Serializes the chat payload to exactly 30 bytes.
+    /// Throws PacketCodecError.invalidTextLength if text exceeds 20 UTF-8 bytes.
+    public func serialize() throws -> Data {
+        guard isTextLengthValid else {
+            throw PacketCodecError.invalidTextLength(text.utf8.count)
+        }
+        return serializeUnchecked()
+    }
+    
+    /// Serializes without throwing, clamping text to at most 20 UTF-8 bytes if needed.
+    public func serializeUnchecked() -> Data {
+        var data = Data(capacity: PacketConstants.encryptedPayloadSize)
+        
+        // Bytes 0..1: senderInitials (2B Base-27)
+        let initialBytes = InitialsCodec.encode(senderInitials) ?? [0, 0]
+        data.append(contentsOf: initialBytes)
+        
+        // Bytes 2..5: timestamp (4B Unix epoch seconds)
+        var ts = UInt32(timestamp.timeIntervalSince1970).bigEndian
+        data.append(Data(bytes: &ts, count: 4))
+        
+        // Byte 6: textLength (1B, 0..20)
+        let rawUtf8 = Array(text.utf8.prefix(Self.maxTextBytes))
+        data.append(UInt8(rawUtf8.count))
+        
+        // Bytes 7..26: textContent (20B UTF-8, zero-padded)
+        data.append(contentsOf: rawUtf8)
+        if rawUtf8.count < Self.maxTextBytes {
+            data.append(Data(repeating: 0, count: Self.maxTextBytes - rawUtf8.count))
+        }
+        
+        // Bytes 27..29: reserved (3B padding: 0x000000)
+        data.append(Data(repeating: 0, count: Self.reservedBytesCount))
+        
+        return data
+    }
+    
+    /// Deserializes a 30-byte payload into ChatMessagePayload.
+    /// Validates buffer size, text length (<= 20 bytes), and UTF-8 text encoding.
+    public static func deserialize(from data: Data) throws -> ChatMessagePayload {
+        guard data.count >= PacketConstants.encryptedPayloadSize else {
+            throw PacketCodecError.bufferUnderflow
+        }
+        
+        let start = data.startIndex
+        let initialBytes = [data[start], data[start + 1]]
+        let initials = InitialsCodec.decode(initialBytes) ?? "UNK"
+        
+        let tsRaw = data.subdata(in: (start + 2)..<(start + 6)).withUnsafeBytes {
+            $0.load(as: UInt32.self).bigEndian
+        }
+        let date = Date(timeIntervalSince1970: TimeInterval(tsRaw))
+        
+        let rawLen = data[start + 6]
+        guard rawLen <= UInt8(Self.maxTextBytes) else {
+            throw PacketCodecError.invalidTextLength(Int(rawLen))
+        }
+        let len = Int(rawLen)
+        
+        let textBytes = data.subdata(in: (start + 7)..<(start + 7 + len))
+        guard let text = String(data: textBytes, encoding: .utf8) else {
+            throw PacketCodecError.invalidTextEncoding
+        }
+        
+        return ChatMessagePayload(senderInitials: initials, timestamp: date, text: text)
+    }
+    
+    /// Strict deserialization that also validates exact 30-byte size and that all reserved
+    /// bytes (Bytes 27..29) and unused text padding bytes are zeroed.
+    public static func deserializeStrict(from data: Data) throws -> ChatMessagePayload {
+        guard data.count == PacketConstants.encryptedPayloadSize else {
+            throw PacketCodecError.invalidPacketSize(expected: PacketConstants.encryptedPayloadSize, actual: data.count)
+        }
+        guard hasValidReservedPadding(in: data) else {
+            throw PacketCodecError.payloadDeserializationFailed
+        }
+        return try deserialize(from: data)
+    }
+    
+    /// Validates whether reserved bytes (Bytes 27..29) and unused text padding bytes are 0x00.
+    public static func hasValidReservedPadding(in data: Data) -> Bool {
+        guard data.count >= PacketConstants.encryptedPayloadSize else { return false }
+        let start = data.startIndex
+        let rawLen = Int(data[start + 6])
+        guard rawLen <= Self.maxTextBytes else { return false }
+        
+        // Unused text content padding (from 7 + rawLen up to index 26)
+        for i in (start + 7 + rawLen)..<(start + 27) {
+            if data[i] != 0 { return false }
+        }
+        // 3 reserved bytes (27, 28, 29)
+        for i in (start + 27)..<(start + 30) {
+            if data[i] != 0 { return false }
+        }
+        return true
+    }
+    
+    /// Helper to clamp arbitrary input text to the largest valid UTF-8 boundary <= 20 bytes.
+    public static func clampTo20Bytes(_ input: String) -> String {
+        var accumulated = ""
+        for char in input {
+            let candidate = accumulated + String(char)
+            if candidate.utf8.count <= maxTextBytes {
+                accumulated = candidate
+            } else {
+                break
+            }
+        }
+        return accumulated
     }
 }

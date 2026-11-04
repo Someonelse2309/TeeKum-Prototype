@@ -45,6 +45,17 @@ public final class SOSViewModel {
     public var clock: MeshClock?
     private let dateProvider: @Sendable () -> Date
     
+    // MARK: - Inactivity Guard ("Man Down" Auto-SOS)
+    
+    /// Dedicated service governing accelerometer immobility & screen stillness detection.
+    public let inactivityGuard: InactivityGuardService
+    
+    /// User master toggle for Inactivity Guard (opt-in default: false).
+    public var isInactivityGuardEnabled: Bool {
+        get { inactivityGuard.isEnabled }
+        set { inactivityGuard.isEnabled = newValue }
+    }
+    
     // MARK: - Delivery & Gesture State
     
     /// Current honest delivery feedback state.
@@ -152,6 +163,12 @@ public final class SOSViewModel {
         self.transport = transport
         self.audioAlerter = audioAlerter ?? DefaultSOSAudioAlerter()
         self.dateProvider = dateProvider
+        
+        let guardService = InactivityGuardService(dateProvider: dateProvider)
+        self.inactivityGuard = guardService
+        guardService.onTriggerSOS = { [weak self] in
+            self?.triggerSOS(emergencyType: .inactivity)
+        }
     }
     
     /// Reconfigures dependencies.
@@ -653,6 +670,7 @@ public final class SOSViewModel {
     /// Resets the SOS state machine back to idle.
     public func reset() {
         cancelRetryTask()
+        inactivityGuard.reset()
         holdStartTime = nil
         holdProgress = 0.0
         deliveryState = .idle

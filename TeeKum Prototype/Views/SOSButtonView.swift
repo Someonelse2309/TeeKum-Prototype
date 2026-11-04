@@ -22,6 +22,11 @@ public struct SOSButtonView: View {
     
     public var body: some View {
         VStack(spacing: 8) {
+            // Inactivity Pre-Alarm Warning Banner
+            if sosViewModel.inactivityGuard.isWarningActive {
+                inactivityWarningBanner
+            }
+            
             // Delivery Feedback State Banner
             if sosViewModel.deliveryState != .idle {
                 deliveryStateBanner
@@ -122,7 +127,87 @@ public struct SOSButtonView: View {
             .accessibilityLabel("Emergency SOS button")
             .accessibilityValue(sosViewModel.deliveryState.title)
             .accessibilityHint("Touch and hold continuously for 3 seconds to broadcast emergency SOS. Release early to cancel.")
+            
+            // Inactivity Guard Opt-In Toggle
+            if case .idle = sosViewModel.deliveryState {
+                inactivityGuardToggleRow
+            }
         }
+    }
+    
+    // MARK: - Inactivity Warning Banner (Pre-Alarm Countdown)
+    
+    private var inactivityWarningBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "figure.fall")
+                .font(.title2.bold())
+                .foregroundStyle(.yellow)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text("INACTIVITY DETECTED")
+                    .font(.caption.bold())
+                    .foregroundStyle(.yellow)
+                
+                Text(String(format: "Auto-SOS in %.0fs • Move phone or tap", sosViewModel.inactivityGuard.countdownRemaining))
+                    .font(.caption2)
+                    .foregroundStyle(.white)
+            }
+            
+            Spacer()
+            
+            Button("I'M OK") {
+                sosViewModel.inactivityGuard.cancelWarning()
+            }
+            .font(.caption.bold())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.green)
+            .clipShape(Capsule())
+            .foregroundStyle(.black)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(red: 0.25, green: 0.12, blue: 0.0))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.yellow, lineWidth: 1.5)
+        )
+        .shadow(color: Color.yellow.opacity(0.4), radius: 8)
+    }
+    
+    // MARK: - Inactivity Guard Toggle Row
+    
+    private var inactivityGuardToggleRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "figure.walk.motion")
+                .font(.subheadline)
+                .foregroundStyle(sosViewModel.isInactivityGuardEnabled ? .green : .gray)
+            
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Inactivity Guard (Man Down)")
+                    .font(.caption.bold())
+                    .foregroundStyle(sosViewModel.isInactivityGuardEnabled ? .white : .gray)
+                
+                Text("Auto-SOS if immobile for 3m (30s silent warning)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.gray)
+            }
+            
+            Spacer()
+            
+            Toggle("", isOn: Binding(
+                get: { sosViewModel.isInactivityGuardEnabled },
+                set: { sosViewModel.isInactivityGuardEnabled = $0 }
+            ))
+            .labelsHidden()
+            .tint(.green)
+            .scaleEffect(0.8)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.black.opacity(0.3))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     
     // MARK: - Banner
@@ -205,6 +290,8 @@ public struct SOSButtonView: View {
             return "Lost"
         case .security:
             return "Sec"
+        case .inactivity:
+            return "Immobile"
         }
     }
     

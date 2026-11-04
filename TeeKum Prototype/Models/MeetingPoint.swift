@@ -8,7 +8,7 @@
 import Foundation
 import CoreLocation
 
-/// Action taken regarding a group rendezvous point.
+/// Action taken regarding a group rendezvous point over the mesh.
 public enum MeetingAction: UInt8, CaseIterable, Codable, Sendable {
     case propose = 0x01
     case accept  = 0x02
@@ -31,93 +31,129 @@ public enum AttendanceStatus: UInt8, CaseIterable, Codable, Sendable {
     }
 }
 
-/// Official venue landmark presets for festival coordination.
-public struct LandmarkPreset: Identifiable, Sendable {
-    public let id: UInt32
-    public let name: String
-    public let coordinate: CLLocationCoordinate2D
+/// Rapid 1-tap presets for selecting when to meet at the festival.
+public enum MeetingTimePreset: Int, CaseIterable, Identifiable, Sendable {
+    case rightNow = 0
+    case in15Mins = 15
+    case in30Mins = 30
+    case in1Hour  = 60
     
-    public init(id: UInt32, name: String, coordinate: CLLocationCoordinate2D) {
-        self.id = id
-        self.name = name
-        self.coordinate = coordinate
-    }
-}
-
-public enum VenueLandmark {
-    public static let presets: [LandmarkPreset] = [
-        LandmarkPreset(id: 1, name: "Main Stage Sound Booth", coordinate: CLLocationCoordinate2D(latitude: 33.6822, longitude: -116.2355)),
-        LandmarkPreset(id: 2, name: "Gate 3 Exit", coordinate: CLLocationCoordinate2D(latitude: 33.6845, longitude: -116.2380)),
-        LandmarkPreset(id: 3, name: "First Aid / Medical Tent", coordinate: CLLocationCoordinate2D(latitude: 33.6810, longitude: -116.2340)),
-        LandmarkPreset(id: 4, name: "Water Refill Station A", coordinate: CLLocationCoordinate2D(latitude: 33.6830, longitude: -116.2370)),
-        LandmarkPreset(id: 5, name: "Food Truck Plaza", coordinate: CLLocationCoordinate2D(latitude: 33.6795, longitude: -116.2360)),
-        LandmarkPreset(id: 6, name: "Merch Stand North", coordinate: CLLocationCoordinate2D(latitude: 33.6850, longitude: -116.2350))
-    ]
+    public var id: Int { rawValue }
     
-    public static func preset(for id: UInt32?) -> LandmarkPreset? {
-        guard let id = id else { return nil }
-        return presets.first(where: { $0.id == id })
+    public var title: String {
+        switch self {
+        case .rightNow: return "Right Now"
+        case .in15Mins: return "In 15m"
+        case .in30Mins: return "In 30m"
+        case .in1Hour:  return "In 1h"
+        }
     }
     
-    public static func preset(for name: String) -> LandmarkPreset? {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return presets.first(where: { $0.name.lowercased() == trimmed })
+    public func targetDate(from base: Date = Date()) -> Date {
+        base.addingTimeInterval(TimeInterval(rawValue * 60))
     }
-}
-
-/// Curated premade festival locations available in the meeting point dropdown menu.
-public enum PremadeMeetingLocation {
-    public static let defaultName = "Meeting Point"
-    
-    public static let allLocations: [String] = [
-        "Meeting Point",
-        "Main Stage Sound Booth",
-        "Main Stage Left",
-        "Main Stage Right",
-        "Ferris Wheel",
-        "Food Court / Trucks",
-        "Beer Garden",
-        "First Aid / Medical Tent",
-        "Water Refill Station",
-        "Merch Stand",
-        "Main Entrance / Exit",
-        "Gate 3 Exit",
-        "Restrooms North",
-        "Restrooms South",
-        "VIP Lounge",
-        "Lost & Found"
-    ]
 }
 
 /// Model representing the single active rendezvous point for a group session.
+/// Location naming has been redesigned to be dynamic (proposer initials + target time & countdown).
 public struct MeetingPoint: Identifiable, Equatable, Hashable, Sendable {
     /// Unique 32-bit identifier for this meeting instance.
     public let id: UInt32
     
-    /// Human-readable label (e.g., "Stage 2 Sound Booth", "Gate 3 Exit").
-    public var name: String
-    
     /// Geographical coordinate of the rendezvous spot.
     public var coordinate: CLLocationCoordinate2D
     
-    /// Target rendezvous time (e.g. 10:15 PM), or nil for immediate meetup.
-    public var targetTime: Date?
-    
-    /// Initials of the member who created this proposal (e.g. "DNA").
-    public let proposerId: String
-    
-    /// Optional predefined venue landmark identifier (0 if custom map pin).
-    public var landmarkId: UInt32?
-    
-    /// Attendance dictionary mapping member initials to their attendance response.
-    public var attendance: [String: AttendanceStatus]
+    /// Target rendezvous time.
+    public var meetupTime: Date
     
     /// Timestamp when proposed.
     public var createdAt: Date
     
+    /// Initials of the member who created this proposal (e.g. "DNA").
+    public let proposerId: String
+    
+    /// True if the meetup was requested for immediately ("Right Now").
+    public var isRightNow: Bool
+    
+    /// True if the point is anchored to the proposer's current GPS location.
+    public var anchorToProposerGPS: Bool
+    
+    /// Radius in meters for automatic arrival detection (default: 25 meters).
+    public var arrivalRadiusMeters: Double
+    
+    /// Attendance dictionary mapping member initials to their attendance response.
+    public var attendance: [String: AttendanceStatus]
+    
+    // MARK: - Compatibility & Display Properties
+    
+    /// Backwards-compatible name property returning the dynamic title.
+    public var name: String {
+        formattedTitle
+    }
+    
+    /// Clean title describing the rendezvous author (e.g. "DNA's Meetup").
+    public var title: String {
+        "\(proposerId)'s Meetup"
+    }
+    
+    /// Dynamic display label with countdown (e.g. "DNA's Meetup • 10:30 PM (in 15m)" or "DNA's Meetup • Right Now").
+    public var formattedTitle: String {
+        "\(title) • \(timeDescription)"
+    }
+    
+    /// Human-readable time description with relative offset.
+    public var timeDescription: String {
+        if isRightNow {
+            return "Right Now"
+        }
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        let clockString = formatter.string(from: meetupTime)
+        
+        let diffMinutes = Int(meetupTime.timeIntervalSinceNow / 60)
+        if diffMinutes > 0 {
+            return "\(clockString) (in \(diffMinutes)m)"
+        } else if diffMinutes >= -5 {
+            return "\(clockString) (now)"
+        } else {
+            return "\(clockString) (started)"
+        }
+    }
+    
+    /// A rendezvous auto-expires 1 hour (3600 seconds) after the target meetup time.
+    public var isExpired: Bool {
+        Date().timeIntervalSince(meetupTime) > 3600
+    }
+    
+    // MARK: - Initializer
+    
     public init(
         id: UInt32 = UInt32.random(in: 1...UInt32.max),
-        name: String,
+        coordinate: CLLocationCoordinate2D,
+        meetupTime: Date = Date(),
+        createdAt: Date = Date(),
+        proposerId: String,
+        isRightNow: Bool = false,
+        anchorToProposerGPS: Bool = false,
+        arrivalRadiusMeters: Double = 25.0,
+        attendance: [String: AttendanceStatus] = [:]
+    ) {
+        self.id = id
+        self.coordinate = coordinate
+        self.meetupTime = meetupTime
+        self.createdAt = createdAt
+        self.proposerId = InitialsCodec.sanitize(proposerId)
+        self.isRightNow = isRightNow
+        self.anchorToProposerGPS = anchorToProposerGPS
+        self.arrivalRadiusMeters = arrivalRadiusMeters
+        self.attendance = attendance
+    }
+    
+    /// Convenience initializer for backwards compatibility with legacy callers.
+    public init(
+        id: UInt32 = UInt32.random(in: 1...UInt32.max),
+        name: String = "",
         coordinate: CLLocationCoordinate2D,
         targetTime: Date? = nil,
         proposerId: String,
@@ -126,35 +162,38 @@ public struct MeetingPoint: Identifiable, Equatable, Hashable, Sendable {
         createdAt: Date = Date()
     ) {
         self.id = id
-        self.name = name
         self.coordinate = coordinate
-        self.targetTime = targetTime
-        self.proposerId = InitialsCodec.sanitize(proposerId)
-        self.landmarkId = landmarkId
-        self.attendance = attendance
+        self.meetupTime = targetTime ?? Date()
         self.createdAt = createdAt
+        self.proposerId = InitialsCodec.sanitize(proposerId)
+        self.isRightNow = targetTime == nil
+        self.anchorToProposerGPS = false
+        self.arrivalRadiusMeters = 25.0
+        self.attendance = attendance
     }
     
     public static func == (lhs: MeetingPoint, rhs: MeetingPoint) -> Bool {
         lhs.id == rhs.id &&
-        lhs.name == rhs.name &&
         lhs.coordinate.latitude == rhs.coordinate.latitude &&
         lhs.coordinate.longitude == rhs.coordinate.longitude &&
-        lhs.targetTime == rhs.targetTime &&
+        lhs.meetupTime == rhs.meetupTime &&
+        lhs.createdAt == rhs.createdAt &&
         lhs.proposerId == rhs.proposerId &&
-        lhs.landmarkId == rhs.landmarkId &&
-        lhs.attendance == rhs.attendance &&
-        lhs.createdAt == rhs.createdAt
+        lhs.isRightNow == rhs.isRightNow &&
+        lhs.anchorToProposerGPS == rhs.anchorToProposerGPS &&
+        lhs.arrivalRadiusMeters == rhs.arrivalRadiusMeters &&
+        lhs.attendance == rhs.attendance
     }
     
     public func hash(into hasher: inout Hasher) {
         hasher.combine(id)
-        hasher.combine(name)
         hasher.combine(coordinate.latitude)
         hasher.combine(coordinate.longitude)
-        hasher.combine(targetTime)
-        hasher.combine(proposerId)
-        hasher.combine(landmarkId)
+        hasher.combine(meetupTime)
         hasher.combine(createdAt)
+        hasher.combine(proposerId)
+        hasher.combine(isRightNow)
+        hasher.combine(anchorToProposerGPS)
+        hasher.combine(arrivalRadiusMeters)
     }
 }

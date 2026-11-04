@@ -117,13 +117,11 @@ public final class LocationPublisher {
             headingByte = 0
         }
         
-        // Acceptance Criterion 3: Status is included in the normal location update
+        // Option B: Pure geographic & sensor telemetry (Status is transmitted independently via Chat)
         let payload = LocationPingPayload(
             coordinate: location.coordinate,
             timestamp: location.timestamp, // Preserves hardware measurement timestamp
             accuracy: location.rawAccuracyByte,
-            statusCode: status.code,
-            targetRefId: status.targetRefId,
             senderInitials: session.localInitials,
             batteryLevel: batteryPct,
             heading: headingByte,

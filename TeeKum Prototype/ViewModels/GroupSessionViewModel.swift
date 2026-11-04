@@ -150,6 +150,9 @@ public final class GroupSessionViewModel {
         self.members.removeAll()
         self.errorMessage = nil
         self.isConnecting = false
+        Task { @MainActor in
+            await LiveActivityManager.shared.endSessionActivity()
+        }
     }
     
     /// Directly sets and persists an already constructed active session.

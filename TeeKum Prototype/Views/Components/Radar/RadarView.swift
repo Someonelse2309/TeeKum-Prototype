@@ -18,19 +18,22 @@ public struct RadarView: View {
     public let currentHeading: CLLocationDirection?
     @Binding public var selectedMember: Member?
     public let theme: RadarTheme
+    public let userColor: Color?
     
     public init(
         members: [Member],
         userLocation: LocationPin?,
         currentHeading: CLLocationDirection?,
         selectedMember: Binding<Member?>,
-        theme: RadarTheme = .standard
+        theme: RadarTheme = .standard,
+        userColor: Color? = nil
     ) {
         self.members = members
         self.userLocation = userLocation
         self.currentHeading = currentHeading
         self._selectedMember = selectedMember
         self.theme = theme
+        self.userColor = userColor
     }
     
     public var body: some View {
@@ -69,7 +72,7 @@ public struct RadarView: View {
                 }
                 
                 // MARK: - Center User Marker
-                RadarCenterMarker(theme: theme)
+                RadarCenterMarker(theme: theme, userColor: userColor)
                     .position(center)
                 
                 // MARK: - Peer Blips

@@ -145,13 +145,27 @@ public final class LiveActivityManager: LiveActivityManaging {
         }
     }
     
-    /// Cleanly dismisses the Live Activity.
+    /// Cleanly dismisses all Live Activities and clears state.
     public func endSessionActivity() async {
-        guard let activity = currentActivity else { return }
+        if let activity = currentActivity {
+            let finalContent = ActivityContent(state: activity.content.state, staleDate: nil)
+            await activity.end(finalContent, dismissalPolicy: .immediate)
+            self.currentActivity = nil
+            print("[LiveActivityManager] Dismissed current Live Activity: \(activity.id)")
+        }
         
-        let finalContent = ActivityContent(state: activity.content.state, staleDate: nil)
-        await activity.end(finalContent, dismissalPolicy: .immediate)
+        // Terminate all system-tracked activities for this attribute type to prevent lingering/duplicates
+        for activity in Activity<SessionActivityAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+            print("[LiveActivityManager] Dismissed lingering Activity: \(activity.id)")
+        }
+    }
+    
+    /// Cleans up any orphaned activities if launched without an active group session.
+    public func cleanupDanglingActivities() async {
+        for activity in Activity<SessionActivityAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
         self.currentActivity = nil
-        print("[LiveActivityManager] Dismissed Live Activity: \(activity.id)")
     }
 }

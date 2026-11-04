@@ -40,7 +40,7 @@ The system is designed to be completely serverless (*100% serverless*). Devices 
 | :--- | :--- |
 | **D1 — 100% Serverless Group Pairing** | Groups are formed without cloud servers. A shareable link (`teekum://join#key=Base64Key&sid=%06X&name=GroupName`) carries the 256-bit symmetric encryption key and 24-bit session ID in the URL fragment for online sharing (iMessage/WhatsApp), while an on-screen QR barcode renders the exact same URL string for offline camera scanning at the venue. |
 | **D2 — User-Controlled Live Sharing Toggle** | Location broadcasting only occurs when the user enables the *Live Sharing* toggle. When relaxing or watching a show, users turn sharing off to preserve privacy and battery. Emergency SOS alerts broadcast immediately regardless of toggle state. |
-| **D3 — Single Active Meeting Point** | Exactly one active rendezvous spot is permitted per group at a time. Any member can propose a meeting point (venue landmark, custom pin, or current location), and friends respond with 1-tap confirmation (*"I'll be there"* or *"Can't make it"*). |
+| **D3 — Single Active Meeting Point (Dynamic Rendezvous)** | Exactly one active rendezvous spot is permitted per group at a time. Location naming is dynamic based on proposer initials and scheduled meetup time/countdown (e.g. *"DNA's Meetup • 10:30 PM (in 15m)"*). Proposers select meetup time via 1-tap quick presets (*"Right Now"*, *"In 15m"*, *"In 30m"*, *"In 1h"*) or custom clock picker, choosing between current GPS or long-pressing the map. Includes 25m auto-arrival geofencing and automatic 1-hour expiration. Friends confirm with 1-tap responses (*"I'll be there"*, *"Arrived"*, or *"Can't make it"*). |
 | **D4 — Continuous Directional Finding & Tactical Radar** | Group navigation utilizes a forward-up 60m polar tactical radar (`RadarView`) rotating with compass heading, clamping distant peers (>60m) to the outer boundary with directional arrows and distance tags. Within ~5–8 meters, the interface smoothly transitions to centimeter-accurate Nearby Interaction (UWB) radar, paired with a 1-tap flashing Screen Strobe beacon. |
 | **D5 — Communal Relay Policy, Live Activity & Background Execution** | **Phase 1 MVP:** Live Activity (`ActivityKit`) displays session status, active meeting point, connected peer count, and emergency SOS alerts across Dynamic Island and Lock Screen, keeping background sockets alive via `showsBackgroundLocationIndicator = true`.<br>**Phase 2 Mesh Participation (Approved via /grill-me):** Three user-controlled participation modes: **Always Active** (relays while battery $\ge 20\%$), **Timed 30 Min** (relays for 30 minutes, then auto-pauses), and **Disabled** (relay OFF). Accessible in-app and directly from Lock Screen Live Activity controls. Relaying is strictly zero-knowledge (only 10-byte cleartext header inspected; payloads remain ChaCha20 encrypted), rate-capped at $\le 2$ pkts/sec for ordinary traffic with 1,024-entry LRU deduplication, and automatically terminates at 20% battery or Low Power Mode (Festival Survival Mode). |
 | **D6 — Festival Survival Mode (Hard 20% Cutoff)** | Automatic critical battery detection. When battery reaches 20% (or Low Power Mode), stranger mesh relaying and background sessions are instantly terminated, reducing CoreLocation sampling to once every 1–2 minutes or on-demand, reserving remaining power strictly for SOS and meeting maps. |
@@ -55,6 +55,7 @@ The system is designed to be completely serverless (*100% serverless*). Devices 
 | **D15 — One-to-Many Stale Peer Accelerated Cadence, Staggered AODV Probing & Response Burst** | Proactive recovery for group coordination in crowded venues: (1) accelerating broadcast cadence to 2.0s when any peer is unseen >30s, (2) triggering sequential AODV `ROUTE_REQ` probes spaced by 2.5s for stale peers (>45s unseen), (3) stale friend replying with `ROUTE_RESP` plus a 3-ping response burst (2.0s interval), and (4) 60s recovery timeout fallback to stationary cadence (20s) if missing >90s. |
 | **D16 — Integrated On-Device Mesh Debugger & Virtual Simulation Lab** | Native on-device diagnostic and testing suite (`MeshDebuggerView`, `MeshDebuggerViewModel`) featuring 1-tap automated triage health check, live 56-byte packet stream logger and bitfield inspector, packet injection (valid/fault corrupted MAC), and virtual multi-node topology sandbox with real-time link breaking. |
 | **D17 — Phase 3 Festival Group Mesh Chat & 20-Character Text Engine (Approved via /grill-me)** | Serverless, offline group chat channel (`PacketType.chatMessage = 0x07`) broadcast across the multi-hop mesh. Transmits concise messages up to 20 characters encoded directly as standard UTF-8/ASCII bytes (eliminating radix codec complexity and supporting full lowercase, uppercase, numbers, and standard punctuation). The 30-byte encrypted payload is cleanly structured as: 2B Base-27 sender initials + 4B Unix epoch timestamp + 1B text length ($0 \dots 20$) + 20B text content + 3B reserved padding. Transmitted via a dedicated FIFO outbox lane ahead of stranger relays (up to 2 retries, 3s cooldown). Employs individual per-person ACK tracking (`Delivered M/N` friends) utilizing existing `ACKPayload` (Type `0x06`). Embedded as a non-intrusive bottom sheet overlay on `MainMapView` (`ChatSheetView`) with quick-tap festival preset chips above keyboard ("Beer line", "At Main Stage", "Restroom", "Where are you?"). Strictly ephemeral (in-memory only, purged on exit) and auto-suspended at <20% battery (Festival Survival Mode). |
+| **D18 — Phase 3 Peer Facing Direction & Live Map Orientation** | Real-time visualization of peer and local user compass heading on `MainMapView`. Telemetry heading (`0...255` UInt8 on wire) is reconstructed via `LocationPingPayload.headingDegrees` ($0.0^\circ \dots 359.9^\circ$). Friend map annotations feature `DirectionalHeadingIndicator`: a glowing $50^\circ$ translucent vision beam cone (`HeadingVisionCone`) and a crisp directional pointer chevron on the avatar rim rotated to match the friend's physical facing orientation. The friend detail sheet (`FriendDetailView`) renders exact compass bearing and cardinal direction (`180° (S)`). |
 
 ---
 
@@ -480,6 +481,13 @@ TeeKum Prototype/ (Root Repository)
 │   │       ├── SetMeetingPointSheet.swift // Compact bottom sheet with curated location dropdown menu
 │   │       ├── MeshAgreementView.swift  // Communal Mesh Compact agreement consent modal
 │   │       ├── RelaySettingsSheet.swift // Communal mesh relay mode picker (Always, Timed 30m, Disabled)
+│   │       ├── InAppToastView.swift     // AMOLED dark floating banner toast for incoming chats/meeting points
+│   │       ├── HeadingVisionCone.swift  // 50° field-of-view cone & directional pointer arrow for map view
+│   │       ├── ChatSheetView.swift      // Phase 3 docked chat overlay sheet, preset chips, message history
+│   │       ├── ChatMessageBubbleView.swift // Inbound/outbound message bubble with delivery state chips
+│   │       ├── PresetChipsView.swift    // 1-tap quick festival chat preset chips ("Beer line", "At Main Stage")
+│   │       ├── RecipientAckBreakdownView.swift // Per-recipient delivery inspection sheet
+│   │       ├── ByteMeterView.swift      // 20-byte text length indicator & character limiter
 │   │       └── Radar/
 │   │           ├── RadarView.swift      // Forward-up polar projection, clamping at 60m, dual selection
 │   │           ├── RadarGridBackground.swift // Radial gradient background, concentric rings (15m, 30m, 60m), ticks
@@ -492,7 +500,8 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── MapViewModel.swift           // Map viewport state, friend pins, offline filtering, Live Sharing, radar
 │   │   ├── MeetingPointViewModel.swift  // Single active meeting point state & attendance sync
 │   │   ├── MeshDebuggerViewModel.swift  // Triage engine, live packet logging, injection, virtual mesh simulation
-│   │   └── SOSViewModel.swift           // 3-second hold countdown & honest delivery status
+│   │   ├── SOSViewModel.swift           // 3-second hold countdown & honest delivery status
+│   │   └── ChatViewModel.swift          // Phase 3 festival chat state, unread badge, cooldown, draft input
 │   ├── Services/
 │   │   ├── PeerTransport.swift          // Authoritative actor protocol, state streams & diagnostics
 │   │   ├── PeerTransportService.swift   // Network.framework P2P datagram actor (AWDL Bonjour _teekum._tcp)
@@ -501,6 +510,8 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── PriorityOutboxQueue.swift    // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting) + coalesced Location
 │   │   ├── CryptoServiceProtocol.swift  // Cryptographic service interface
 │   │   ├── CryptoService.swift          // ChaChaPoly AEAD, AAD envelope binding & Keychain store (actor)
+│   │   ├── NotificationService.swift    // System local notifications (UNUserNotificationCenter) & in-app toasts
+│   │   ├── ChatMessageEngine.swift      // Phase 3 multi-hop chat engine, FIFO outbox, retries & ACK tracking
 │   │   ├── SessionStorageProtocol.swift // Ephemeral SQLite crash recovery storage interface
 │   │   ├── LocationServiceProtocol.swift // Location service contract & dynamic accuracy interface
 │   │   ├── LocationService.swift        // CoreLocation wrapper, CoreMotion adaptive cadence & dynamic accuracy

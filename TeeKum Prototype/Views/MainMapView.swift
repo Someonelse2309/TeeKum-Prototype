@@ -16,6 +16,7 @@ public struct MainMapView: View {
     @Bindable var sessionViewModel: GroupSessionViewModel
     @Bindable var sosViewModel: SOSViewModel
     @Bindable var meetingPointViewModel: MeetingPointViewModel
+    @Bindable var chatViewModel: ChatViewModel
     var relayPolicyManager: RelayPolicyManager?
     var peerTransport: PeerTransportService?
     
@@ -35,6 +36,8 @@ public struct MainMapView: View {
     @State private var radarInitialMember: Member? = nil
     @State private var relayState: RelayPolicyState?
     @State private var mapCameraPosition: MapCameraPosition = .automatic
+    @State private var hasInitialZoomedToUser: Bool = false
+    @State private var isSatelliteView: Bool = false
     
     // Interactive Map-Pointing for Meeting Points
     @State private var droppedPinCoordinate: CLLocationCoordinate2D? = nil
@@ -42,11 +45,13 @@ public struct MainMapView: View {
     @State private var droppedPinName: String = ""
     @State private var lastTouchPoint: CGPoint? = nil
     
+    @MainActor
     public init(
         mapViewModel: MapViewModel,
         sessionViewModel: GroupSessionViewModel,
         sosViewModel: SOSViewModel,
         meetingPointViewModel: MeetingPointViewModel,
+        chatViewModel: ChatViewModel,
         relayPolicyManager: RelayPolicyManager? = nil,
         peerTransport: PeerTransportService? = nil
     ) {
@@ -54,6 +59,7 @@ public struct MainMapView: View {
         self.sessionViewModel = sessionViewModel
         self.sosViewModel = sosViewModel
         self.meetingPointViewModel = meetingPointViewModel
+        self.chatViewModel = chatViewModel
         self.relayPolicyManager = relayPolicyManager
         self.peerTransport = peerTransport
     }
@@ -86,6 +92,14 @@ public struct MainMapView: View {
                     // Top Status Pill & Session Bar
                     topSessionBar
                     
+                    if let toast = NotificationService.shared.activeToast {
+                        InAppToastView(toast: toast) {
+                            NotificationService.shared.dismissToast()
+                        }
+                        .padding(.top, 4)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    
                     if let alert = sosViewModel.activeIncomingAlert {
                         incomingSOSBanner(for: alert)
                     }
@@ -101,6 +115,7 @@ public struct MainMapView: View {
                     // Bottom Docked Controls
                     bottomControlsDock
                 }
+                .animation(.easeInOut(duration: 0.25), value: NotificationService.shared.activeToast)
                 .transition(.opacity)
             }
         }
@@ -126,11 +141,24 @@ public struct MainMapView: View {
         .sheet(isPresented: $isShowingGroupQR) {
             groupQRSheet
         }
+        .sheet(isPresented: $chatViewModel.isChatSheetPresented) {
+            ChatSheetView(viewModel: chatViewModel)
+        }
         .sheet(isPresented: $isShowingMeetingPoints) {
             MeetingPointsView(
                 meetingPointViewModel: meetingPointViewModel,
                 sessionViewModel: sessionViewModel,
-                userLocation: mapViewModel.userLocation
+                userLocation: mapViewModel.userLocation,
+                onPickOnMap: {
+                    NotificationService.shared.showInAppToast(
+                        InAppToast(
+                            title: "Choose on Map",
+                            message: "Long-press anywhere on the festival map to drop a rendezvous pin.",
+                            systemImage: "hand.tap.fill",
+                            accentColor: Color(red: 0.0, green: 0.85, blue: 1.0)
+                        )
+                    )
+                }
             )
         }
         .sheet(isPresented: $isShowingDroppedPinSheet, onDismiss: {
@@ -139,16 +167,16 @@ public struct MainMapView: View {
             if let coord = droppedPinCoordinate {
                 SetMeetingPointSheet(
                     coordinate: coord,
-                    initialName: droppedPinName,
                     activeMeetingPoint: meetingPointViewModel.activeMeetingPoint,
-                    onConfirm: { name, chosenCoord in
+                    onConfirm: { meetupTime, isRightNow, chosenCoord in
                         if let session = sessionViewModel.activeSession {
                             meetingPointViewModel.proposeMeetingPoint(
-                                name: name,
                                 coordinate: chosenCoord,
-                                targetTime: Date().addingTimeInterval(1800),
+                                meetupTime: meetupTime,
+                                isRightNow: isRightNow,
+                                anchorToProposerGPS: false,
                                 proposerId: session.localInitials,
-                                landmarkId: nil
+                                arrivalRadiusMeters: 25.0
                             )
                         }
                         isShowingDroppedPinSheet = false
@@ -159,7 +187,7 @@ public struct MainMapView: View {
                         droppedPinCoordinate = nil
                     }
                 )
-                .presentationDetents([.fraction(0.35), .medium])
+                .presentationDetents([.fraction(0.48), .medium])
                 .presentationDragIndicator(.visible)
             }
         }
@@ -196,6 +224,7 @@ public struct MainMapView: View {
                 userLocation: mapViewModel.userLocation,
                 currentHeading: mapViewModel.currentHeading,
                 locationService: mapViewModel.locationService,
+                userColor: sessionViewModel.localColor.swiftUIColor,
                 onDismiss: {
                     radarInitialMember = nil
                     isShowingNavigationBeacon = false
@@ -224,6 +253,21 @@ public struct MainMapView: View {
                 }
             }
         }
+        .onAppear {
+            if !hasInitialZoomedToUser, let userLoc = mapViewModel.userLocation {
+                mapCameraPosition = .camera(MapCamera(centerCoordinate: userLoc.coordinate, distance: 400))
+                hasInitialZoomedToUser = true
+            }
+        }
+        .onChange(of: mapViewModel.userLocation) { _, newLoc in
+            if !hasInitialZoomedToUser, let userLoc = newLoc {
+                mapCameraPosition = .camera(MapCamera(centerCoordinate: userLoc.coordinate, distance: 400))
+                hasInitialZoomedToUser = true
+            }
+            if let userLoc = newLoc {
+                meetingPointViewModel.checkArrival(userLocation: userLoc.coordinate)
+            }
+        }
     }
     
     // MARK: - MapKit View
@@ -231,7 +275,31 @@ public struct MainMapView: View {
     private var venueMapView: some View {
         MapReader { proxy in
             Map(position: $mapCameraPosition) {
-                UserAnnotation()
+                UserAnnotation {
+                    ZStack {
+                        if let heading = mapViewModel.currentHeading {
+                            DirectionalHeadingIndicator(
+                                heading: heading,
+                                color: sessionViewModel.localColor.swiftUIColor,
+                                avatarRadius: 16,
+                                coneRadius: 36,
+                                fovAngle: 50
+                            )
+                        }
+                        
+                        Circle()
+                            .fill(sessionViewModel.localColor.swiftUIColor.opacity(0.25))
+                            .frame(width: 32, height: 32)
+                        Circle()
+                            .stroke(sessionViewModel.localColor.swiftUIColor, lineWidth: 2.5)
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(Color.black.opacity(0.85)))
+                        Text(sessionViewModel.localUserName.isEmpty ? "ME" : sessionViewModel.localUserName)
+                            .font(.system(size: 9, weight: .black, design: .rounded))
+                            .foregroundStyle(sessionViewModel.localColor.swiftUIColor)
+                    }
+                    .shadow(color: sessionViewModel.localColor.swiftUIColor.opacity(0.5), radius: 6)
+                }
                 
                 // Friend Annotations with Honest Freshness Indicators
                 ForEach(sessionViewModel.members) { member in
@@ -265,7 +333,7 @@ public struct MainMapView: View {
                     .annotationTitles(.hidden)
                 }
             }
-            .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+            .mapStyle(isSatelliteView ? .hybrid(elevation: .flat, pointsOfInterest: .excludingAll) : .standard(elevation: .flat, pointsOfInterest: .excludingAll))
             .ignoresSafeArea()
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .local)
@@ -290,9 +358,21 @@ public struct MainMapView: View {
         let isStale = member.isStale(threshold: 60)
         let isEmergency = member.status.code.isEmergency
         let memberColor = member.color.swiftUIColor
+        let pinAccentColor = isEmergency ? Color.red : (isStale ? memberColor.opacity(0.6) : memberColor)
         
         return VStack(spacing: 4) {
             ZStack {
+                // Directional Heading Indicator (Vision Cone + Perimeter Pointer)
+                if let heading = member.heading {
+                    DirectionalHeadingIndicator(
+                        heading: heading,
+                        color: pinAccentColor,
+                        avatarRadius: 22,
+                        coneRadius: 44,
+                        fovAngle: 52
+                    )
+                }
+                
                 // Outer ring
                 if isEmergency {
                     Circle()
@@ -302,7 +382,7 @@ public struct MainMapView: View {
                 
                 Circle()
                     .stroke(
-                        isEmergency ? Color.red : (isStale ? memberColor.opacity(0.6) : memberColor),
+                        pinAccentColor,
                         lineWidth: isEmergency ? 3 : 2
                     )
                     .frame(width: 44, height: 44)
@@ -362,7 +442,7 @@ public struct MainMapView: View {
             )
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(member.name), status \(member.status.code.title)")
+        .accessibilityLabel("\(member.name), status \(member.status.code.title)\(member.heading.map { ", facing \(Int($0)) degrees" } ?? "")")
         .accessibilityValue(isStale ? "Stale location measured \(relativeAge(since: member.lastSeen))" : "Live location")
         .accessibilityHint("Double tap to view friend details and navigation.")
     }
@@ -370,19 +450,35 @@ public struct MainMapView: View {
     // MARK: - Meeting Point Pin
     
     private func meetingPointPinView(for mp: MeetingPoint) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: "mappin.circle.fill")
-                .font(.system(size: 32))
-                .foregroundStyle(.yellow)
-                .shadow(color: .yellow.opacity(0.5), radius: 6)
+        VStack(spacing: 3) {
+            ZStack {
+                Circle()
+                    .fill(Color(red: 0.0, green: 0.85, blue: 1.0).opacity(0.20))
+                    .frame(width: 42, height: 42)
+                Circle()
+                    .stroke(Color(red: 0.0, green: 0.85, blue: 1.0), lineWidth: 2)
+                    .frame(width: 42, height: 42)
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(Color(red: 0.0, green: 0.85, blue: 1.0))
+            }
+            .shadow(color: Color(red: 0.0, green: 0.85, blue: 1.0).opacity(0.55), radius: 6)
             
-            Text(mp.name)
-                .font(.caption2.bold())
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.black.opacity(0.85))
-                .foregroundStyle(.yellow)
-                .clipShape(Capsule())
+            VStack(spacing: 1) {
+                Text(mp.title)
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                Text(mp.timeDescription)
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color(red: 0.0, green: 0.85, blue: 1.0))
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.black.opacity(0.85))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule().stroke(Color(red: 0.0, green: 0.85, blue: 1.0).opacity(0.4), lineWidth: 1)
+            )
         }
     }
     
@@ -401,7 +497,7 @@ public struct MainMapView: View {
                     .shadow(color: .yellow.opacity(0.9), radius: 8)
             }
             
-            Text(droppedPinName.isEmpty ? PremadeMeetingLocation.defaultName : droppedPinName)
+            Text(droppedPinName.isEmpty ? "Rendezvous Spot" : droppedPinName)
                 .font(.caption2.bold())
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -414,7 +510,7 @@ public struct MainMapView: View {
     private func handleMapLongPress(at coordinate: CLLocationCoordinate2D) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         droppedPinCoordinate = coordinate
-        droppedPinName = PremadeMeetingLocation.defaultName
+        droppedPinName = "Rendezvous Spot"
         isShowingDroppedPinSheet = true
     }
     
@@ -520,6 +616,47 @@ public struct MainMapView: View {
     
     private var floatingMapTools: some View {
         VStack(spacing: 8) {
+            // Festival Group Chat Button
+            Button {
+                chatViewModel.isChatSheetPresented = true
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                        .font(.subheadline.bold())
+                        .frame(width: 40, height: 40)
+                        .background(Color.black.opacity(0.75))
+                        .foregroundStyle(chatViewModel.unreadCount > 0 ? Color(red: 0.0, green: 0.85, blue: 1.0) : .white)
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(
+                                    chatViewModel.unreadCount > 0
+                                        ? Color(red: 0.0, green: 0.85, blue: 1.0).opacity(0.8)
+                                        : Color.white.opacity(0.2),
+                                    lineWidth: 1.5
+                                )
+                        )
+                        .shadow(
+                            color: chatViewModel.unreadCount > 0
+                                ? Color(red: 0.0, green: 0.85, blue: 1.0).opacity(0.5)
+                                : .clear,
+                            radius: 6
+                        )
+                    
+                    if chatViewModel.unreadCount > 0 {
+                        Text("\(min(99, chatViewModel.unreadCount))")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Color(red: 1.0, green: 0.18, blue: 0.45))
+                            .clipShape(Capsule())
+                            .offset(x: 4, y: -4)
+                    }
+                }
+            }
+            .accessibilityLabel("Open Festival Group Chat\(chatViewModel.unreadCount > 0 ? ", \(chatViewModel.unreadCount) unread messages" : "")")
+            
             // Festival Tactical Radar Button (Glowing Cyan)
             Button {
                 radarInitialMember = nil
@@ -535,6 +672,40 @@ public struct MainMapView: View {
                     .shadow(color: .cyan.opacity(0.4), radius: 6)
             }
             .accessibilityLabel("Open Festival Tactical Radar")
+            
+            // Recenter on User Location Button
+            Button {
+                if let userLoc = mapViewModel.userLocation {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        mapCameraPosition = .camera(MapCamera(centerCoordinate: userLoc.coordinate, distance: 400))
+                    }
+                }
+            } label: {
+                Image(systemName: "location.fill")
+                    .font(.subheadline.bold())
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.75))
+                    .foregroundStyle(mapViewModel.userLocation != nil ? sessionViewModel.localColor.swiftUIColor : .gray)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
+            }
+            .accessibilityLabel("Recenter on my location")
+            
+            // Satellite / Hybrid View Toggle Button
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isSatelliteView.toggle()
+                }
+            } label: {
+                Image(systemName: isSatelliteView ? "globe.americas.fill" : "map.fill")
+                    .font(.subheadline.bold())
+                    .frame(width: 40, height: 40)
+                    .background(Color.black.opacity(0.75))
+                    .foregroundStyle(isSatelliteView ? .cyan : .white)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(isSatelliteView ? Color.cyan.opacity(0.6) : Color.white.opacity(0.2), lineWidth: 1))
+            }
+            .accessibilityLabel(isSatelliteView ? "Switch to standard map" : "Switch to satellite map")
             
             // Personal Color Selector Button
             Button {
@@ -621,18 +792,18 @@ public struct MainMapView: View {
     
     private func incomingSOSBanner(for alert: IncomingSOSAlert) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(systemName: alert.emergencyType == .inactivity ? "figure.fall" : "exclamationmark.triangle.fill")
                 .font(.title2.bold())
                 .foregroundStyle(.yellow)
             
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text("EMERGENCY SOS")
+                    Text(alert.emergencyType == .inactivity ? "MAN DOWN" : "EMERGENCY SOS")
                         .font(.caption2.bold())
-                        .foregroundStyle(.red)
+                        .foregroundStyle(alert.emergencyType == .inactivity ? .black : .red)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.white)
+                        .background(alert.emergencyType == .inactivity ? Color.yellow : Color.white)
                         .clipShape(Capsule())
                     
                     Text(alert.senderName)
@@ -640,7 +811,9 @@ public struct MainMapView: View {
                         .foregroundStyle(.white)
                 }
                 
-                Text("\(alert.emergencyType.title) • Battery \(alert.batteryLevel)%")
+                Text(alert.emergencyType == .inactivity
+                     ? "⚠️ Immobile for >3m • Battery \(alert.batteryLevel)%"
+                     : "\(alert.emergencyType.title) • Battery \(alert.batteryLevel)%")
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.9))
             }

@@ -15,9 +15,11 @@
 > - [Phase 2 Final Acceptance Report (docs/Phase 2/PHASE2_ACCEPTANCE_REPORT.md)](Phase%202/PHASE2_ACCEPTANCE_REPORT.md)
 > - [Networking Architecture & Wire Protocol (docs/Phase 1/NETWORKING.md)](Phase%201/NETWORKING.md)
 > - [56-Byte Wire Protocol & Payload Developer Guide (docs/Phase 2/PAYLOAD_GUIDE.md)](Phase%202/PAYLOAD_GUIDE.md)
+> - [Phase 3 Group Mesh Chat Architecture (docs/phase3/CHAT_ARCHITECTURE.md)](phase3/CHAT_ARCHITECTURE.md)
+> - [Phase 3 56-Byte Wire Protocol & Payload Developer Guide (docs/phase3/PAYLOAD_GUIDE.md)](phase3/PAYLOAD_GUIDE.md)
 > - [Development Log (docs/DEVELOPMENT_LOG.md)](docs/DEVELOPMENT_LOG.md)
 > 
-> *Last Verified via /grill-me:* 2026-11-03 (Phase 2 Multi-Hop Mesh Architecture, 56-Byte Wire Protocol, 24-Bit Session ID, 7-Byte Deduplication Key, Hybrid AODV & Flooding, TXT relay: 1/0 Peering, Dual-Lane Rate Limiting, 5-State Delivery UX, 3-Mode Relay Policy, Tactical Radar Multi-Peer Forward-Up Polar Projection, Dynamic Adaptive Accuracy Engine, Stale Peer Accelerated Cadence & Response Burst, Mesh Debugger & Virtual Mesh Lab, Member Color Coding Wire Integration, 14 Test Suites / 169 Tests Confirmed)
+> *Last Verified via /grill-me:* 2026-11-04 (Inactivity Guard "Man Down" Auto-SOS Type 0x04, InactivityGuardService, Pre-Alarm 30s Silent Warning Countdown, Centralized Master Configuration TeeKumConfiguration.swift, Phase 3 Group Mesh Chat Type 0x07, 17 Test Suites / 195+ Tests Confirmed)
 
 ---
 
@@ -250,7 +252,7 @@ tiny binary size, zero supply-chain risk, and instant build times.
 -   **Observability & Diagnostics:**
     -   Built-in On-Device Diagnostics Sheet (Debug HUD) showing live RSSI (dBm), connected peers, GPS accuracy, and packet delivery logs.
     -   Integrated On-Device Mesh Debugger & Diagnostic Lab (`MeshDebuggerView`) with 1-tap automated triage, live 56-byte packet inspector, synthetic/fault packet injector, and virtual multi-node topology sandbox.
--   **Testing:** Automated multi-layer test suite (14 suites, 169 passing tests) + Physical Device Testing on real iPhones in wireless environments.
+-   **Testing:** Automated multi-layer test suite (14 suites, 175 passing tests) + Physical Device Testing on real iPhones in wireless environments.
 
 ---
 
@@ -338,6 +340,7 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── MeetingPoint.swift           // Single active rendezvous point model & PremadeMeetingLocation options
 │   │   ├── Member.swift                 // Member identity, initials, lastSeen, status, battery, heading, stale helpers
 │   │   ├── MemberColor.swift            // 1-byte personal color enum, 8 neon colors, deterministic hash fallback
+│   │   ├── ChatMessage.swift            // Ephemeral group chat message & per-recipient delivery tracking
 │   │   ├── Packet.swift                 // 56-byte binary wire packet (Protocol v3), envelope, payloads, codecs
 │   │   ├── SessionActivityAttributes.swift // ActivityKit Live Activity attributes for Lock Screen & Dynamic Island
 │   │   ├── SOSDeliveryState.swift       // Honest UX delivery state machine
@@ -359,6 +362,13 @@ TeeKum Prototype/ (Root Repository)
 │   │       ├── SetMeetingPointSheet.swift // Compact bottom sheet with curated location dropdown menu
 │   │       ├── MeshAgreementView.swift  // Communal Mesh Compact agreement consent modal
 │   │       ├── RelaySettingsSheet.swift // Communal mesh relay mode picker (Always, Timed 30m, Disabled)
+│   │       ├── InAppToastView.swift     // AMOLED dark floating banner toast for incoming chats/meeting points
+│   │       ├── HeadingVisionCone.swift  // 50° field-of-view cone & directional pointer arrow for map view
+│   │       ├── ChatSheetView.swift      // Phase 3 docked chat overlay sheet, preset chips, message history
+│   │       ├── ChatMessageBubbleView.swift // Inbound/outbound message bubble with delivery state chips
+│   │       ├── PresetChipsView.swift    // 1-tap quick festival chat preset chips ("Beer line", "At Main Stage")
+│   │       ├── RecipientAckBreakdownView.swift // Per-recipient delivery inspection sheet
+│   │       ├── ByteMeterView.swift      // 20-byte text length indicator & character limiter
 │   │       └── Radar/
 │   │           ├── RadarView.swift      // Forward-up polar projection, clamping at 60m, dual selection
 │   │           ├── RadarGridBackground.swift // Radial gradient background, concentric rings (15m, 30m, 60m), ticks
@@ -371,7 +381,8 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── MapViewModel.swift           // Map viewport state, friend pins, offline filtering, Live Sharing, radar
 │   │   ├── MeetingPointViewModel.swift  // Single active meeting point state & attendance sync
 │   │   ├── MeshDebuggerViewModel.swift  // Triage engine, live packet logging, injection, virtual mesh simulation
-│   │   └── SOSViewModel.swift           // 3-second hold countdown & honest delivery status
+│   │   ├── SOSViewModel.swift           // 3-second hold countdown & honest delivery status
+│   │   └── ChatViewModel.swift          // Phase 3 festival chat state, unread badge, cooldown, draft input
 │   ├── Services/
 │   │   ├── PeerTransport.swift          // Authoritative actor protocol, state streams & diagnostics
 │   │   ├── PeerTransportService.swift   // Network.framework P2P datagram actor (AWDL Bonjour _teekum._tcp)
@@ -380,6 +391,8 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── PriorityOutboxQueue.swift    // Dual-lane outbox: urgent FIFO (SOS/ACK/Meeting) + coalesced Location
 │   │   ├── CryptoServiceProtocol.swift  // Cryptographic service interface
 │   │   ├── CryptoService.swift          // ChaChaPoly AEAD, AAD envelope binding & Keychain store (actor)
+│   │   ├── NotificationService.swift    // System local notifications (UNUserNotificationCenter) & in-app toasts
+│   │   ├── ChatMessageEngine.swift      // Phase 3 multi-hop chat engine, FIFO outbox, retries & ACK tracking
 │   │   ├── SessionStorageProtocol.swift // Ephemeral SQLite crash recovery storage interface
 │   │   ├── LocationServiceProtocol.swift // Location service contract & dynamic accuracy interface
 │   │   ├── LocationService.swift        // CoreLocation wrapper, CoreMotion adaptive cadence & dynamic accuracy
@@ -549,7 +562,7 @@ The app utilizes a **Fixed 56-Byte Secure Binary Wire Format** transmitted over 
 
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
-| **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | High 4 bits = Version (`0x2` for Protocol v2), Low 4 bits = Type (`0x1` Ping, `0x2` SOS, `0x3` Meeting, `0x6` ACK, `0x4` RouteReq, `0x5` RouteResp). |
+| **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | High 4 bits = Version (`0x3` for Protocol v3), Low 4 bits = Type (`0x1` Ping, `0x2` SOS, `0x3` Meeting, `0x4` RouteReq, `0x5` RouteResp, `0x6` ACK, `0x7` Chat). |
 | **1** | `hopLimit` | `UInt8` | `UInt8` | Maximum forwarding hop budget ($1\dots 15$, default 8 for pings, 8 for SOS). Authenticated in AAD. |
 | **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hop counter ($0\dots \text{hopLimit}$, starts at `0`). Mutated per relay hop; masked to `0x00` in AAD. |
 | **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian hash identifying the group session network (`0x000001...0xFFFFFF`). |
@@ -630,13 +643,13 @@ To eliminate out-of-band P2P connection handshakes while allowing flexible membe
 
 Every packet is strictly **56 bytes** total. Below are the exact byte layouts for each message type.
 
-#### Type 1: `0x01` — `LOCATION_PING` (Normal Location & Status)
-*Sent every 3–5 seconds while moving, or 15–30 seconds while stationary.*
+#### Type 1: `0x01` — `LOCATION_PING` (Normal Location & Sensor Telemetry — Option B)
+*Sent every 3–5 seconds while moving, or 15–30 seconds while stationary. In Phase 3 (Option B), status codes are removed from the wire and telemetry is contiguously packed, leaving 12 bytes reserved at the tail for vertical floor and barometry.*
 
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
-| **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x21` (High nibble = Version `2`, Low nibble = Type `1`). |
-| **1** | `hopLimit` | `UInt8` | `UInt8` | Forwarding budget ($1 \dots 8$, max 8 hops). Authenticated in AAD. |
+| **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x31` (High nibble = Version `3`, Low nibble = Type `1`). |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Forwarding budget ($1 \dots 15$, default 8 hops). Authenticated in AAD. |
 | **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hops ($0 \dots \text{hopLimit}$, starts at `0`). Mutated per relay; masked to `0x00` in AAD. |
 | **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian group session identifier (`0x000001...0xFFFFFF`). |
 | **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian counter (memberSlot + counter) for replay rejection & duplicate cache. |
@@ -644,14 +657,12 @@ Every packet is strictly **56 bytes** total. Below are the exact byte layouts fo
 | **14..17** | `longitudeRaw` | `Int32` | `CLLocationDegrees` (`Double`) | Signed 32-bit big-endian: `Int32((longitude * 1_000_000).rounded())` (~11cm res). |
 | **18..21** | `timestamp` | `UInt32` | `Date` | Big-endian Unix epoch seconds (`UInt32(date.timeIntervalSince1970)`). |
 | **22** | `accuracy` | `UInt8` | `CLLocationAccuracy` (`Double`) | Horizontal accuracy radius in meters (`0` to `255`m). |
-| **23** | `statusCode` | `UInt8` | `StatusCode` (`enum: UInt8`) | Coded activity hash (`0x00` Available, `0x0A` Drinks, `0x0B` Restroom, etc.). |
-| **24..27** | `targetRefId` | `UInt32` | `UInt32?` | Big-endian ID of target friend or landmark (`0x00000000` if none). |
-| **28..29** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of transmitting member. |
-| **30** | `batteryLevel` | `UInt8` | `Float` | Sender battery percentage (`0` to `100`%). |
-| **31** | `heading` | `UInt8` | `CLLocationDirection` (`Double`) | Compass heading (`0–255` representing 0–360°, `degrees * 255 / 360`). |
-| **32** | `colorCode` | `UInt8` | `MemberColor` (`enum: UInt8`) | 1-byte personal neon color code (`0x00` unset/hash, `0x01`..`0x08` palette). |
-| **33..39** | `reserved` | `7 Bytes` | `Data` | Reserved for future expansion (padded with `0x00000000000000`). |
-| **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM MAC tag sealing payload + envelope AAD. |
+| **23..24** | `senderInitials` | `UInt16` | `String` (1..3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of transmitting member via `InitialsCodec`. |
+| **25** | `batteryLevel` | `UInt8` | `Float` | Sender battery percentage (`0` to `100`%). |
+| **26** | `heading` | `UInt8` | `CLLocationDirection` (`Double`) | Compass heading (`0–255` representing 0–360°, `degrees * 255 / 360`). Reconstructed into degrees via `headingDegrees` ($0.0^\circ \dots 359.9^\circ$), driving the live map `DirectionalHeadingIndicator` pointer and $50^\circ$ vision beam cone. |
+| **27** | `colorCode` | `UInt8` | `MemberColor` (`enum: UInt8`) | 1-byte personal neon color code (`0x00` unset/hash, `0x01`..`0x08` palette). |
+| **28..39** | `reserved` | `12 Bytes` | `Data` | Reserved for future expansion & floor/barometry (padded with 12 zero bytes). |
+| **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 MAC tag sealing payload + envelope AAD. |
 
 #### Type 2: `0x02` — `SOS` (Urgent Emergency Alert)
 *Sent immediately upon 3-second hold. Preempts all queues and transmits with bounded retries.*
@@ -676,25 +687,27 @@ Every packet is strictly **56 bytes** total. Below are the exact byte layouts fo
 | **33..39** | `reserved` | `7 Bytes` | `Data` | Reserved padding (`0x00000000000000`). |
 | **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit MAC tag verifying group signature (prevents stranger fake alarms). |
 
-#### Type 3: `0x03` — `MEETING_UPDATE` (Rendezvous Landmark & Attendance)
-*Sent when proposing, accepting ("I'll be there"), or cancelling a single active meeting point.*
+#### Type 3: `0x03` — `MEETING_UPDATE` (Dynamic Rendezvous, Time & Attendance — Redesigned)
+*Sent when proposing, accepting ("I'll be there"), auto-arriving, or cancelling a single active rendezvous. Location naming has been redesigned to be dynamic (proposer initials + target time & countdown). Features 25m auto-arrival geofencing and automatic 1-hour expiration.*
 
 | Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
 | :--- | :--- | :--- | :--- | :--- |
-| **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x23` (High nibble = Version `2`, Low nibble = Type `3`). |
-| **1** | `hopLimit` | `UInt8` | `UInt8` | Forwarding budget ($1 \dots 8$, max 8 hops). Authenticated in AAD. |
+| **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x33` (High nibble = Protocol Version `3`, Low nibble = Type `3`). |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Higher TTL for rendezvous broadcast: 15 hops (`PacketConstants.meetingPointHopLimit`). Authenticated in AAD. |
 | **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hops ($0 \dots \text{hopLimit}$, starts at `0`). Masked to `0x00` in AAD. |
 | **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian group session ID. |
 | **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
 | **10..13** | `meetingLat` | `Int32` | `CLLocationDegrees` (`Double`) | Rendezvous spot latitude (`Double * 1_000_000`, signed 32-bit big-endian). |
 | **14..17** | `meetingLon` | `Int32` | `CLLocationDegrees` (`Double`) | Rendezvous spot longitude (`Double * 1_000_000`, signed 32-bit big-endian). |
-| **18..21** | `meetupTime` | `UInt32` | `Date` | Target rendezvous time (Unix epoch seconds, e.g. 10:15 PM). |
-| **22** | `meetingAction` | `UInt8` | `MeetingAction` (`enum: UInt8`) | `0x01` Propose, `0x02` Accept ("I'll be there"), `0x03` Decline, `0x04` Cancel. |
-| **23** | `attendanceStatus`| `UInt8` | `StatusCode` | `0x01` Attending, `0x02` Can't Make It, `0x09` At Meeting Point. |
-| **24..27** | `meetingPointId`| `UInt32` | `UInt32` | Unique 32-bit ID for this rendezvous instance. |
-| **28..29** | `senderInitials` | `UInt16` | `String` (3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of member proposing/accepting. |
-| **30..33** | `landmarkId` | `UInt32` | `UInt32?` | Pre-set venue landmark ID (`0x00000001` Gate 1, `0x00000002` Stage A; `0` if pin). |
-| **34..39** | `reserved` | `6 Bytes` | `Data` | Padding (`0x000000000000`). |
+| **18..21** | `meetupTime` | `UInt32` | `Date` | Scheduled rendezvous arrival time (Unix epoch seconds). |
+| **22..25** | `createdAt` | `UInt32` | `Date` | Rendezvous proposal creation time (Unix epoch seconds). |
+| **26** | `meetingAction` | `UInt8` | `MeetingAction` (`enum: UInt8`) | `0x01` Propose, `0x02` Accept ("I'll be there"), `0x03` Decline, `0x04` Cancel. |
+| **27** | `attendanceStatus`| `UInt8` | `AttendanceStatus` (`enum: UInt8`) | `0x01` Attending, `0x02` Can't Make It, `0x09` At Meeting Point ("Arrived"). |
+| **28..31** | `meetingPointId`| `UInt32` | `UInt32` | Unique 32-bit ID for this rendezvous instance. |
+| **32..33** | `senderInitials` | `UInt16` | `String` (1 to 3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of member proposing/updating. |
+| **34** | `arrivalRadiusMeters` | `UInt8` | `Double` | Geofence radius for automatic arrival detection in meters (default `25`). |
+| **35** | `flags` | `UInt8` | `UInt8` | Bit 0: `isRightNow`, Bit 1: `anchorToProposerGPS`, Bits 2..7 reserved. |
+| **36..39** | `reserved` | `4 Bytes` | `Data` | Padding for future protocol revisions (`0x00000000`). |
 | **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 / AES-GCM MAC tag. |
 
 #### Type 4: `0x06` — `ACK` (Receipt Confirmation)
@@ -733,6 +746,23 @@ Every packet is strictly **56 bytes** total. Below are the exact byte layouts fo
 | **18** | `routeCost` | `UInt8` | `UInt8` | Cumulative path cost / metric (hop count + link quality penalty). |
 | **19..39** | `reserved` | `21 Bytes`| `Data` | Reserved routing metadata / path tracking. |
 | **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit MAC tag verifying legitimate group member request. |
+
+#### Type 7: `0x07` — `CHAT_MESSAGE` (Phase 3 Festival Group Mesh Chat & Independent Status)
+*Broadcast across the multi-hop mesh to transmit direct 20-byte UTF-8 chat messages and quick-tap status presets.*
+
+| Byte Range | Field Name | Wire Type | Swift / CoreLocation Type | Description & Endianness |
+| :--- | :--- | :--- | :--- | :--- |
+| **0** | `versionAndType` | `UInt8` | `(UInt8, PacketType)` | `0x37` (High nibble = Version `3`, Low nibble = Type `7`). |
+| **1** | `hopLimit` | `UInt8` | `UInt8` | Forwarding budget ($1 \dots 15$, default 8 hops). Authenticated in AAD. |
+| **2** | `hopCount` | `UInt8` | `UInt8` | Traversal hops ($0 \dots \text{hopLimit}$, starts at `0`). Mutated per relay; masked to `0x00` in AAD. |
+| **3..5** | `sessionId` | `UInt24` | `UInt32` | 24-bit big-endian group session ID. |
+| **6..9** | `sequenceNumber` | `UInt32` | `UInt32` | Big-endian sequence counter. |
+| **10..11** | `senderInitials` | `UInt16` | `String` (1..3 Chars A-Z) | Big-endian 2-byte Base-27 encoded initials of transmitting member via `InitialsCodec`. |
+| **12..15** | `timestamp` | `UInt32` | `Date` | Big-endian Unix epoch seconds (`UInt32(date.timeIntervalSince1970)`). |
+| **16** | `textLength` | `UInt8` | `UInt8` | Exact UTF-8 byte count of message text ($0 \dots 20$). |
+| **17..36** | `textContent` | `20 Bytes` | `String` / `[UInt8]` | Direct UTF-8 encoded text bytes (zero-padded for unused bytes). |
+| **37..39** | `reserved` | `3 Bytes` | `Data` | Reserved zero padding (`0x000000`). |
+| **40..55** | `authTag` | `16 Bytes`| `Data` (CryptoKit Tag) | 128-bit Poly1305 MAC tag sealing payload + envelope AAD. |
 
 ---
 
@@ -840,8 +870,8 @@ Use a **Hybrid AODV-inspired on-demand routing approach** with bounded flooding 
     -   Live 56-byte packet log capturing inbound, outbound, and relayed traffic with packet type filters (SOS, Ping, ACK, Route, Dropped).
     -   Packet injection suite for valid pings, emergency SOS alerts, ACKs, and fault injection (corrupted Poly1305 MAC tags, sequence replays).
     -   Virtual Mesh Topology Sandbox simulating 3-node and 4-node topologies with real-time link breaking and route convergence.
--   **Automated Unit & Integration Test Suites (14 Suites, 169 Passing Tests):**
-    -   Deterministic, self-contained automated tests executable on Simulator and on-device via `runAllTests()`, verifying 56-byte codecs, CryptoKit AEAD, AODV route discovery, blind relaying, neighbor discovery, dual-lane rate limiting, 5-stage SOS delivery, tactical radar projection, failure recovery, and 1-byte member color coding.
+-   **Automated Unit & Integration Test Suites (16 Suites, 186 Passing Tests):**
+    -   Deterministic, self-contained automated tests executable on Simulator and on-device via `runAllTests()`, verifying 56-byte codecs, CryptoKit AEAD, AODV route discovery, blind relaying, neighbor discovery, dual-lane rate limiting, 5-stage SOS delivery, tactical radar projection, failure recovery, 1-byte member color coding, Phase 3 group chat messaging engine, and Phase 3 SwiftUI chat UI & ByteLimiter feed.
 
 ---
 
@@ -883,14 +913,20 @@ Use a **Hybrid AODV-inspired on-demand routing approach** with bounded flooding 
 ### Phase 3 --- Venue Intelligence & Polish
 -   [ ] Custom venue event vector overlays (stages, medical, water stations).
 -   [ ] **Festival Group Mesh Chat & 20-Character Text Engine (Decision D17):**
-    -   [ ] New packet type `PacketType.chatMessage = 0x07` fitting within 56-byte multi-hop datagram format.
-    -   [ ] 30-byte encrypted payload layout: `senderInitials: UInt16` (2B Base-27) + `timestamp: UInt32` (4B Unix epoch seconds) + `textLength: UInt8` (1B, $0 \dots 20$) + `textContent: [UInt8]` (20B UTF-8/ASCII bytes) + `reserved: [UInt8]` (3B padding) = 30 bytes.
-    -   [ ] Standard direct UTF-8 / ASCII encoding: supports lowercase, uppercase, digits, space, and standard punctuation without radix lookup tables or compression complexity.
-    -   [ ] Dedicated FIFO outbox transmission lane preempting stranger relays, 2 retries, and 3.0-second cooldown rate limit.
-    -   [ ] Individual per-person delivery acknowledgement (`ACKPayload` Type `0x06`) displaying dynamic UI tally: *"Delivered M/X"* (e.g. 5 of 8 friends confirmed).
-    -   [ ] Map-docked floating chat bubble and bottom sheet message feed (`ChatSheetView`) preserving glanceable map context.
-    -   [ ] Quick-tap festival preset chips above keyboard ("Beer line", "At Main Stage", "Restroom", "Where are you?") for high-speed typing in noisy crowds, with a 20-character counter.
-    -   [ ] Strictly ephemeral in-memory message history (purged on session exit) with automatic shutoff at <20% battery (Festival Survival Mode).
+    -   [x] New packet type `PacketType.chatMessage = 0x07` fitting within 56-byte multi-hop datagram format.
+    -   [x] 30-byte encrypted payload layout: `senderInitials: UInt16` (2B Base-27) + `timestamp: UInt32` (4B Unix epoch seconds) + `textLength: UInt8` (1B, $0 \dots 20$) + `textContent: [UInt8]` (20B UTF-8/ASCII bytes) + `reserved: [UInt8]` (3B padding) = 30 bytes.
+    -   [x] Standard direct UTF-8 / ASCII encoding: supports lowercase, uppercase, digits, space, and standard punctuation without radix lookup tables or compression complexity.
+    -   [x] Dedicated FIFO outbox transmission lane preempting stranger relays, 2 retries, and 3.0-second cooldown rate limit.
+    -   [x] Individual per-person delivery acknowledgement (`ACKPayload` Type `0x06`) tracking and honest state machine (`locallyAccepted`, `forwardedToNextHop`, `relayedByMesh`, `deliveredToRecipient`, `deliveryTimedOut`).
+    -   [x] Chat Messaging Engine (`ChatMessageEngine.swift`) and mesh integration with blind stranger relaying, replay suppression, and ACK progression tracking.
+    -   [x] Map-docked floating chat bubble and bottom sheet message feed (`ChatSheetView`) preserving glanceable map context (Milestone 3.5).
+    -   [x] Quick-tap festival preset chips above keyboard ("Beer line", "At Main Stage", "Restroom", "Where are you?") for high-speed typing in noisy crowds, with a 20-character counter (Milestone 3.5).
+    -   [x] Strictly ephemeral in-memory message history (purged on session exit) with automatic shutoff at <20% battery (Festival Survival Mode).
+-   [x] **Peer Facing Direction & Orientation on Map View (Decision D18):**
+    -   [x] Wire-level compass heading reconstruction via `LocationPingPayload.headingDegrees` ($0.0^\circ \dots 359.9^\circ$) decoded from 1-byte wire `heading: UInt8`.
+    -   [x] Dynamic `DirectionalHeadingIndicator` on `friendPinView` and `UserAnnotation` in `MainMapView.swift` rendering a soft glowing $50^\circ$ field-of-view vision cone (`HeadingVisionCone`) and a crisp directional pointer arrow (`arrowtriangle.up.fill`) on the avatar disk rim.
+    -   [x] Telemetry row in `FriendDetailView.swift` showing live compass bearing and cardinal direction (`180° (S)`).
+    -   [x] Unit test `testPeerHeadingDegreesAndOrientationVisualization` (`Test 15`) in `LocationPublishingTests.swift` validating quantization, reconstruction, and `Member.heading` propagation.
 -   [ ] **Multi-Floor & Multi-Story Venue Intelligence (Decision D12):**
     -   [ ] Absorb 3 bytes into inner payload reserved padding: `floorLevel: Int8` (Byte 22, range -128..+126, 0x7F=Auto/Unknown) and `barometricPressure: UInt16` (Bytes 23..24, centi-hPa `(hPa - 800) * 100`, 0.01 hPa / ~8cm resolution), retaining 5 reserved bytes and 56-byte wire format.
     -   [ ] Peer-to-peer differential barometry via `CMAltimeter` ($\Delta h \approx 8.43 \times \Delta P$) providing sub-meter vertical separation between co-located phones without cloud/IMDF dependency.
@@ -1002,3 +1038,99 @@ Every entry in `docs/DEVELOPMENT_LOG.md` must follow this standardized Markdown 
 2. **Reverse-Chronological Ordering:** Maintain entries in reverse-chronological order (newest entry at the top, immediately below the file header) so subsequent agents and reviewers see the latest progress instantly.
 3. **Honest Verification Only:** Never log that a test passed or that a build succeeded without actually executing and validating it.
 4. **Zero Secrets in Logs:** Strictly uphold Rule 8 (Security & Privacy): never record raw encryption keys, Keychain items, or real attendee coordinate logs in `DEVELOPMENT_LOG.md`.
+
+---
+
+## 16. Centralized Master Configuration Reference (`TeeKumConfiguration.swift`)
+
+To streamline testing, benchmarking, and field tuning, all tuneable variables across every subsystem are centralized in a single Swift source file:
+[`TeeKum Prototype/Models/TeeKumConfiguration.swift`](../TeeKum%20Prototype/Models/TeeKumConfiguration.swift).
+
+Any developer or AI agent can modify parameters in this single file to immediately adjust network behavior, broadcast cadences, chat limits, SOS sensitivity, or radar visuals across the entire application without hunting across multiple services.
+
+### 16.1 Network & Wire Protocol Parameters (`TeeKumConfiguration.Network`)
+
+| Variable Name | Swift Type | Default Value | Recommended Range | Purpose & Architectural Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `wirePacketSize` | `Int` | `56` | Fixed `56` | Strictly invariant 56-byte binary wire datagram format. |
+| `cleartextEnvelopeSize`| `Int` | `10` | Fixed `10` | Cleartext routing envelope inspected by blind relays. |
+| `encryptedPayloadSize` | `Int` | `30` | Fixed `30` | Zero-knowledge encrypted payload block. |
+| `authTagSize` | `Int` | `16` | Fixed `16` | Poly1305 / AES-GCM 128-bit authentication tag. |
+| `nonceSize` | `Int` | `12` | Fixed `12` | 96-bit cryptographic initialization vector. |
+| `protocolVersion` | `UInt8` | `0x03` | Fixed `0x03` | Active wire protocol version. |
+| `maxHopLimit` | `UInt8` | `15` | `1...15` | Absolute maximum hop limit ceiling permitted in the 4-bit nibble. |
+| `defaultHopLimit` | `UInt8` | `8` | `4...12` | Hop limit budget for standard periodic Location Ping datagrams (`Type 0x01`). |
+| **`chatHopLimit`** | `UInt8` | `8` | `3...12` | **Differentiated hop limit for Chat messages (`Type 0x07`) and Delivery ACKs (`Type 0x06`). Tune to restrict chat to immediate stage/camp radius or expand across entire venue.** |
+| `meetingPointHopLimit` | `UInt8` | `15` | `8...15` | High-reach hop limit for Group Rendezvous proposals and cancellations (`Type 0x03`). |
+| `sosHopLimit` | `UInt8` | `15` | Fixed `15` | Maximum-urgency hop limit for Emergency SOS siren alerts (`Type 0x02`). |
+
+### 16.2 Broadcast Cadence & Mesh Timing Parameters (`TeeKumConfiguration.Timing`)
+
+| Variable Name | Swift Type | Default Value | Recommended Range | Purpose & Architectural Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `locationMovingInterval` | `TimeInterval` | `4.0s` | `2.0s...6.0s` | Location publishing interval while attendee is actively moving. |
+| `locationStationaryInterval`| `TimeInterval` | `20.0s`| `10.0s...30.0s`| Location publishing interval while attendee is stationary to conserve battery. |
+| `distantPeerInterval` | `TimeInterval` | `2.0s` | `1.0s...3.0s` | Accelerated publishing interval triggered when links degrade or peers are distant. |
+| `survivalInterval` | `TimeInterval` | `60.0s`| `45.0s...120.0s`| Throttled publishing interval in Festival Survival Mode (<20% battery). |
+| `distantRSSIThreshold` | `Int8` | `-75 dBm`| `-85...-65 dBm`| RSSI threshold below which peer radio link triggers accelerated broadcast. |
+| `distantDistanceThresholdMeters`| `Double` | `30.0m` | `20.0m...50.0m` | GPS distance threshold beyond which peer triggers distant cadence. |
+| `stalePeerThreshold` | `TimeInterval` | `30.0s`| `20.0s...60.0s`| Inactivity duration before peer pin turns orange/stale on venue map. |
+| `offlinePeerThreshold` | `TimeInterval` | `180.0s`| `120.0s...300.0s`| Inactivity duration before peer is treated as completely offline. |
+| `neighborHeartbeatInterval`| `TimeInterval` | `2.0s` | `1.0s...4.0s` | Direct radio link heartbeat interval. |
+| `neighborPruneThreshold` | `TimeInterval` | `6.0s` | `4.0s...12.0s` | Timeout before an unresponsive direct neighbor connection is pruned. |
+| `routingTableTTL` | `TimeInterval` | `30.0s`| `15.0s...60.0s`| Validity duration for multi-hop AODV routing table entries. |
+| `rreqRateLimitInterval` | `TimeInterval` | `10.0s`| `5.0s...20.0s` | Minimum cooldown between Route Discovery Requests (RREQ) to prevent storming. |
+| `rreqRetryTimeout` | `TimeInterval` | `1.5s` | `1.0s...3.0s` | Timeout waiting for Route Reply (RREP) before retrying. |
+| `rreqMaxRetries` | `Int` | `2` | `1...4` | Maximum automated route discovery attempts. |
+| `ordinaryRelayRateLimit` | `Double` | `2.0 pkts/s`| `1.0...5.0` | Maximum token bucket forwarding rate for ordinary mesh traffic. |
+| `ordinaryRelayBurstCapacity`| `Double` | `4.0 pkts` | `2.0...8.0` | Burst capacity for ordinary packet relay token bucket. |
+| `urgentSOSRateLimit` | `Double` | `4.0 pkts/s`| `2.0...8.0` | Maximum token bucket forwarding rate for Emergency SOS alerts. |
+| `seenPacketCacheCapacity` | `Int` | `1024` | `512...2048` | LRU duplicate suppression cache size for loop protection. |
+| `outboxQueueCapacity` | `Int` | `64` | `32...128` | Capacity limit for priority outbox packet queue. |
+| `outboxMaxRetries` | `Int` | `2` | `1...4` | Maximum retransmission attempts for outbox packets. |
+| `outboxBackoffInitialDelay` | `TimeInterval` | `0.25s`| `0.1s...0.5s` | Initial backoff delay for outbox packet retries. |
+| `outboxBackoffMultiplier` | `Double` | `2.0` | `1.5...3.0` | Exponential multiplier for consecutive outbox retry delays. |
+
+### 16.3 Chat Messaging Parameters (`TeeKumConfiguration.Chat`)
+
+| Variable Name | Swift Type | Default Value | Recommended Range | Purpose & Architectural Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `maxHistory` | `Int` | `50` | `25...100` | Maximum chat messages kept in ephemeral RAM (zero disk persistence). |
+| `cooldownDuration` | `TimeInterval` | `3.0s` | `1.0s...5.0s` | Enforced client-side anti-spam cooldown between outgoing messages. |
+| `deliveryTimeout` | `TimeInterval` | `15.0s`| `10.0s...30.0s`| Multi-peer ACK window before unconfirmed friends transition to timed out. |
+| `maxRetries` | `Int` | `2` | `1...3` | Automated radio retransmission attempts for unacknowledged messages. |
+| `backoffInitialDelay` | `TimeInterval` | `0.5s` | `0.25s...1.0s`| Initial backoff delay before chat message retry #1. |
+| `backoffMultiplier` | `Double` | `1.5` | `1.2...2.0` | Exponential backoff multiplier for chat retransmissions. |
+| `maxPayloadBytes` | `Int` | `20` | Fixed `20` | Maximum UTF-8 byte boundary permitted per chat datagram. |
+
+### 16.4 Emergency SOS & Inactivity Guard Parameters (`TeeKumConfiguration.SOS`)
+
+| Variable Name | Swift Type | Default Value | Recommended Range | Purpose & Architectural Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `holdDuration` | `TimeInterval` | `3.0s` | `2.0s...5.0s` | Continuous press-and-hold duration on SOS button required to fire alert. |
+| `inactivityStillnessDuration` | `TimeInterval` | `180.0s` | `60.0s...300.0s` | Immobility duration (3m) of accelerometer stillness & zero screen touches before triggering pre-alarm countdown. |
+| `inactivityWarningCountdown` | `TimeInterval` | `30.0s` | `15.0s...60.0s` | Pre-alarm silent haptic & visual warning countdown duration before broadcasting auto-SOS (`SOSType.inactivity = 0x04`). |
+| `inactivityMotionThreshold` | `Double` | `0.15g` | `0.08g...0.30g` | Accelerometer vector variance threshold indicating physical movement or picking up the device. |
+
+### 16.5 Group Rendezvous Parameters (`TeeKumConfiguration.Rendezvous`)
+
+| Variable Name | Swift Type | Default Value | Recommended Range | Purpose & Architectural Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `defaultArrivalRadiusMeters`| `Double` | `25.0m` | `15.0m...50.0m`| Proximity geofence radius for auto-marking member as "Arrived" (`.atMeetingPoint`). |
+| `autoExpirationSeconds` | `TimeInterval` | `3600.0s`| `1800s...7200s`| Inactivity duration after scheduled meetup time before rendezvous auto-clears. |
+| `presetMinutes` | `[Int]` | `[0, 15, 30, 60]`| Fixed | Standard 1-tap quick time preset chip offsets in minutes. |
+
+### 16.6 Battery & Survival Mode Parameters (`TeeKumConfiguration.Battery`)
+
+| Variable Name | Swift Type | Default Value | Recommended Range | Purpose & Architectural Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `survivalThresholdPercent` | `UInt8` | `20%` | `15%...25%` | Battery percentage cutoff triggering Festival Survival Mode (relay paused). |
+| `timedRelayDefaultDuration` | `TimeInterval` | `1800.0s`| `900s...3600s` | Default duration for Lock Screen Timed Relay mode (30 minutes). |
+
+### 16.7 Tactical Radar & Directional Navigation (`TeeKumConfiguration.Navigation`)
+
+| Variable Name | Swift Type | Default Value | Recommended Range | Purpose & Architectural Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `tacticalRadarRangeMeters` | `Double` | `60.0m` | `40.0m...100.0m`| Outer polar perimeter distance clamped on tactical radar screen. |
+| `uwbTransitionDistanceMeters`| `Double` | `6.0m` | `4.0m...10.0m` | Proximity range where tactical radar transitions into UWB precision radar. |
+| `visionConeFOV` | `Double` | `50.0°` | `30.0°...70.0°` | Angular field of view for attendee facing orientation vision cones. |

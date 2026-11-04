@@ -198,10 +198,10 @@ public struct GroupPairingView: View {
                         case .create(let name, let initials):
                             executeCreateGroup(name: name, initials: initials)
                         case .join(let invite, let initials):
-                            sessionViewModel.joinGroup(invite: invite, localName: initials)
+                            sessionViewModel.joinGroup(invite: invite, localName: initials, colorCode: selectedColor.rawValue)
                             sessionViewModel.pendingInvite = nil
                         case .autoMesh(let initials):
-                            sessionViewModel.enterAutoMesh(initials: initials)
+                            sessionViewModel.enterAutoMesh(initials: initials, colorCode: selectedColor.rawValue)
                         }
                         pendingAgreement = nil
                     },
@@ -408,6 +408,7 @@ public struct GroupPairingView: View {
             sessionName: name,
             symmetricKeyData: keyData,
             localInitials: initials,
+            localColorCode: selectedColor.rawValue,
             isHost: true
         )
         self.createdSession = session

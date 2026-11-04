@@ -9,6 +9,30 @@ import SwiftUI
 import CoreLocation
 import CryptoKit
 
+/// Thread-safe Sendable wrapper to provide synchronous access to the active GroupSession
+/// across actors and non-isolated closures without violating actor isolation boundaries.
+public final class SessionHolder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _session: GroupSession?
+    
+    public init(session: GroupSession? = nil) {
+        self._session = session
+    }
+    
+    public var session: GroupSession? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _session
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            _session = newValue
+        }
+    }
+}
+
 @main
 struct TeeKumApp: App {
     @Environment(\.scenePhase) private var scenePhase
@@ -24,8 +48,16 @@ struct TeeKumApp: App {
     private let relayPolicyManager: RelayPolicyManager
     private let routingTable: RoutingTable
     private let routeDiscoveryService: RouteDiscoveryService
+    private let chatMessageEngine: ChatMessageEngine
+    @State private var chatViewModel: ChatViewModel
+    private let sessionHolder: SessionHolder
     
     init() {
+        let initialSessionVM = GroupSessionViewModel()
+        self._sessionViewModel = State(initialValue: initialSessionVM)
+        let holder = SessionHolder(session: initialSessionVM.activeSession)
+        self.sessionHolder = holder
+        
         let service = LocationService()
         _locationService = State(initialValue: service)
         _mapViewModel = State(initialValue: MapViewModel(locationService: service))
@@ -40,6 +72,22 @@ struct TeeKumApp: App {
             transport: transport,
             cryptoService: cryptoService
         )
+        let chatEngine = ChatMessageEngine(
+            transport: transport,
+            cryptoService: cryptoService,
+            routingTable: routing,
+            neighborTable: transport.neighborTable,
+            rateLimiter: transport.rateLimiter
+        )
+        self.chatMessageEngine = chatEngine
+        self._chatViewModel = State(initialValue: ChatViewModel(chatService: chatEngine))
+        
+        // Clean up any lingering Live Activities if app launched without an active session
+        if !initialSessionVM.hasActiveSession {
+            Task { @MainActor in
+                await LiveActivityManager.shared.cleanupDanglingActivities()
+            }
+        }
     }
     
     var body: some Scene {
@@ -51,6 +99,7 @@ struct TeeKumApp: App {
                         sessionViewModel: sessionViewModel,
                         sosViewModel: sosViewModel,
                         meetingPointViewModel: meetingPointViewModel,
+                        chatViewModel: chatViewModel,
                         relayPolicyManager: relayPolicyManager,
                         peerTransport: peerTransport
                     )
@@ -70,23 +119,62 @@ struct TeeKumApp: App {
             }
             .preferredColorScheme(.dark)
             .onChange(of: scenePhase) { _, newPhase in
-                if newPhase == .active && sessionViewModel.hasActiveSession {
-                    locationService.publishCurrentState()
+                if newPhase == .active {
+                    locationService.updateBatteryState()
+                    if sessionViewModel.hasActiveSession {
+                        locationService.publishCurrentState()
+                    }
+                }
+            }
+            .onChange(of: locationService.isLowPowerMode) { _, isLowPower in
+                chatViewModel.updateBattery(
+                    level: locationService.currentBatteryLevel,
+                    isLowPower: isLowPower
+                )
+                Task {
+                    await relayPolicyManager.updatePowerMetrics(
+                        batteryLevel: locationService.currentBatteryLevel,
+                        isLowPowerMode: isLowPower
+                    )
+                    await chatMessageEngine.setBatteryLevel(
+                        locationService.currentBatteryLevel,
+                        isLowPowerMode: isLowPower
+                    )
+                    if locationService.isSurvivalModeActive {
+                        await LiveActivityManager.shared.endSessionActivity()
+                    }
+                    await updateLiveActivityTelemetry()
                 }
             }
             .onChange(of: locationService.currentBatteryLevel) { _, level in
+                chatViewModel.updateBattery(
+                    level: level,
+                    isLowPower: ProcessInfo.processInfo.isLowPowerModeEnabled
+                )
                 Task {
                     await relayPolicyManager.updatePowerMetrics(
                         batteryLevel: level,
+                        isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+                    )
+                    await chatMessageEngine.setBatteryLevel(
+                        level,
                         isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
                     )
                     await updateLiveActivityTelemetry()
                 }
             }
             .onChange(of: locationService.isSurvivalModeActive) { _, isSurvival in
+                chatViewModel.updateBattery(
+                    level: locationService.currentBatteryLevel,
+                    isLowPower: ProcessInfo.processInfo.isLowPowerModeEnabled
+                )
                 Task {
                     await relayPolicyManager.updatePowerMetrics(
                         batteryLevel: locationService.currentBatteryLevel,
+                        isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+                    )
+                    await chatMessageEngine.setBatteryLevel(
+                        locationService.currentBatteryLevel,
                         isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
                     )
                     if isSurvival {
@@ -94,6 +182,13 @@ struct TeeKumApp: App {
                     }
                     await updateLiveActivityTelemetry()
                 }
+            }
+            .onChange(of: sessionViewModel.localColor) { _, _ in
+                sessionHolder.session = sessionViewModel.activeSession
+                locationService.publishCurrentState()
+            }
+            .onChange(of: sessionViewModel.activeSession) { _, newSession in
+                sessionHolder.session = newSession
             }
             .onChange(of: meetingPointViewModel.activeMeetingPoint) { _, _ in
                 Task {
@@ -114,7 +209,11 @@ struct TeeKumApp: App {
                 handleIncomingURL(url)
             }
             .task {
-                if ProcessInfo.processInfo.arguments.contains("-runAllTests") {
+                let envRunner = ProcessInfo.processInfo.environment["TEST_RUNNER"]
+                let args = ProcessInfo.processInfo.arguments
+                let shouldExit = args.contains("-exitAfterTests") || ProcessInfo.processInfo.environment["EXIT_AFTER_TESTS"] == "1"
+                
+                if args.contains("-runAllTests") || envRunner == "all" {
                     print(">>> RUNNING ALL AUTOMATED TESTS <<<")
                     fflush(stdout)
                     _ = PacketCodecTests.runAllTests()
@@ -145,9 +244,36 @@ struct TeeKumApp: App {
                     fflush(stdout)
                     _ = await MeshDebuggerTests.runAllTests()
                     fflush(stdout)
+                    _ = await ChatMessagingEngineTests.runAllTests()
+                    fflush(stdout)
+                    _ = await ChatUITests.runAllTests()
+                    fflush(stdout)
+                    _ = await InactivityGuardTests.runAllTests()
+                    fflush(stdout)
                     print(">>> ALL AUTOMATED TEST RUNS FINISHED <<<")
                     fflush(stdout)
+                    if shouldExit {
+                        exit(0)
+                    }
                 } else {
+                    if args.contains("-runInactivityTests") || envRunner == "inactivity" {
+                        _ = await InactivityGuardTests.runAllTests()
+                        fflush(stdout)
+                        if shouldExit {
+                            exit(0)
+                        }
+                    }
+                    if args.contains("-runChatUITests") || envRunner == "chatui" {
+                        _ = await ChatUITests.runAllTests()
+                        fflush(stdout)
+                        if shouldExit {
+                            exit(0)
+                        }
+                    }
+                    if ProcessInfo.processInfo.arguments.contains("-runChatTests") {
+                        _ = await ChatMessagingEngineTests.runAllTests()
+                        fflush(stdout)
+                    }
                     if ProcessInfo.processInfo.arguments.contains("-runMeshDebuggerTests") {
                         _ = await MeshDebuggerTests.runAllTests()
                         fflush(stdout)
@@ -174,6 +300,9 @@ struct TeeKumApp: App {
                         _ = await RelayPolicyTests.runAllTests()
                         fflush(stdout)
                     }
+                    if ProcessInfo.processInfo.arguments.contains("-exitAfterTests") {
+                        exit(0)
+                    }
                     if ProcessInfo.processInfo.arguments.contains("-simulateSession") {
                         let dummyKey = Data(repeating: 0x55, count: 32)
                         let session = GroupSession(
@@ -193,16 +322,20 @@ struct TeeKumApp: App {
     
     @MainActor
     private func runSessionLifecycle(session: GroupSession) async {
+        sessionHolder.session = session
+        let holder = self.sessionHolder
+        
         // 1. Start Location Tracking
         try? locationService.startTracking()
         
-        // 2. Start Live Activity Companion
+        // 2. Start Live Activity Companion & Request Notifications
         await LiveActivityManager.shared.startSessionActivity(session: session)
+        NotificationService.shared.requestAuthorization()
         
         // 3. Configure SOS
         sosViewModel.configure(
             locationService: locationService,
-            sessionProvider: { session },
+            sessionProvider: { holder.session },
             cryptoService: cryptoService,
             transport: peerTransport,
             memberNameResolver: { senderInitials in
@@ -212,9 +345,24 @@ struct TeeKumApp: App {
         
         // 4. Configure Meeting Point
         meetingPointViewModel.configure(
-            sessionProvider: { session },
+            sessionProvider: { holder.session },
             cryptoService: cryptoService,
             transport: peerTransport
+        )
+        
+        // 5. Configure Chat Messaging Engine & ViewModel
+        await chatMessageEngine.configure(
+            sessionProvider: { holder.session },
+            recipientsProvider: { [weak sessionViewModel] in
+                sessionViewModel?.members.map(\.id) ?? []
+            }
+        )
+        chatViewModel.configure(
+            chatService: chatMessageEngine,
+            sessionProvider: { holder.session },
+            membersProvider: { [weak sessionViewModel] in
+                sessionViewModel?.members ?? []
+            }
         )
         
         // 4. Start Radio Transport
@@ -285,7 +433,7 @@ struct TeeKumApp: App {
         
         let publisher = LocationPublisher(
             locationService: locationService,
-            sessionProvider: { session },
+            sessionProvider: { holder.session },
             cryptoService: cryptoService,
             transport: peerTransport
         )
@@ -388,6 +536,10 @@ struct TeeKumApp: App {
         meetingPointViewModel.reset()
         mapViewModel.selectedMember = nil
         relayedPacketCache.removeAll()
+        sessionHolder.session = nil
+        await chatMessageEngine.clearHistory()
+        await chatMessageEngine.configure(sessionProvider: nil, recipientsProvider: nil)
+        chatViewModel.clearConversation()
     }
     
     // MARK: - Inbound Packet Dispatching
@@ -403,9 +555,10 @@ struct TeeKumApp: App {
             return
         }
         
-        // 1. Process ACK packets through SOSViewModel and relay if multi-hop
+        // 1. Process ACK packets through SOSViewModel and ChatMessageEngine, and relay if multi-hop
         if envelope.type == .ack {
             await sosViewModel.processInboundPacket(inbound)
+            _ = await chatMessageEngine.processDeliveryACK(rawPacket: raw, fromPeerId: inbound.sourcePeerId)
             await relayMeshPacketIfNeeded(inbound, for: session)
             return
         }
@@ -470,15 +623,16 @@ struct TeeKumApp: App {
             let resolvedName = ping.senderInitials
             let memberColor = MemberColor.resolve(code: ping.colorCode, initials: ping.senderInitials)
             
+            let existingStatus = sessionViewModel.members.first(where: { $0.id == ping.senderInitials })?.status ?? UserStatus(code: .available)
             let member = Member(
                 id: ping.senderInitials,
                 name: resolvedName,
                 lastSeen: inbound.receivedAt,
                 coordinate: ping.coordinate,
                 horizontalAccuracy: CLLocationAccuracy(ping.accuracy),
-                status: UserStatus(code: ping.statusCode),
+                status: existingStatus,
                 batteryLevel: Float(ping.batteryLevel) / 100.0,
-                heading: CLLocationDirection(ping.heading),
+                heading: ping.headingDegrees,
                 isDirectPeer: envelope.hopCount == 0,
                 rssi: inbound.receivedRssi,
                 color: memberColor
@@ -490,6 +644,15 @@ struct TeeKumApp: App {
         case .meetingUpdate:
             guard let update = try? MeetingUpdatePayload.deserialize(from: decrypted) else { return }
             meetingPointViewModel.applyInboundUpdate(update)
+            if update.senderInitials != session.localInitials {
+                let actionText = update.action == .propose ? "proposed rendezvous" : (update.action == .accept ? "is attending" : (update.action == .cancel ? "canceled rendezvous" : "declined"))
+                let displayTitle = meetingPointViewModel.activeMeetingPoint?.formattedTitle ?? "\(update.senderInitials)'s Rendezvous"
+                NotificationService.shared.notifyMeetingPoint(
+                    proposerInitials: update.senderInitials,
+                    meetingPointName: displayTitle,
+                    actionName: actionText
+                )
+            }
             await relayMeshPacketIfNeeded(inbound, for: session)
             
         case .routeReq:
@@ -509,6 +672,26 @@ struct TeeKumApp: App {
                     session: session
                 )
             }
+            
+        case .chatMessage:
+            if let outcome = try? await chatMessageEngine.handleInboundPacket(inbound) {
+                switch outcome {
+                case .deliveredLocally(let message), .deliveredLocallyAndRelayed(let message, _):
+                    if !message.isLocalSender {
+                        NotificationService.shared.notifyChatMessage(
+                            senderInitials: message.senderInitials,
+                            text: message.text,
+                            isSheetOpen: chatViewModel.isChatSheetPresented,
+                            onTap: { [weak chatViewModel] in
+                                chatViewModel?.isChatSheetPresented = true
+                            }
+                        )
+                    }
+                default:
+                    break
+                }
+            }
+            await relayMeshPacketIfNeeded(inbound, for: session)
             
         default:
             break
@@ -672,6 +855,9 @@ struct TeeKumApp: App {
                 return
             } else if url.host == "sos" {
                 // Focused via deep link from Live Activity
+                return
+            } else if url.host == "session" {
+                sessionViewModel.leaveGroup()
                 return
             } else if url.host == "relay" {
                 // Lock screen deep-link: teekum://relay?action=always / timed / stop

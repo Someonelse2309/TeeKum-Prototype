@@ -63,18 +63,21 @@ public final class MeetingPointViewModel {
     /// Proposes a new rendezvous point (replaces any previous active meeting point)
     /// and broadcasts the proposal over the mesh network with a higher TTL (15 hops).
     public func proposeMeetingPoint(
-        name: String,
         coordinate: CLLocationCoordinate2D,
-        targetTime: Date? = nil,
+        meetupTime: Date = Date(),
+        isRightNow: Bool = false,
+        anchorToProposerGPS: Bool = false,
         proposerId: String,
-        landmarkId: UInt32? = nil
+        arrivalRadiusMeters: Double = 25.0
     ) {
         let point = MeetingPoint(
-            name: name,
             coordinate: coordinate,
-            targetTime: targetTime,
+            meetupTime: meetupTime,
+            createdAt: Date(),
             proposerId: proposerId,
-            landmarkId: landmarkId,
+            isRightNow: isRightNow,
+            anchorToProposerGPS: anchorToProposerGPS,
+            arrivalRadiusMeters: arrivalRadiusMeters,
             attendance: [proposerId: .attending]
         )
         self.activeMeetingPoint = point
@@ -85,14 +88,60 @@ public final class MeetingPointViewModel {
         }
     }
     
+    /// Overload for backwards compatibility with legacy call sites.
+    public func proposeMeetingPoint(
+        name: String = "",
+        coordinate: CLLocationCoordinate2D,
+        targetTime: Date? = nil,
+        proposerId: String,
+        landmarkId: UInt32? = nil
+    ) {
+        proposeMeetingPoint(
+            coordinate: coordinate,
+            meetupTime: targetTime ?? Date(),
+            isRightNow: targetTime == nil,
+            anchorToProposerGPS: false,
+            proposerId: proposerId
+        )
+    }
+    
+    /// Checks whether the user has reached the active rendezvous spot and auto-broadcasts arrival.
+    public func checkArrival(userLocation: CLLocationCoordinate2D) {
+        checkExpiration()
+        guard let point = activeMeetingPoint else { return }
+        guard localAttendanceStatus != .atMeetingPoint else { return }
+        
+        let pointLoc = CLLocation(latitude: point.coordinate.latitude, longitude: point.coordinate.longitude)
+        let userLoc = CLLocation(latitude: userLocation.latitude, longitude: userLocation.longitude)
+        let distance = userLoc.distance(from: pointLoc)
+        
+        if distance <= point.arrivalRadiusMeters {
+            let localInitials = sessionProvider?()?.localInitials ?? point.proposerId
+            respond(status: .atMeetingPoint, memberId: localInitials)
+        }
+    }
+    
+    /// Automatically clears the rendezvous if more than 1 hour has elapsed past the scheduled time.
+    public func checkExpiration() {
+        guard let point = activeMeetingPoint else { return }
+        if point.isExpired {
+            self.activeMeetingPoint = nil
+            self.localAttendanceStatus = nil
+        }
+    }
+    
     /// Responds with 1-tap confirmation and broadcasts attendance to the mesh.
     public func respond(status: AttendanceStatus, memberId: String) {
         guard var point = activeMeetingPoint else { return }
         point.attendance[memberId] = status
         self.activeMeetingPoint = point
-        self.localAttendanceStatus = status
         
-        let action: MeetingAction = (status == .attending) ? .accept : .decline
+        let localInitials = sessionProvider?()?.localInitials ?? point.proposerId
+        if memberId == localInitials {
+            self.localAttendanceStatus = status
+        }
+        
+        let action: MeetingAction = (status == .cantMakeIt) ? .decline : .accept
         Task { [weak self] in
             await self?.broadcastMeetingUpdate(action: action, meetingPoint: point)
         }
@@ -119,20 +168,23 @@ public final class MeetingPointViewModel {
     public func applyInboundUpdate(_ update: MeetingUpdatePayload) {
         switch update.action {
         case .propose:
-            let displayName = VenueLandmark.preset(for: update.landmarkId)?.name ?? update.customLabel ?? "Festival Rendezvous"
             let mp = MeetingPoint(
                 id: update.meetingPointId,
-                name: displayName,
                 coordinate: update.coordinate,
-                targetTime: update.meetupTime,
+                meetupTime: update.meetupTime,
+                createdAt: update.createdAt,
                 proposerId: update.senderInitials,
-                landmarkId: update.landmarkId,
+                isRightNow: update.isRightNow,
+                anchorToProposerGPS: update.anchorToProposerGPS,
+                arrivalRadiusMeters: Double(update.arrivalRadiusMeters),
                 attendance: [update.senderInitials: update.attendanceStatus]
             )
-            self.activeMeetingPoint = mp
-            // If the local user is not the proposer, reset local attendance so they can respond
-            if let localInitials = sessionProvider?()?.localInitials, update.senderInitials != localInitials {
-                self.localAttendanceStatus = nil
+            if !mp.isExpired {
+                self.activeMeetingPoint = mp
+                // If the local user is not the proposer, reset local attendance so they can respond
+                if let localInitials = sessionProvider?()?.localInitials, update.senderInitials != localInitials {
+                    self.localAttendanceStatus = nil
+                }
             }
             
         case .cancel:
@@ -160,15 +212,18 @@ public final class MeetingPointViewModel {
             return
         }
         
+        let radiusByte = UInt8(min(100, max(5, meetingPoint.arrivalRadiusMeters.rounded())))
         let payload = MeetingUpdatePayload(
             coordinate: meetingPoint.coordinate,
-            meetupTime: meetingPoint.targetTime ?? Date(),
+            meetupTime: meetingPoint.meetupTime,
+            createdAt: meetingPoint.createdAt,
             action: action,
             attendanceStatus: localAttendanceStatus ?? .attending,
             meetingPointId: meetingPoint.id,
             senderInitials: session.localInitials,
-            landmarkId: meetingPoint.landmarkId,
-            customLabel: meetingPoint.name
+            arrivalRadiusMeters: radiusByte,
+            isRightNow: meetingPoint.isRightNow,
+            anchorToProposerGPS: meetingPoint.anchorToProposerGPS
         )
         
         let payloadData = payload.serialize()

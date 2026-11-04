@@ -31,6 +31,10 @@ public struct DiagnosticsView: View {
     @State private var meshFailureTestSummary: String?
     @State private var isRunningDebuggerTests: Bool = false
     @State private var debuggerTestSummary: String?
+    @State private var isRunningChatEngineTests: Bool = false
+    @State private var chatEngineTestResultSummary: String?
+    @State private var isRunningChatUITests: Bool = false
+    @State private var chatUITestResultSummary: String?
     @State private var relayState: RelayPolicyState?
     @State private var relayTelemetry: RelayTelemetry?
     
@@ -448,6 +452,44 @@ public struct DiagnosticsView: View {
                                 .font(.caption.monospaced())
                                 .foregroundStyle(debuggerSummary.contains("PASSED") ? .green : .red)
                         }
+                        
+                        Button {
+                            runChatEngineVerification()
+                        } label: {
+                            HStack {
+                                Text("Run Group Chat Messaging & Mesh Suite (Agent 2)")
+                                Spacer()
+                                if isRunningChatEngineTests {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(isRunningChatEngineTests)
+                        
+                        if let chatEngineSummary = chatEngineTestResultSummary {
+                            Text(chatEngineSummary)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(chatEngineSummary.contains("PASSED") ? .green : .red)
+                        }
+                        
+                        Button {
+                            runChatUIVerification()
+                        } label: {
+                            HStack {
+                                Text("Run Group Chat UI & ViewModel Suite (Agent 3)")
+                                Spacer()
+                                if isRunningChatUITests {
+                                    ProgressView()
+                                }
+                            }
+                        }
+                        .disabled(isRunningChatUITests)
+                        
+                        if let chatSummary = chatUITestResultSummary {
+                            Text(chatSummary)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(chatSummary.contains("PASSED") ? .green : .red)
+                        }
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -592,6 +634,32 @@ public struct DiagnosticsView: View {
             await MainActor.run {
                 isRunningDebuggerTests = false
                 debuggerTestSummary = passed ? "✓ ALL 10 MESH DEBUGGER TESTS PASSED" : "✗ SOME TESTS FAILED"
+            }
+        }
+    }
+    
+    private func runChatEngineVerification() {
+        isRunningChatEngineTests = true
+        chatEngineTestResultSummary = "Running 15 Chat Engine tests..."
+        
+        Task {
+            let passed = await ChatMessagingEngineTests.runAllTests()
+            await MainActor.run {
+                isRunningChatEngineTests = false
+                chatEngineTestResultSummary = passed ? "✓ ALL 15 CHAT ENGINE TESTS PASSED" : "✗ SOME TESTS FAILED"
+            }
+        }
+    }
+    
+    private func runChatUIVerification() {
+        isRunningChatUITests = true
+        chatUITestResultSummary = "Running 11 Chat UI tests..."
+        
+        Task {
+            let passed = await ChatUITests.runAllTests()
+            await MainActor.run {
+                isRunningChatUITests = false
+                chatUITestResultSummary = passed ? "✓ ALL 11 CHAT UI TESTS PASSED" : "✗ SOME TESTS FAILED"
             }
         }
     }
