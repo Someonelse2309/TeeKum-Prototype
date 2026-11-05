@@ -64,13 +64,19 @@
    - [8.2 Swift Observation (`@Observable`) vs Combine Boilerplate](#82-swift-observation-observable-vs-combine-boilerplate)
    - [8.3 Actor Isolation & Thread Safety](#83-actor-isolation--thread-safety)
    - [8.4 Code Walkthrough: Composition Root (`TeeKumApp` & `AppRootView`)](#84-code-walkthrough-composition-root-teekumapp--approotview)
-10. [Chapter 9: Engineering Trivia, Design Trade-Offs & War Stories](#chapter-9-engineering-trivia-design-trade-offs--war-stories)
-    - [9.1 Why SQLite Was Abandoned](#91-why-sqlite-was-abandoned)
-    - [9.2 Why Apple Ultra-Wideband (UWB) Failed at Festivals](#92-why-apple-ultra-wideband-uwb-failed-at-festivals)
-    - [9.3 Why the URL `#` Fragment Is an Anonymous Privacy Superpower](#93-why-the-url--fragment-is-an-anonymous-privacy-superpower)
-    - [9.4 The 20-Byte Text Limit & Byte Budgeting](#94-the-20-byte-text-limit--byte-budgeting)
-    - [9.5 Dancing in Place: Fooling the Motion Coprocessor](#95-dancing-in-place-fooling-the-motion-coprocessor)
-11. [Epilogue: Building for Harsh Environments](#epilogue-building-for-harsh-environments)
+10. [Chapter 9: The Junior Developer's Rosetta Stone: Swift Protocols, Macros, Attributes & Compiler Trivia](#chapter-9-the-junior-developers-rosetta-stone-swift-protocols-macros-attributes--compiler-trivia)
+    - [9.1 Swift Macros: `@Observable` & `@main`](#91-swift-macros-observable--main)
+    - [9.2 Concurrency & Thread-Safety Attributes: `actor`, `@MainActor`, `@Sendable` & `@unchecked Sendable`](#92-concurrency--thread-safety-attributes-actor-mainactor-sendable--unchecked-sendable)
+    - [9.3 SwiftUI State Architecture: `@State`, `@Bindable`, `@Binding` & `[weak self]`](#93-swiftui-state-architecture-state-bindable-binding--weak-self)
+    - [9.4 The Swift Type System & Standard Protocols: `Sendable`, `Identifiable`, `any` vs `some`](#94-the-swift-type-system--standard-protocols-sendable-identifiable-any-vs-some)
+    - [9.5 Low-Level Trivia: Endianness (Gulliver's Travels), Wrapping Arithmetic (`&+=`), Metal GPU Acceleration](#95-low-level-trivia-endianness-gullivers-travels-wrapping-arithmetic--metal-gpu-acceleration)
+11. [Chapter 10: Engineering Trivia, Design Trade-Offs & War Stories](#chapter-10-engineering-trivia-design-trade-offs--war-stories)
+    - [10.1 Why SQLite Was Abandoned](#101-why-sqlite-was-abandoned)
+    - [10.2 Why Apple Ultra-Wideband (UWB) Failed at Festivals](#102-why-apple-ultra-wideband-uwb-failed-at-festivals)
+    - [10.3 Why the URL `#` Fragment Is an Anonymous Privacy Superpower](#103-why-the-url--fragment-is-an-anonymous-privacy-superpower)
+    - [10.4 The 20-Byte Text Limit & Byte Budgeting](#104-the-20-byte-text-limit--byte-budgeting)
+    - [10.5 Dancing in Place: Fooling the Motion Coprocessor](#105-dancing-in-place-fooling-the-motion-coprocessor)
+12. [Epilogue: Building for Harsh Environments](#epilogue-building-for-harsh-environments)
 
 ---
 
@@ -328,10 +334,6 @@ public enum InitialsCodec {
     }
 }
 ```
-
-**Why this code matters:**
-1. **Zero Allocations:** Notice that the decoding function uses pure integer math. No heap allocations or string regex parsers are invoked.
-2. **Deterministic Fallback:** Invalid or empty inputs decode to `"??"`, ensuring the UI never crashes or encounters a `nil` string exception.
 
 ---
 
@@ -1332,15 +1334,271 @@ The composition root in [`TeeKumApp.swift`](file:///Users/nicho/Developer/TeeKum
 
 ---
 
-## Chapter 9: Engineering Trivia, Design Trade-Offs & War Stories
+## Chapter 9: The Junior Developer's Rosetta Stone: Swift Protocols, Macros, Attributes & Compiler Trivia
 
-### 9.1 Why SQLite Was Abandoned
+When junior developers read modern production Swift code, they often encounter unfamiliar keywords, macros, compiler directives, and protocol attributes. This chapter explains what each one does under the hood, why TeeKum uses it, and the fascinating engineering trivia behind it.
+
+---
+
+### 9.1 Swift Macros: `@Observable` & `@main`
+
+#### What is a Swift Macro?
+Introduced in Swift 5.9 (SE-0389), **Swift Macros** are compiler plugins that run *during compilation*. They inspect your Swift code as an Abstract Syntax Tree (AST) and generate additional Swift code before the binary is built.
+
+#### The Magic of `@Observable`:
+In earlier versions of SwiftUI, every ViewModel implemented `ObservableObject` and decorated properties with `@Published`.
+
+```swift
+// ❌ The Legacy Combine Way (iOS 13–16)
+class MapViewModel: ObservableObject {
+    @Published var members: [Member] = []
+    @Published var isRadarPresented: Bool = false
+}
+```
+
+**The Hidden Architectural Flaw:**
+In Combine, `@Published` triggers `objectWillChange.send()`. This sends a notification to **every view listening to that ViewModel**. If a view only cares about `isRadarPresented`, but `members` updates 3 times a second with new GPS coordinates, that view's `body` is re-evaluated 3 times a second! On complex map canvases, this caused devastating frame drops and drained battery.
+
+```swift
+// ✅ The Modern Swift Observation Way (iOS 17+)
+@Observable
+@MainActor
+public final class MapViewModel {
+    public var members: [Member] = []
+    public var isRadarPresented: Bool = false
+}
+```
+
+**What the Compiler Actually Synthesizes Under the Hood:**
+When you attach `@Observable`, the Swift compiler secretly expands your class into this:
+
+```swift
+// What the compiler secretly writes for you:
+public final class MapViewModel: Observable {
+    @ObservationIgnored 
+    private let _$observationRegistrar = ObservationRegistrar()
+
+    public var isRadarPresented: Bool {
+        get {
+            // Records that the current SwiftUI view accessed `isRadarPresented`
+            _$observationRegistrar.access(self, keyPath: \.isRadarPresented)
+            return _isRadarPresented
+        }
+        set {
+            // Tells SwiftUI to re-render ONLY views that accessed `isRadarPresented`!
+            _$observationRegistrar.withMutation(of: self, keyPath: \.isRadarPresented) {
+                _isRadarPresented = newValue
+            }
+        }
+    }
+}
+```
+
+> **Trivia:** Because tracking happens at property getter level, if a SwiftUI View only accesses `member.batteryLevel`, that view will **never** re-render when coordinates update!
+
+#### What is `@main`?
+In C, every program starts at `int main(int argc, char *argv[])`. In Swift, the `@main` attribute on `TeeKumApp.swift` synthesizes that C `main` function, boots the `UIApplicationMain` event loop, and instantiates the top-level SwiftUI `App` scene graph.
+
+---
+
+### 9.2 Concurrency & Thread-Safety Attributes: `actor`, `@MainActor`, `@Sendable` & `@unchecked Sendable`
+
+#### `actor` vs `class`:
+In Swift, both `class` and `actor` are reference types (stored on the heap, passed by pointer).
+However:
+- A `class` allows any thread to access and mutate its variables simultaneously. If Thread A writes while Thread B reads, you get a **Data Race** (undefined memory behavior, crashes).
+- An `actor` provides **compiler-enforced mutual exclusion**. Only one asynchronous task can execute inside an actor at any given millisecond.
+
+```swift
+public actor SeenPacketCache {
+    private var cache: [PacketKey: Date] = [:]
+    
+    // The compiler FORCES callers to use `await`, guaranteeing zero data races!
+    public func isDuplicateAndRecord(_ key: PacketKey) -> Bool {
+        // Safe! No locks or mutexes needed.
+    }
+}
+```
+
+> **Trivia:** Unlike a traditional POSIX mutex (`pthread_mutex_lock`) which blocks the CPU thread, an `actor` suspends the Swift task non-blockingly. The underlying thread is returned to the Grand Central Dispatch pool to do other work while waiting!
+
+#### `@MainActor`:
+The **Main Actor** is a globally unique actor that always executes on **Thread 0 (the Main Thread)**.
+- **The Golden Rule of iOS:** The GPU compositor and UIKit/SwiftUI runloop live on Thread 0. Touching UI state from a background thread causes crashes or visual glitches.
+- By annotating ViewModels with `@MainActor`, the Swift compiler refuses to compile any code that attempts to mutate ViewModel state from a background thread:
+
+```swift
+@Observable
+@MainActor // Every property and method is locked to the Main UI Thread
+public final class ChatViewModel { ... }
+```
+
+When a background actor needs to deliver data to a ViewModel:
+```swift
+// Safely hops from background network thread to Thread 0:
+await MainActor.run {
+    self.chatViewModel.messages.append(newMessage)
+}
+```
+
+#### `@Sendable`:
+A `@Sendable` closure or function is one that can safely cross thread boundaries.
+- It cannot capture mutable `var` variables from the enclosing scope.
+- It can only capture immutable `let` constants or thread-safe `Sendable` types.
+
+#### `@unchecked Sendable`:
+In [`StreamMessageFramer.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Transport/StreamMessageFramer.swift), you will see:
+```swift
+public final class StreamMessageFramer: @unchecked Sendable
+```
+> **Trivia:** `@unchecked Sendable` tells the Swift compiler: *"Disable your automatic data-race checks on this class. I am an experienced systems engineer, and I promise this class is either internally synchronized or exclusively accessed inside an actor."*
+
+---
+
+### 9.3 SwiftUI State Architecture: `@State`, `@Bindable`, `@Binding` & `[weak self]`
+
+#### `@State` in Modern iOS 17:
+Prior to iOS 17, `@State` was only allowed on value types (`Int`, `String`, `struct`). If you wanted to own a class, you had to use `@StateObject`.
+In iOS 17, **`@State` can own `@Observable` reference classes directly!**
+In [`TeeKumApp.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/App/TeeKumApp.swift):
+```swift
+@State private var chatViewModel = ChatViewModel()
+```
+SwiftUI instantiates `ChatViewModel` once, retains it in heap storage, and preserves it across window redraws.
+
+#### `@Bindable`:
+How do you create a two-way binding (`$draftText`) to a property on an `@Observable` object?
+In iOS 16, you used `@ObservedObject`. In modern Swift, you write:
+```swift
+public struct ByteMeterView: View {
+    @Bindable var viewModel: ChatViewModel // Enables $viewModel bindings!
+}
+```
+
+#### `@Binding`:
+A two-way reference to state owned by an ancestor view. Child components use `@Binding` to read and mutate parent state without owning the storage:
+```swift
+@Binding public var selectedMember: Member? // Owned by MapViewModel, manipulated by RadarView
+```
+
+#### Why `[weak self]` Is Mandatory in Network Closures:
+In Swift, memory is managed by **Automatic Reference Counting (ARC)**.
+If Object A holds a strong reference to Object B, and Object B holds a strong reference to Object A, a **Retain Cycle** occurs: the memory can never be freed!
+
+```swift
+// ❌ Retain Cycle Memory Leak:
+service.setOnMessageUpdated { updatedMessage in
+    self.handleIncomingMessage(updatedMessage) // Keeps `self` alive forever!
+}
+
+// ✅ Safe with [weak self]:
+service.setOnMessageUpdated { [weak self] updatedMessage in
+    self?.handleIncomingMessage(updatedMessage) // Converts `self` to optional; ARC can free it!
+}
+```
+
+---
+
+### 9.4 The Swift Type System & Standard Protocols: `Sendable`, `Identifiable`, `any` vs `some`
+
+#### `Sendable` Marker Protocol:
+`Sendable` is a **marker protocol**: it has no functions or properties!
+It is a semantic signal to the Swift compiler that a type can be safely copied across concurrency domains. Value types (`struct`, `enum`) whose stored properties are all `Sendable` get synthesized `Sendable` conformance for free.
+
+#### `Identifiable`:
+```swift
+public struct Member: Identifiable {
+    public let id: String // Stable unique identity
+}
+```
+> **Trivia:** Why does `ForEach(members)` require `Identifiable`?  
+> SwiftUI differentiates between **structural identity** (where a view sits in the code) and **explicit identity** (its unique `id`). If you iterate over an array by index `ForEach(0..<members.count, id: \.self)`, when Member 2 leaves the group, SwiftUI will mistakenly reuse Member 2's view for Member 3, causing map pins and avatars to glitch! Stable string IDs prevent view recycling bugs.
+
+#### `any` vs `some` (Existential Containers vs Opaque Types):
+```swift
+// 'some': Opaque Type (Compile-Time Resolution)
+var body: some View { ... }
+
+// 'any': Existential Type (Runtime Box / Type Erasure)
+public var chatService: (any ChatMessagingService)?
+```
+
+- **`some View`:** Tells the compiler: *"This function returns one specific concrete type that conforms to `View`, but I don't want to type out the giant generic name."* Resolved at compile time; **zero runtime overhead**.
+- **`any ChatMessagingService`:** Tells the compiler: *"This variable can hold ANY concrete type that conforms to this protocol, swapped at runtime."* Stored in a 3-word existential box on the stack; calls go through a witness table.
+
+---
+
+### 9.5 Low-Level Trivia: Endianness (Gulliver's Travels), Wrapping Arithmetic (`&+=`), Metal GPU Acceleration
+
+#### 1. Endianness Trivia (Why Multi-Byte Integers Call `.bigEndian`):
+Where does the word "Endian" come from?
+> **Trivia:** In Jonathan Swift's 1726 satire *Gulliver's Travels*, the kingdoms of Lilliput and Blefuscu fought a bloody civil war over whether soft-boiled eggs should be cracked open from the **Big End** or the **Little End**!
+
+In 1980, computer scientist Danny Cohen published the famous paper *On Holy Wars and a Plea for Peace* (IEN 137), adopting the term for byte ordering:
+- **Little-Endian:** The least significant byte is stored first. Apple Silicon ARM chips (M1, M2, M3, A16, A17) and Intel x86 processors are **Little-Endian**.
+  The 32-bit integer `0x12345678` is laid out in RAM as:
+  `[0x78, 0x56, 0x34, 0x12]`
+- **Big-Endian (Network Byte Order):** The most significant byte is stored first. All internet standards (RFC 791 IPv4, RFC 8439 ChaCha20) require **Big-Endian**.
+  The same integer is laid out over the radio as:
+  `[0x12, 0x34, 0x56, 0x78]`
+
+Because iPhones are little-endian, if you sent memory bytes directly over the radio, a receiver on a different architecture would read numbers backwards! That is why every multi-byte integer in `PacketCodec.swift` explicitly calls `.bigEndian`:
+
+```swift
+public mutating func writeUInt16BigEndian(_ value: UInt16) {
+    var be = value.bigEndian // Flips bytes to Network Byte Order!
+    data.append(Data(bytes: &be, count: 2))
+}
+```
+
+#### 2. Wrapping Arithmetic (`&+=`, `&+`):
+In Swift, standard arithmetic (`a + b`) checks for integer overflow and **crashes the app** with a fatal runtime trap if a byte exceeds 255.
+
+In a festival mesh, radio noise or a rogue packet might arrive with `hopCount = 255`. If we wrote `relayedEnvelope.hopCount += 1`, **the phone would instantly crash**!
+
+TeeKum uses Swift's **Wrapping Addition Operator (`&+=`)**:
+```swift
+relayedEnvelope.hopCount &+= 1 // If 255 is incremented, it wraps safely to 0 without crashing!
+```
+
+#### 3. Metal GPU Hardware Acceleration (`.drawingGroup()`):
+By default, SwiftUI views are rendered as individual CoreAnimation `CALayer`s on the CPU.
+In [`RadarView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarView.swift), compass heading updates arrive at 60 Hz. Re-compositing 30 CALayers 60 times per second burns CPU power.
+
+```swift
+ZStack { ... }
+    .drawingGroup()
+```
+> **Trivia:** `.drawingGroup()` instructs SwiftUI: *"Do not create CALayers. Instead, compile this entire view hierarchy into a single offscreen texture and render it directly on the GPU using Apple Metal shaders!"* This guarantees silky 60 fps rendering with near-zero CPU drain.
+
+#### 4. Angular Math with `truncatingRemainder(dividingBy:)`:
+In C and Python, `%` works on floating-point numbers. In Swift, the `%` operator is strictly for integers.
+When calculating relative compass bearings, angles can exceed $360^\circ$ or dip below $0^\circ$. TeeKum normalizes them using `truncatingRemainder`:
+
+```swift
+// Mathematically clamps any angle into [0.0, 360.0)
+let relativeAngle = (absoluteBearing - heading + 360.0).truncatingRemainder(dividingBy: 360.0)
+```
+
+#### 5. Numeric Text Rolling (`contentTransition(.numericText())`):
+In [`ByteMeterView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Chat/Views/ByteMeterView.swift):
+```swift
+Text("\(viewModel.currentByteCount)/\(ChatViewModel.maxBytes)B")
+    .contentTransition(.numericText())
+```
+> **Trivia:** This iOS 17 modifier animates individual numbers rolling vertically like a mechanical car odometer, rather than cross-fading the whole text label.
+
+---
+
+## Chapter 10: Engineering Trivia, Design Trade-Offs & War Stories
+
+### 10.1 Why SQLite Was Abandoned
 Early plans included an on-device SQLite database. We eliminated it completely:
 - Coordinates become stale within minutes at a festival; historical coordinates have zero value after a reboot.
 - Writing coordinates to unencrypted flash storage is a privacy hazard if a phone is lost or stolen.
 - TeeKum uses **pure in-memory reactive state**: session keys live in the Secure Enclave Keychain, and member states live in memory. When the app exits, state vanishes cleanly.
 
-### 9.2 Why Apple Ultra-Wideband (UWB) Failed at Festivals
+### 10.2 Why Apple Ultra-Wideband (UWB) Failed at Festivals
 On paper, Apple's U1/U2 Ultra-Wideband chip sounds like the dream festival technology: 10-centimeter spatial awareness with AirTag-style directional arrows pointing right at your friend!
 
 In practice, **it was an operational failure in real festival conditions**:
@@ -1350,15 +1608,15 @@ In practice, **it was an operational failure in real festival conditions**:
 
 **The Lesson:** Never choose fragile, high-maintenance hardware over a simple, robust mathematical alternative. The 60m Tactical Polar Radar (dual-frequency GPS + magnetometer) proved 100x more resilient in physical venues.
 
-### 9.3 Why the URL `#` Fragment Is an Anonymous Privacy Superpower
+### 10.3 Why the URL `#` Fragment Is an Anonymous Privacy Superpower
 When sharing a group invite: `teekum://join#key=SECRET_KEY&sid=A1B2C3`
 In RFC 3986, **the fragment of a URI is strictly a local client identifier**. If a user taps this link, the web browser **never transmits the fragment across the network to the server**. The secret key never touches the internet, never enters server access logs, and remains 100% serverless.
 
-### 9.4 The 20-Byte Text Limit & Byte Budgeting
+### 10.4 The 20-Byte Text Limit & Byte Budgeting
 Why did we restrict Festival Group Mesh Chat to 20 bytes?
 Multi-packet message fragmentation over an ad-hoc mesh with 30% packet loss is an engineering nightmare: if 1 of 3 packets drops, the entire message is lost. By keeping chat messages to a single 56-byte wire datagram, message delivery reliability reached **98.4%**.
 
-### 9.5 Dancing in Place: Fooling the Motion Coprocessor
+### 10.5 Dancing in Place: Fooling the Motion Coprocessor
 When developing the motion-adaptive location engine, we encountered an amusing bug:
 Rhythmic 128 BPM dancing at concert stages tricked `CMMotionActivityManager` into reporting "running", keeping GPS awake. We added a 15-meter horizontal displacement filter: if the user moves energetically but remains within 15 meters over 30 seconds, the phone stays in battery-saving sleep!
 
@@ -1386,4 +1644,4 @@ Welcome to the TeeKum team. Now go explore the code!
 
 ---
 *Authored by the Fantasix Team & Google Antigravity*  
-*Document Revision: 3.3 · November 2026*
+*Document Revision: 3.4 · November 2026*
