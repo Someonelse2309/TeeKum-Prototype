@@ -50,6 +50,7 @@ struct TeeKumApp: App {
     private let routeDiscoveryService: RouteDiscoveryService
     private let chatMessageEngine: ChatMessageEngine
     @State private var chatViewModel: ChatViewModel
+    @State private var packetRouter: PacketRouter?
     private let sessionHolder: SessionHolder
     
     init() {
@@ -92,31 +93,21 @@ struct TeeKumApp: App {
     
     var body: some Scene {
         WindowGroup {
-            Group {
-                if sessionViewModel.hasActiveSession, let session = sessionViewModel.activeSession {
-                    MainMapView(
-                        mapViewModel: mapViewModel,
-                        sessionViewModel: sessionViewModel,
-                        sosViewModel: sosViewModel,
-                        meetingPointViewModel: meetingPointViewModel,
-                        chatViewModel: chatViewModel,
-                        relayPolicyManager: relayPolicyManager,
-                        peerTransport: peerTransport
-                    )
-                    .task(id: session.sessionId) {
-                        await runSessionLifecycle(session: session)
-                    }
-                } else {
-                    GroupPairingView(
-                        sessionViewModel: sessionViewModel,
-                        relayPolicyManager: relayPolicyManager,
-                        peerTransport: peerTransport
-                    )
-                        .task {
-                            await stopActiveSession()
-                        }
+            AppRootView(
+                sessionViewModel: sessionViewModel,
+                mapViewModel: mapViewModel,
+                sosViewModel: sosViewModel,
+                meetingPointViewModel: meetingPointViewModel,
+                chatViewModel: chatViewModel,
+                relayPolicyManager: relayPolicyManager,
+                peerTransport: peerTransport,
+                onSessionStart: { session in
+                    await runSessionLifecycle(session: session)
+                },
+                onSessionEnd: {
+                    await stopActiveSession()
                 }
-            }
+            )
             .preferredColorScheme(.dark)
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
@@ -440,14 +431,28 @@ struct TeeKumApp: App {
         self.locationPublisher = publisher
         publisher.start()
         
-        // 5. Inbound Packets, Peer Updates, and Stale Supervisor
+        // 5. Configure PacketRouter & Inbound Streams
+        let router = PacketRouter(
+            cryptoService: cryptoService,
+            peerTransport: peerTransport,
+            relayPolicyManager: relayPolicyManager,
+            routeDiscoveryService: routeDiscoveryService,
+            chatMessageEngine: chatMessageEngine,
+            seenPacketCache: seenPacketCache,
+            sessionViewModel: sessionViewModel,
+            sosViewModel: sosViewModel,
+            meetingPointViewModel: meetingPointViewModel,
+            chatViewModel: chatViewModel
+        )
+        self.packetRouter = router
+        
         let inboundStream = await peerTransport.inboundPackets
         let peerUpdatesStream = await peerTransport.peerUpdates
         await withTaskGroup(of: Void.self) { group in
             group.addTask { @MainActor in
                 for await inbound in inboundStream {
                     guard !Task.isCancelled else { break }
-                    await handleInboundPacket(inbound, for: session)
+                    await router.routeInboundPacket(inbound, for: session)
                 }
             }
             
@@ -539,245 +544,7 @@ struct TeeKumApp: App {
         await chatMessageEngine.clearHistory()
         await chatMessageEngine.configure(sessionProvider: nil, recipientsProvider: nil)
         chatViewModel.clearConversation()
-    }
-    
-    // MARK: - Inbound Packet Dispatching
-    
-    @MainActor
-    private func handleInboundPacket(_ inbound: InboundPacket, for session: GroupSession) async {
-        let raw = inbound.rawPacket
-        let envelope = raw.envelope
-        
-        guard envelope.sessionId == session.sessionId else {
-            // Stranger Packet Relaying (Agent 5: Governed by RelayPolicyManager)
-            await handleStrangerRelayPacket(inbound)
-            return
-        }
-        
-        // 1. Process ACK packets through SOSViewModel and ChatMessageEngine, and relay if multi-hop
-        if envelope.type == .ack {
-            await sosViewModel.processInboundPacket(inbound)
-            _ = await chatMessageEngine.processDeliveryACK(rawPacket: raw, fromPeerId: inbound.sourcePeerId)
-            await relayMeshPacketIfNeeded(inbound, for: session)
-            return
-        }
-        
-        // 2. Process SOS packets through SOSViewModel (siren, haptics, incoming alert, delivery ACK)
-        if envelope.type == .sos {
-            await sosViewModel.processInboundPacket(inbound)
-        }
-        
-        // 3. Decrypt with session symmetric key
-        let key = SymmetricKey(data: session.symmetricKeyData)
-        guard let decrypted = try? await cryptoService.open(
-            ciphertext: raw.ciphertext,
-            envelope: envelope,
-            authTag: raw.authTag,
-            using: key
-        ) else {
-            // If decryption fails (e.g. unknown payload or blind mesh relay), still forward SOS
-            if envelope.type == .sos {
-                await relayMeshPacketIfNeeded(inbound, for: session)
-            }
-            return
-        }
-        
-        switch envelope.type {
-        case .sos:
-            if let sos = try? SOSPayload.deserialize(from: decrypted) {
-                guard sos.senderInitials != session.localInitials else { return }
-                
-                let resolvedName = sos.senderInitials
-                let memberColor = MemberColor.resolve(code: sos.colorCode, initials: sos.senderInitials)
-                
-                let member = Member(
-                    id: sos.senderInitials,
-                    name: resolvedName,
-                    lastSeen: inbound.receivedAt,
-                    coordinate: sos.coordinate,
-                    horizontalAccuracy: CLLocationAccuracy(sos.accuracy),
-                    isEmergency: true,
-                    batteryLevel: Float(sos.batteryLevel) / 100.0,
-                    heading: sessionViewModel.members.first(where: { $0.id == sos.senderInitials })?.heading,
-                    isDirectPeer: envelope.hopCount == 0,
-                    rssi: inbound.receivedRssi,
-                    color: memberColor
-                )
-                sessionViewModel.updateMember(member)
-                
-                // Update incoming alert sender name with resolved name
-                if var alert = sosViewModel.activeIncomingAlert, alert.id == sos.sosEventId {
-                    alert.senderName = resolvedName
-                    sosViewModel.activeIncomingAlert = alert
-                }
-            }
-            
-            // Re-broadcast / forward SOS across the mesh to all other peers
-            await relayMeshPacketIfNeeded(inbound, for: session)
-            
-        case .locationPing:
-            guard let ping = try? LocationPingPayload.deserialize(from: decrypted) else { return }
-            guard ping.senderInitials != session.localInitials else { return }
-            
-            let resolvedName = ping.senderInitials
-            let memberColor = MemberColor.resolve(code: ping.colorCode, initials: ping.senderInitials)
-            
-            let existingEmergency = sessionViewModel.members.first(where: { $0.id == ping.senderInitials })?.isEmergency ?? false
-            let member = Member(
-                id: ping.senderInitials,
-                name: resolvedName,
-                lastSeen: inbound.receivedAt,
-                coordinate: ping.coordinate,
-                horizontalAccuracy: CLLocationAccuracy(ping.accuracy),
-                isEmergency: existingEmergency,
-                batteryLevel: Float(ping.batteryLevel) / 100.0,
-                heading: ping.headingDegrees,
-                isDirectPeer: envelope.hopCount == 0,
-                rssi: inbound.receivedRssi,
-                color: memberColor
-            )
-            sessionViewModel.updateMember(member)
-            
-            await relayMeshPacketIfNeeded(inbound, for: session)
-            
-        case .meetingUpdate:
-            guard let update = try? MeetingUpdatePayload.deserialize(from: decrypted) else { return }
-            let applied = meetingPointViewModel.applyInboundUpdate(update)
-            guard applied else { return }
-            if update.senderInitials != session.localInitials {
-                let actionText = update.action == .propose ? "proposed rendezvous" : (update.action == .accept ? "is attending" : (update.action == .cancel ? "canceled rendezvous" : "declined"))
-                let displayTitle = meetingPointViewModel.activeMeetingPoint?.formattedTitle ?? "\(update.senderInitials)'s Rendezvous"
-                NotificationService.shared.notifyMeetingPoint(
-                    proposerInitials: update.senderInitials,
-                    meetingPointName: displayTitle,
-                    actionName: actionText
-                )
-            }
-            await relayMeshPacketIfNeeded(inbound, for: session)
-            
-        case .routeReq:
-            if let wireData = try? inbound.rawPacket.toWireData() {
-                _ = try? await routeDiscoveryService.handleInboundRouteReq(
-                    wireData: wireData,
-                    fromPeerId: inbound.sourcePeerId,
-                    session: session
-                )
-            }
-            
-        case .routeResp:
-            if let wireData = try? inbound.rawPacket.toWireData() {
-                _ = try? await routeDiscoveryService.handleInboundRouteResp(
-                    wireData: wireData,
-                    fromPeerId: inbound.sourcePeerId,
-                    session: session
-                )
-            }
-            
-        case .chatMessage:
-            if let outcome = try? await chatMessageEngine.handleInboundPacket(inbound) {
-                switch outcome {
-                case .deliveredLocally(let message), .deliveredLocallyAndRelayed(let message, _):
-                    if !message.isLocalSender {
-                        NotificationService.shared.notifyChatMessage(
-                            senderInitials: message.senderInitials,
-                            text: message.text,
-                            isSheetOpen: chatViewModel.isChatSheetPresented,
-                            onTap: { [weak chatViewModel] in
-                                chatViewModel?.isChatSheetPresented = true
-                            }
-                        )
-                    }
-                default:
-                    break
-                }
-            }
-            await relayMeshPacketIfNeeded(inbound, for: session)
-            
-        default:
-            break
-        }
-    }
-    
-    // MARK: - Multi-Hop Mesh Forwarding
-    
-    @MainActor
-    private func relayMeshPacketIfNeeded(_ inbound: InboundPacket, for session: GroupSession) async {
-        let envelope = inbound.rawPacket.envelope
-        guard envelope.hopCount < envelope.hopLimit else { return }
-        
-        // Prevent forwarding packets that originated locally on this device
-        let memberSlot = session.memberSlot
-        if envelope.memberSlot == memberSlot {
-            return
-        }
-        
-        // Prevent routing loops: relay each unique session sequence number at most once via LRU cache
-        let packetKey = PacketKey(wirePacket: inbound.rawPacket)
-        let isDuplicate = await seenPacketCache.isDuplicateAndRecord(packetKey)
-        if isDuplicate {
-            return
-        }
-        
-        var relayedEnvelope = envelope
-        relayedEnvelope.hopCount &+= 1
-        
-        let relayedWirePacket = RawWirePacket(
-            envelope: relayedEnvelope,
-            ciphertext: inbound.rawPacket.ciphertext,
-            authTag: inbound.rawPacket.authTag
-        )
-        
-        do {
-            let wireData = try relayedWirePacket.toWireData()
-            try await peerTransport.broadcastPacket(wireData)
-        } catch {
-            print("[TeeKumApp] Failed to relay mesh packet: \(error)")
-        }
-    }
-    
-    // MARK: - Stranger Mesh Packet Relay (Agent 5)
-    
-    @MainActor
-    private func handleStrangerRelayPacket(_ inbound: InboundPacket) async {
-        let envelope = inbound.rawPacket.envelope
-        
-        // 1. Verify policy permits stranger relaying (Opt-in & Battery cut-off)
-        let policyState = await relayPolicyManager.currentState()
-        guard policyState.isRelayPermitted else {
-            await relayPolicyManager.recordDropEvent(reason: .policyDisabled)
-            return
-        }
-        
-        // 2. Hop limit bound enforcement (max 8 hops)
-        guard envelope.hopCount < envelope.hopLimit else {
-            await relayPolicyManager.recordDropEvent(reason: .hopLimitExceeded)
-            return
-        }
-        
-        // 3. Deduplicate via 5-minute LRU SeenPacketCache
-        let packetKey = PacketKey(wirePacket: inbound.rawPacket)
-        let isDuplicate = await seenPacketCache.isDuplicateAndRecord(packetKey)
-        if isDuplicate {
-            await relayPolicyManager.recordDropEvent(reason: .duplicate)
-            return
-        }
-        
-        // 4. Rate-limited blind forwarding via PeerTransportService
-        do {
-            let wireData = try inbound.rawPacket.toWireData()
-            let directPeers = await peerTransport.neighborTable.activeNeighbors()
-            let eligible = directPeers.filter { $0.id != inbound.sourcePeerId }
-            for peer in eligible {
-                do {
-                    _ = try await peerTransport.forwardFrame(wireData, to: peer.id)
-                } catch {
-                    print("[TeeKumApp] Forward to stranger relay peer \(peer.id) failed: \(error)")
-                }
-            }
-            await relayPolicyManager.recordForwardEvent(type: envelope.type)
-        } catch {
-            print("[TeeKumApp] Stranger relay dropped: \(error)")
-        }
+        self.packetRouter = nil
     }
     
     @MainActor
