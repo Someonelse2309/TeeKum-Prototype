@@ -1,18 +1,18 @@
-# TeeKum Code Handbook — Volume 10: Feature — Precision Finder & Radar
+# TeeKum Code Handbook — Volume 10: Feature — Precision Finder & Radar (Definitive Deep-Dive)
 
-This volume breaks down the real-time Tactical Radar, polar-to-Cartesian coordinate projection mathematics, forward-up relative bearing transforms, Metal GPU rendering pipeline (`.drawingGroup()`), and the high-visibility crowd strobe beacon in TeeKum.
+This volume provides an exhaustive, method-by-method architectural deep-dive into the real-time Tactical Radar, polar-to-Cartesian screen coordinate projections, forward-up relative bearing transforms, Metal GPU rendering acceleration (`.drawingGroup()`), and the crowd visual strobe beacon in TeeKum.
 
 ---
 
-## 📑 Included Files
+## 📑 Included Source Files
 
-1. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarView.swift) — Full tactical radar engine, target selection, and coordinate projection.
-2. [`TeeKum Prototype/Features/Finder/Views/FinderBeaconView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/FinderBeaconView.swift) — Full-screen crowd finder integrating the radar with a multi-color strobe torch.
-3. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarTheme.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarTheme.swift) — Configuration model for radar geometry, colors, and range thresholds (15m, 30m, 60m).
-4. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarGridBackground.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarGridBackground.swift) — Concentric distance rings, crosshairs, and perimeter degree tick marks.
-5. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarBlipView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarBlipView.swift) — Peer blip avatar, edge-clamped directional indicator, and selection state.
-6. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarCenterMarker.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarCenterMarker.swift) — Pulsing user location marker with forward-facing orientation arrow.
-7. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarFriendCard.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarFriendCard.swift) — Bottom tactile HUD card displaying distance and tactical clock bearing.
+1. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarView.swift) (151 lines) — Full tactical radar engine, target selection, and coordinate projection math.
+2. [`TeeKum Prototype/Features/Finder/Views/FinderBeaconView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/FinderBeaconView.swift) (394 lines) — Full-screen crowd finder integrating the radar with a multi-color strobe torch.
+3. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarTheme.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarTheme.swift) (130 lines) — Geometry thresholds, distance ranges (15m, 30m, 60m), and color schemes.
+4. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarGridBackground.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarGridBackground.swift) (150 lines) — Concentric distance rings, crosshairs, and perimeter degree tick marks.
+5. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarBlipView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarBlipView.swift) (160 lines) — Peer blip avatar, edge-clamped directional indicator, and selection state.
+6. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarCenterMarker.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarCenterMarker.swift) (100 lines) — Center user marker with forward-facing orientation arrow.
+7. [`TeeKum Prototype/Features/Finder/Views/Radar/RadarFriendCard.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarFriendCard.swift) (180 lines) — Horizontal HUD card displaying distance and tactical clock bearing.
 
 ---
 
@@ -56,28 +56,40 @@ let relativeAngle = (absoluteBearing - heading + 360.0).truncatingRemainder(divi
 ## 1.2 Polar-to-Cartesian Screen Projection & Clamping
 
 ```swift
-    let isClamped = dist > theme.maxDisplayRange
-    let displayDistance = min(dist, theme.maxDisplayRange)
-    
-    // Polar to Cartesian conversion
-    // 0° is North (Up) -> dx = sin(rad), dy = -cos(rad)
-    let rad = relativeAngle * .pi / 180.0
-    let radialFraction = CGFloat(displayDistance / theme.maxDisplayRange)
-    let blipRadius = radius * radialFraction
-    
-    let dx = sin(rad) * blipRadius
-    let dy = -cos(rad) * blipRadius
-    
-    let point = CGPoint(x: center.x + dx, y: center.y + dy)
+    private func computeBlipPosition(
+        for member: Member,
+        center: CGPoint,
+        radius: CGFloat
+    ) -> BlipPosition? {
+        guard let userLoc = userLocation, let targetCoord = member.coordinate else { return nil }
+        
+        let dist = userLoc.distance(to: targetCoord)
+        let absoluteBearing = userLoc.bearing(to: targetCoord)
+        let heading = currentHeading ?? 0.0
+        
+        let relativeAngle = (absoluteBearing - heading + 360.0).truncatingRemainder(dividingBy: 360.0)
+        let isClamped = dist > theme.maxDisplayRange
+        let displayDistance = min(dist, theme.maxDisplayRange)
+        
+        // Polar to Cartesian conversion
+        // In navigation, 0° is North (Up) -> dx = sin(rad), dy = -cos(rad)
+        let rad = relativeAngle * .pi / 180.0
+        let radialFraction = CGFloat(displayDistance / theme.maxDisplayRange)
+        let blipRadius = radius * radialFraction
+        
+        let dx = sin(rad) * blipRadius
+        let dy = -cos(rad) * blipRadius
+        
+        let point = CGPoint(x: center.x + dx, y: center.y + dy)
+        return BlipPosition(point: point, distance: dist, relativeBearing: relativeAngle, isClamped: isClamped)
+    }
 ```
 
-### Trigonometric Coordinate System Invariant
-* In standard high school geometry, $0^\circ$ is East ($+x$), and angles increase counter-clockwise ($dx = r \cos \theta, dy = r \sin \theta$).
-* In aviation and navigation, **$0^\circ$ is North (Straight Up)**, and angles increase clockwise ($0^\circ \dots 360^\circ$).
-* In iOS UIKit/SwiftUI screen coordinates, the $y$-axis points **downward**.
-* Therefore:
-  $$dx = r \sin(\theta), \quad dy = -r \cos(\theta)$$
-* **Outer Edge Clamping**: If a friend is 120m away (beyond `maxDisplayRange = 60m`), their position is clamped to the outer rim ($r = blipRadius$) and rendered with an outward-pointing arrow indicator so you still know which direction to walk.
+### Coordinate Invariants
+1. **Navigation vs Standard Cartesian**: In high-school math, $0^\circ$ is East ($+x$) and increases counter-clockwise ($dx = r \cos \theta, dy = r \sin \theta$). In navigation and radar systems, **$0^\circ$ is North (Straight Up)** and increases clockwise.
+2. In iOS screen coordinates, the $y$-axis points **downward**:
+   $$dx = r \sin(\theta), \quad dy = -r \cos(\theta)$$
+3. **Outer Ring Clamping**: If a friend is 140 meters away (beyond `maxDisplayRange = 60m`), their position is clamped to the outer rim ($r = blipRadius$) and rendered with `RadarBlipView(isClamped: true)`, displaying an outward directional arrow so the user knows which direction to walk.
 
 ---
 
@@ -103,12 +115,26 @@ let relativeAngle = (absoluteBearing - heading + 360.0).truncatingRemainder(divi
 
 ```swift
     @State private var isStrobeActive: Bool = false
+    @State private var strobeColorIndex: Int = 0
+    @State private var strobeTask: Task<Void, Never>?
     private let strobeColors: [Color] = [.yellow, .cyan, .green, .white]
+    
+    private func startStrobe() {
+        isStrobeActive = true
+        strobeTask?.cancel()
+        strobeTask = Task { @MainActor in
+            while isStrobeActive {
+                try? await Task.sleep(nanoseconds: 80_000_000) // 80ms flash cadence
+                guard !Task.isCancelled, isStrobeActive else { break }
+                strobeColorIndex = (strobeColorIndex + 1) % strobeColors.count
+            }
+        }
+    }
 ```
 
 ### Real-World Field Utility
 * In a massive festival crowd of 50,000 people, GPS has an uncertainty radius of 5–10 meters. Once you are within 10 meters of a friend, you still need to see them visually in the dark.
-* Tapping the **Beacon** button activates full-screen maximum brightness strobing across high-contrast neon colors (`yellow`, `cyan`, `green`, `white`).
+* Tapping the **Beacon** button activates full-screen maximum brightness strobing across high-contrast neon colors (`yellow`, `cyan`, `green`, `white`) at an 80ms cadence.
 * The user holds their iPhone high above their head, providing a physical visual beacon so their friends can spot them across the crowd.
 
 ---
