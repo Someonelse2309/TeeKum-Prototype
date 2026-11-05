@@ -1,51 +1,51 @@
-# TeeKum Code Handbook — Volume 02: Wire Protocol & Domain Models
+# TeeKum Code Handbook — Volume 02: Wire Protocol & Domain Models (Definitive Deep-Dive)
 
-This volume breaks down the low-level binary data structures, fixed 56-byte wire packets, sequence number bit partitions, 30-byte payload schemas, cryptographic inputs, and high-level domain entities of TeeKum.
+This volume provides an exhaustive, byte-by-byte and field-by-field breakdown of the fixed 56-byte wire datagram, cleartext envelope serialization, cryptographic nonce derivation, authenticated associated data (AAD) masking, all seven binary payload layouts, and high-level domain entities in TeeKum.
 
 ---
 
-## 📑 Included Files
+## 📑 Included Source Files
 
 * **Wire & Packaging**:
-  * [`TeeKum Prototype/Core/Messaging/Models/RawWirePacket.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Models/RawWirePacket.swift)
-  * [`TeeKum Prototype/Core/Messaging/Models/CleartextEnvelope.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Models/CleartextEnvelope.swift)
-  * [`TeeKum Prototype/Core/Messaging/Models/PacketConstants.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Models/PacketConstants.swift)
+  * [`TeeKum Prototype/Core/Messaging/Models/RawWirePacket.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Models/RawWirePacket.swift) (54 lines) — 56-byte container combining cleartext envelope, ciphertext, and Poly1305 MAC tag.
+  * [`TeeKum Prototype/Core/Messaging/Models/CleartextEnvelope.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Models/CleartextEnvelope.swift) (186 lines) — 10-byte routing header, sequence bit-partitioning, and AAD mask.
+  * [`TeeKum Prototype/Core/Messaging/Models/PacketConstants.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Models/PacketConstants.swift) (50 lines) — Master packet constants and architectural limits.
 * **Encrypted 30-Byte Payloads**:
-  * [`TeeKum Prototype/Core/Messaging/Payloads/LocationPingPayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/LocationPingPayload.swift)
-  * [`TeeKum Prototype/Core/Messaging/Payloads/ChatMessagePayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/ChatMessagePayload.swift)
-  * [`TeeKum Prototype/Core/Messaging/Payloads/SOSPayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/SOSPayload.swift)
-  * [`TeeKum Prototype/Core/Messaging/Payloads/ACKPayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/ACKPayload.swift)
-  * [`TeeKum Prototype/Core/Messaging/Payloads/RouteReqPayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/RouteReqPayload.swift)
-  * [`TeeKum Prototype/Core/Messaging/Payloads/RouteRespPayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/RouteRespPayload.swift)
-  * [`TeeKum Prototype/Core/Messaging/Payloads/MeetingUpdatePayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/MeetingUpdatePayload.swift)
+  * [`TeeKum Prototype/Core/Messaging/Payloads/LocationPingPayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/LocationPingPayload.swift) (120 lines) — Type 0x01 geographic & sensor telemetry.
+  * [`TeeKum Prototype/Core/Messaging/Payloads/SOSPayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/SOSPayload.swift) (104 lines) — Type 0x02 emergency distress alert.
+  * [`TeeKum Prototype/Core/Messaging/Payloads/MeetingUpdatePayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/MeetingUpdatePayload.swift) (148 lines) — Type 0x03 group rendezvous beacon & attendance update.
+  * [`TeeKum Prototype/Core/Messaging/Payloads/RouteReqPayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/RouteReqPayload.swift) (60 lines) — Type 0x04 AODV route discovery request.
+  * [`TeeKum Prototype/Core/Messaging/Payloads/RouteRespPayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/RouteRespPayload.swift) (60 lines) — Type 0x05 AODV route discovery response.
+  * [`TeeKum Prototype/Core/Messaging/Payloads/ACKPayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/ACKPayload.swift) (94 lines) — Type 0x06 delivery acknowledgement receipt.
+  * [`TeeKum Prototype/Core/Messaging/Payloads/ChatMessagePayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/ChatMessagePayload.swift) (164 lines) — Type 0x07 offline peer-to-peer text message.
 * **Domain Models & Enums**:
-  * [`TeeKum Prototype/Core/Models/GroupSession.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/GroupSession.swift)
-  * [`TeeKum Prototype/Core/Models/Member.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/Member.swift)
-  * [`TeeKum Prototype/Core/Models/ChatMessage.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/ChatMessage.swift)
-  * [`TeeKum Prototype/Core/Models/MeetingPoint.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/MeetingPoint.swift)
-  * [`TeeKum Prototype/Core/Models/TeeKumConfiguration.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/TeeKumConfiguration.swift)
-  * [`TeeKum Prototype/Core/Models/Enums/MemberColor.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/Enums/MemberColor.swift)
-  * [`TeeKum Prototype/Core/Models/Enums/RouteChoice.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/Enums/RouteChoice.swift)
+  * [`TeeKum Prototype/Core/Models/GroupSession.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/GroupSession.swift) (172 lines)
+  * [`TeeKum Prototype/Core/Models/Member.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/Member.swift) (129 lines)
+  * [`TeeKum Prototype/Core/Models/ChatMessage.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/ChatMessage.swift) (140 lines)
+  * [`TeeKum Prototype/Core/Models/MeetingPoint.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/MeetingPoint.swift) (120 lines)
+  * [`TeeKum Prototype/Core/Models/TeeKumConfiguration.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/TeeKumConfiguration.swift) (205 lines)
+  * [`TeeKum Prototype/Core/Models/Enums/MemberColor.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/Enums/MemberColor.swift) (88 lines)
+  * [`TeeKum Prototype/Core/Models/Enums/RouteChoice.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Models/Enums/RouteChoice.swift) (29 lines)
 
 ---
 
-# 1. Wire Datagram Architecture
+# 1. Master Wire Datagram Specification (56 Bytes)
 
-Every transmission in TeeKum is strictly **56 bytes**:
+Every packet transmitted across physical AWDL radios in TeeKum is strictly **56 bytes**. This invariant prevents IP fragmentation, eliminates memory reallocations, and simplifies hardware sliding window parsing:
 
 ```
-+-------------------------------------------------------------------------+
-|                  56-BYTE FIXED TEEKUM WIRE DATAGRAM                     |
-+--------------------------+------------------------------+---------------+
-| Cleartext Envelope (10B) | Encrypted Payload (30B)      | Auth Tag (16B)|
-| Readable by all relays   | Sealed with AES-GCM-256      | Poly1305 / GCM|
-+--------------------------+------------------------------+---------------+
- 0                        9 10                          39 40           55
++----------------------------------------------------------------------------------------------------+
+|                               56-BYTE TEEKUM BINARY WIRE DATAGRAM                                  |
++------------------------------------+------------------------------------+--------------------------+
+| Cleartext Envelope (10 Bytes)      | Encrypted Payload (30 Bytes)       | Poly1305 Tag (16 Bytes)  |
+| Visible to all intermediate relays | Sealed with ChaCha20 / AES-256     | Authenticates Envelope+PL|
++------------------------------------+------------------------------------+--------------------------+
+ 0                                  9 10                                39 40                      55
 ```
 
 ---
 
-# 2. `RawWirePacket.swift`
+# 2. `RawWirePacket.swift`: Packaging & Bounds Enforcement
 
 ```swift
 nonisolated public struct RawWirePacket: Equatable, Sendable {
@@ -59,7 +59,6 @@ nonisolated public struct RawWirePacket: Equatable, Sendable {
         self.authTag = authTag
     }
     
-    /// Combines envelope (10B), ciphertext (30B), and auth tag (16B) into exactly 56 bytes.
     public func toWireData() throws -> Data {
         let envData = envelope.serialize()
         guard envData.count == PacketConstants.cleartextEnvelopeSize else {
@@ -79,7 +78,6 @@ nonisolated public struct RawWirePacket: Equatable, Sendable {
         return packet
     }
     
-    /// Parses a 56-byte binary datagram from the network.
     public static func fromWireData(_ data: Data) throws -> RawWirePacket {
         guard data.count == PacketConstants.wirePacketSize else {
             throw PacketCodecError.invalidPacketSize(expected: PacketConstants.wirePacketSize, actual: data.count)
@@ -95,50 +93,64 @@ nonisolated public struct RawWirePacket: Equatable, Sendable {
 }
 ```
 
-### Line-by-Line Breakdown
-* `nonisolated public struct RawWirePacket: Equatable, Sendable`: Explicitly marked `nonisolated` so it can be passed across any actor boundary without triggering isolation warnings. It is a value type (`struct`) with value semantics.
-* `toWireData()`: Serializes the 3 components. Pre-allocates buffer capacity (`Data(capacity: 56)`) to eliminate dynamic heap reallocations.
-* `fromWireData(_ data: Data)`: Slices the received byte buffer using non-copying subdata ranges (`0..<10`, `10..<40`, `40..<56`).
-* `guard data.count == PacketConstants.wirePacketSize`: Rejects any malformed, truncated, or fragmented packet at the earliest possible stage before doing any cryptographic parsing.
+### Detailed Method Dissection
+* `nonisolated public struct`: Explicitly marked `nonisolated` so value instances can be transferred across any Swift `actor` boundary without compiler warnings.
+* `toWireData()`: Pre-allocates buffer capacity `Data(capacity: 56)` to prevent dynamic memory heap reallocations. Enforces that `envData == 10B`, `ciphertext == 30B`, and `authTag == 16B`.
+* `fromWireData(_ data: Data)`: Parses incoming stream slices. If `data.count != 56`, immediately aborts before running expensive cryptographic routines.
 
 ---
 
-# 3. `CleartextEnvelope.swift`
+# 3. `CleartextEnvelope.swift`: Header Anatomy & Bitwise Packing
 
-## 3.1 Structure & Bitfield Layout
+## 3.1 Field-to-Byte Layout Map (10 Bytes)
 
-```swift
-public struct CleartextEnvelope: Equatable, Sendable {
-    public var version: UInt8
-    public var type: PacketType
-    public var hopLimit: UInt8
-    public var hopCount: UInt8
-    public var sessionId: UInt16
-    public var sequenceNumber: UInt32
-    
-    public var memberSlot: UInt8 {
-        CleartextEnvelope.memberSlot(from: sequenceNumber)
-    }
-    
-    public var counter: UInt32 {
-        CleartextEnvelope.counter(from: sequenceNumber)
-    }
 ```
-
-### Envelope Byte Map (10 Bytes)
-```
- Byte 0: [ Version (4 bits) | Packet Type (4 bits) ]
- Byte 1: [ Hop Limit (UInt8: 1..15)                ]
- Byte 2: [ Hop Count (UInt8: 0..hopLimit)          ]
- Byte 3..5: [ Session ID (24-bit Big-Endian UInt)  ]
- Byte 6..9: [ Sequence Number (32-bit Big-Endian)  ]
+Byte 0: [ Version (High 4 bits) | Packet Type (Low 4 bits) ]
+Byte 1: [ Hop Limit (UInt8: 1..15)                         ]
+Byte 2: [ Hop Count (UInt8: 0..hopLimit)                   ]
+Bytes 3..5: [ Session ID (24-bit Big-Endian UInt)          ]
+Bytes 6..9: [ Sequence Number (32-bit Big-Endian UInt)     ]
             └─ Byte 6: Member Slot (UInt8: 0..255)
             └─ Bytes 7..9: Monotonic Counter (24-bit: 0..16,777,215)
 ```
 
+```swift
+    public func serialize() -> Data {
+        var data = Data(capacity: PacketConstants.cleartextEnvelopeSize)
+        
+        // Byte 0: version (high 4 bits) | type (low 4 bits)
+        let byte0 = ((version & 0x0F) << 4) | (type.rawValue & 0x0F)
+        data.append(byte0)
+        
+        // Byte 1: hopLimit (UInt8)
+        data.append(hopLimit)
+        
+        // Byte 2: hopCount (UInt8)
+        data.append(hopCount)
+        
+        // Bytes 3..5: sessionId (3 bytes, 24-bit big-endian)
+        let sid3Bytes: [UInt8] = [
+            UInt8((sessionId >> 16) & 0xFF),
+            UInt8((sessionId >> 8) & 0xFF),
+            UInt8(sessionId & 0xFF)
+        ]
+        data.append(contentsOf: sid3Bytes)
+        
+        // Bytes 6..9: sequenceNumber (32-bit big-endian)
+        var seqBE = sequenceNumber.bigEndian
+        data.append(Data(bytes: &seqBE, count: 4))
+        
+        return data
+    }
+```
+
+### Nibble Packing & Endianness
+* **Byte 0 Packing**: `((version & 0x0F) << 4) | (type.rawValue & 0x0F)` compresses protocol version (`0x03`) and packet type (`0x01` through `0x07`) into a single byte.
+* **Big-Endian Invariant**: Network byte order is strictly Big-Endian. Multi-byte integers (`sequenceNumber`, `sessionId`) use `.bigEndian` to ensure identical byte representations across Apple Silicon ARM64 devices and x86_64 simulators.
+
 ---
 
-## 3.2 Sequence Number Partitioning & Nonce Collision Defense
+## 3.2 Sequence Number Bit-Partitioning: Mathematical Proof
 
 ```swift
     public static func makeSequenceNumber(memberSlot: UInt8, counter: UInt32) -> UInt32 {
@@ -154,10 +166,17 @@ public struct CleartextEnvelope: Equatable, Sendable {
     }
 ```
 
-### Cryptographic Significance
-* In AES-GCM, encrypting two different messages with the same key and same nonce causes **catastrophic key recovery** (the polynomial authenticator collapses).
-* Since all festival friends share the same symmetric group key, two devices must NEVER emit the same nonce.
-* By bit-shifting `memberSlot` into the high 8 bits `(memberSlot << 24)`, Member A (`slot 1`) emits nonces starting with `0x01......`, while Member B (`slot 2`) emits nonces starting with `0x02......`. Nonce spaces can never collide.
+### The Multi-Node Nonce Collision Catastrophe
+In AEAD ciphers (ChaCha20-Poly1305 and AES-GCM), **encrypting two different messages with the same key and same nonce causes catastrophic key recovery**. Because all festival friends in a group share the same symmetric group key, two devices must NEVER generate the same nonce.
+
+TeeKum partitions the 32-bit sequence number:
+* **High 8 Bits (Byte 6)**: `memberSlot` (derived deterministically from member initials).
+* **Low 24 Bits (Bytes 7..9)**: Monotonic sequence counter ($0 \dots 16,777,215$).
+
+$$\text{Sequence Space for Member A (Slot 1)} = \mathtt{0x01000000} \dots \mathtt{0x01FFFFFF}$$
+$$\text{Sequence Space for Member B (Slot 2)} = \mathtt{0x02000000} \dots \mathtt{0x02FFFFFF}$$
+
+The two sequence spaces are mathematically disjoint. Nonce collision across group members is impossible.
 
 ---
 
@@ -193,14 +212,14 @@ public struct CleartextEnvelope: Equatable, Sendable {
     }
 ```
 
-### Why Mask `hopCount` to `0x00` in AAD?
-* When intermediate stranger devices relay a packet across the festival, they increment `hopCount` by 1.
-* If `hopCount` were included directly in the AEAD authentication calculation, the recipient's Poly1305 authentication tag check would fail on the very first relay hop!
-* **Solution**: Byte 2 is masked to `0x00` during AAD calculation on both sender and receiver. The remaining fields (`version`, `type`, `hopLimit`, `sessionId`, `sequenceNumber`) remain cryptographically bound and tamper-proof.
+### The Mutable Header Paradox
+When stranger nodes relay a packet, they increment `hopCount` by 1. If `hopCount` were part of the cryptographic MAC calculation, the Poly1305 tag would break on the first relay hop.
+
+**The Solution**: Byte 2 is masked to `0x00` during AAD generation on both the sender and receiver. The remaining fields (`version`, `type`, `hopLimit`, `sessionId`, `sequenceNumber`) remain fully authenticated, preventing attackers from modifying hop limits or hijacking sessions.
 
 ---
 
-## 3.4 Nonce Construction (96-bit / 12 Bytes)
+## 3.4 96-Bit Nonce Construction
 
 ```swift
     public func constructNonce() -> Data {
@@ -224,132 +243,116 @@ public struct CleartextEnvelope: Equatable, Sendable {
     }
 ```
 
-### Nonce Memory Layout
+### 12-Byte Nonce Memory Structure
 ```
- Bytes 0..2:  [ Session ID (3 bytes)                               ]
- Bytes 3..6:  [ Sequence Number: MemberSlot (1B) + Counter (3B)    ]
- Byte 7:      [ Version & Type (1 byte)                            ]
- Bytes 8..11: [ Protocol Domain Tag: 'T', 'K', 'M', '3' (4 bytes)  ]
+Bytes 0..2:  Session ID (3 bytes)
+Bytes 3..6:  Sequence Number (4 bytes: 1B MemberSlot + 3B Monotonic Counter)
+Byte 7:      Version & Type Nibble (1 byte)
+Bytes 8..11: Protocol Domain Separation Tag: [0x54, 0x4B, 0x4D, 0x33] ("TKM3")
 ```
 
 ---
 
-# 4. Encrypted 30-Byte Payloads
+# 4. The 7 Encrypted 30-Byte Payloads: Byte-by-Byte Layouts
 
-## 4.1 `LocationPingPayload.swift` (Type `0x01`)
+Every payload in TeeKum is serialized to **strictly 30 bytes**:
 
-```swift
-public struct LocationPingPayload: Equatable, Sendable {
-    public var coordinate: CLLocationCoordinate2D
-    public var timestamp: Date
-    public var accuracy: UInt8
-    public var senderInitials: String // 1..3 uppercase characters A-Z
-    public var batteryLevel: UInt8    // 0...100
-    public var heading: UInt8         // 0...255 representing 0..<360 degrees
-    public var colorCode: UInt8       // 0x00...0x08 MemberColor code
-```
+## 4.1 Type 0x01: `LocationPingPayload` (Geographic Telemetry)
 
-### Binary Packing Table
-| Byte Offset | Field | Type | Scale / Format | Resolution |
+| Byte Range | Field Name | Data Type | Encoding / Unit | Resolution |
 | :---: | :--- | :--- | :--- | :--- |
 | **0..3** | `latitudeRaw` | `Int32` (BE) | `lat * 10,000,000` | ~11 mm worldwide |
-| **4..7** | `longitudeRaw` | `Int32` (BE) | `lon * 10,000,000` | ~11 mm worldwide |
-| **8..11** | `timestamp` | `UInt32` (BE) | Epoch seconds | 1 second |
-| **12** | `accuracy` | `UInt8` | Raw meters | 0 to 255 meters |
-| **13..14** | `senderInitials`| 2 × `UInt8` | Base-27 compressed | 3 letters in 16 bits |
-| **15** | `batteryLevel` | `UInt8` | Percentage | 0 to 100% |
+| **4..7** | `longitudeRaw`| `Int32` (BE) | `lon * 10,000,000` | ~11 mm worldwide |
+| **8..11**| `timestamp` | `UInt32` (BE) | Unix epoch seconds | 1 second |
+| **12** | `accuracy` | `UInt8` | Horizontal uncertainty | 0 to 255 meters |
+| **13..14**| `senderInitials` | 2 × `UInt8` | Base-27 compressed | 3 letters in 16 bits |
+| **15** | `batteryLevel` | `UInt8` | Integer percentage | 0 to 100% |
 | **16** | `heading` | `UInt8` | `deg * 255 / 360` | ~1.41 degrees |
 | **17** | `colorCode` | `UInt8` | `MemberColor.rawValue` | Palette index 0..8 |
-| **18..29** | `reserved` | 12 × `UInt8` | Zero padding | Reserved for elevation |
+| **18..29**| `reserved` | 12 × `UInt8` | Zero padding (`0x00`) | Reserved for barometry |
 
 ---
 
-## 4.2 `ChatMessagePayload.swift` (Type `0x07`)
+## 4.2 Type 0x02: `SOSPayload` (Emergency Distress Siren)
 
-```swift
-public struct ChatMessagePayload: Equatable, Sendable {
-    public var messageId: UInt16
-    public var senderInitials: String
-    public var recipientInitials: String // "ALL" for broadcast, or specific initials
-    public var text: String              // Max 25 UTF-8 bytes
-```
+| Byte Range | Field Name | Data Type | Encoding / Unit | Purpose |
+| :---: | :--- | :--- | :--- | :--- |
+| **0..3** | `latitudeRaw` | `Int32` (BE) | Fixed-point coordinate | Victim GPS latitude |
+| **4..7** | `longitudeRaw`| `Int32` (BE) | Fixed-point coordinate | Victim GPS longitude |
+| **8..11**| `timestamp` | `UInt32` (BE) | Unix epoch seconds | Distress trigger time |
+| **12** | `accuracy` | `UInt8` | Meters (0..255m) | GPS accuracy |
+| **13** | `statusMarker`| `UInt8` | Fixed `0x01` | Urgent status flag |
+| **14..17**| `sosEventId` | `UInt32` (BE) | Random 32-bit ID | Uniquely identifies SOS event |
+| **18..19**| `senderInitials`| 2 × `UInt8` | Base-27 compressed | Victim initials |
+| **20** | `emergencyType`| `UInt8` | `SOSType.rawValue` | General, Medical, Inactivity |
+| **21** | `batteryLevel` | `UInt8` | Percentage (0..100) | Victim battery status |
+| **22** | `colorCode` | `UInt8` | `MemberColor.rawValue` | Member color code |
+| **23..29**| `reserved` | 7 × `UInt8` | Zero padding (`0x00`) | Reserved expansion bytes |
 
-### Binary Packing Table
-| Byte Offset | Field | Type | Purpose |
+---
+
+## 4.3 Type 0x03: `MeetingUpdatePayload` (Group Rendezvous)
+
+| Byte Range | Field Name | Data Type | Encoding / Unit | Purpose |
+| :---: | :--- | :--- | :--- | :--- |
+| **0..3** | `latitudeRaw` | `Int32` (BE) | Fixed-point coordinate | Landmark GPS latitude |
+| **4..7** | `longitudeRaw`| `Int32` (BE) | Fixed-point coordinate | Landmark GPS longitude |
+| **8..11**| `meetupTime` | `UInt32` (BE) | Epoch seconds | Target rendezvous time |
+| **12..15**| `createdAt` | `UInt32` (BE) | Epoch seconds | Proposal creation timestamp |
+| **16** | `action` | `UInt8` | `MeetingAction` | Propose (1), Cancel (2), Update (3) |
+| **17** | `attendanceStatus`| `UInt8`| `AttendanceStatus` | OnTheWay (1), Arrived (2), CannotMakeIt (3) |
+| **18..21**| `meetingPointId`| `UInt32` (BE)| Monotonic ID | Unique landmark identifier |
+| **22..23**| `senderInitials`| 2 × `UInt8` | Base-27 compressed | Proposer initials |
+| **24** | `arrivalRadius`| `UInt8` | Meters (5..100m) | Geofence arrival radius (default: 25m) |
+| **25** | `flags` | `UInt8` | Bitfield | Bit 0: RightNow, Bit 1: AnchorToGPS |
+| **26..29**| `reserved` | 4 × `UInt8` | Zero padding (`0x00`) | Reserved expansion bytes |
+
+---
+
+## 4.4 Type 0x04 & Type 0x05: `RouteReqPayload` & `RouteRespPayload`
+
+Used for reactive Ad-hoc On-Demand Distance Vector (AODV) multi-hop route negotiation:
+
+| Byte Range | Field Name | Data Type | Purpose |
 | :---: | :--- | :--- | :--- |
-| **0..1** | `messageId` | `UInt16` (BE) | Unique ID for end-to-end delivery ACK correlation |
-| **2..3** | `senderInitials` | 2 × `UInt8` | Base-27 compressed sender initials |
-| **4..5** | `recipientInitials`| 2 × `UInt8` | Base-27 compressed destination (or `ALL`) |
-| **6..30** | `textData` | 25 × `UInt8` | UTF-8 encoded text characters |
+| **0..1** | `originatorInitials` | 2 × `UInt8` (Base-27) | Node requesting the route |
+| **2..3** | `targetInitials` | 2 × `UInt8` (Base-27) | Destination node sought |
+| **4..7** | `discoveryNonce` | `UInt32` (BE) | Random 32-bit ID suppressing duplicate RREQs |
+| **8** | `routeCost` | `UInt8` | Accumulated hop metric along path |
+| **9..29** | `reserved` | 21 × `UInt8` | Zero padding (`0x00`) |
 
 ---
 
-## 4.3 `SOSPayload.swift` (Type `0x02`)
+## 4.5 Type 0x06: `ACKPayload` (Delivery Receipts)
 
-```swift
-public struct SOSPayload: Equatable, Sendable {
-    public var flags: UInt8             // Bit 0: Active, Bit 1: Medical, Bit 2: Panic
-    public var coordinate: CLLocationCoordinate2D
-    public var timestamp: Date
-    public var senderInitials: String
-    public var batteryLevel: UInt8
-    public var ackBitmask: UInt32       // Confirmed peer acknowledgements
-```
-
-### Binary Packing Mechanics
-* `ackBitmask`: Allows the SOS victim's phone to broadcast which peers have confirmed receipt, providing visual peace-of-mind feedback directly on everyone's HUD.
+| Byte Range | Field Name | Data Type | Purpose |
+| :---: | :--- | :--- | :--- |
+| **0..3** | `ackedSeqNumber` | `UInt32` (BE) | Original wire packet sequence confirmed |
+| **4..5** | `ackedSenderInitials`| 2 × `UInt8` (Base-27)| Original sender being notified |
+| **6..9** | `ackTimestamp` | `UInt32` (BE) | Epoch seconds when confirmation was issued |
+| **10** | `ackStatus` | `UInt8` | `0x01` (Delivered to Friend), `0x02` (Relayed by Mesh) |
+| **11** | `receivedRssi` | `Int8` | Signal strength observed on incoming link (dBm) |
+| **12..15**| `originalEventId` | `UInt32` (BE) | Event ID being acknowledged |
+| **16..17**| `responderInitials` | 2 × `UInt8` (Base-27)| Peer confirming receipt |
+| **18..29**| `reserved` | 12 × `UInt8` | Zero padding (`0x00`) |
 
 ---
 
-## 4.4 `ACKPayload.swift` (Type `0x06`)
+## 4.6 Type 0x07: `ChatMessagePayload` (Offline P2P Chat)
 
-```swift
-public struct ACKPayload: Equatable, Sendable {
-    public var targetSequenceNumber: UInt32 // Original sequence being confirmed
-    public var ackSenderInitials: String     // Who confirmed it
-    public var deliveryStatus: UInt8         // 0 = Received, 1 = Displayed
-```
-
-* Direct return receipt sent back along the reverse mesh path to guarantee message delivery without a cellular network.
-
----
-
-# 5. Domain Entities
-
-## 5.1 `GroupSession.swift` & Serverless Invite Security
-
-```swift
-public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
-    public let sessionId: UInt16
-    public let sessionName: String
-    public let symmetricKeyData: Data
-    public var localInitials: String
-    public var localColorCode: UInt8
-    public let isHost: Bool
-    public let createdAt: Date
-```
-
-### The URL Fragment Security Guarantee
-```swift
-    public func inviteURL() -> URL {
-        var components = URLComponents()
-        components.scheme = "teekum"
-        components.host = "join"
-        components.queryItems = [
-            URLQueryItem(name: "id", value: String(format: "%04X", sessionId)),
-            URLQueryItem(name: "name", value: sessionName)
-        ]
-        // 256-bit symmetric key is stored in the fragment (#)
-        components.fragment = symmetricKeyData.base64EncodedString()
-        return components.url!
-    }
-```
-
-* **Why Fragment (`#`)?** RFC 3986 specifies that the fragment component of a URI is **client-side only**. Web browsers and proxies NEVER transmit the fragment to the web server in HTTP requests. If a user texts their join link, no intermediary web server can intercept the AES-256 group decryption key.
+| Byte Range | Field Name | Data Type | Purpose |
+| :---: | :--- | :--- | :--- |
+| **0..1** | `senderInitials` | 2 × `UInt8` (Base-27) | Sender 3-letter initials |
+| **2..5** | `timestamp` | `UInt32` (BE) | Unix epoch seconds |
+| **6** | `textLength` | `UInt8` | Exact UTF-8 byte count ($0 \dots 20$) |
+| **7..26** | `textContent` | 20 × `UInt8` | Direct UTF-8 text bytes (zero-padded) |
+| **27..29**| `reserved` | 3 × `UInt8` | Zero padding (`0x000000`) |
 
 ---
 
-## 5.2 `MemberColor.swift` & The DJB2 Neon Hash
+# 5. Domain Entities & Hashing Algorithms
+
+## 5.1 `MemberColor.swift` & The DJB2 Wrapping Hash
 
 ```swift
 public enum MemberColor: UInt8, CaseIterable, Identifiable, Sendable {
@@ -375,9 +378,10 @@ public enum MemberColor: UInt8, CaseIterable, Identifiable, Sendable {
 }
 ```
 
-### Algorithm Highlights
-* **The Red Exclusion Rule**: Pure Red is strictly banned from user selection. Red is reserved exclusively for the SOS siren system to eliminate false alarms.
-* **DJB2 Hash**: Uses Daniel J. Bernstein's prime constant `5381` and bitwise multiplier `($0 << 5) &+ $0` (equivalent to `hash * 33 + char`) with Swift's wrapping addition operator `&+` to deterministically assign the same neon color to a friend across every phone.
+### The Invariants
+1. **The Pure Red Exclusion Rule**: Pure Red is strictly banned from the user color palette. Red is reserved exclusively for Emergency SOS sirens to prevent false panic in crowded festivals.
+2. **Daniel J. Bernstein's DJB2 Hash**: Uses prime seed `5381` and bitwise multiplier `($0 << 5) &+ $0` (equivalent to `hash * 33 + char`). Swift's wrapping addition operator `&+` guarantees that integer overflows wrap cleanly on 32-bit and 64-bit architectures without crashing.
+3. **Deterministic Color Consistency**: If Alice's initials are `"ALX"`, every iPhone in the festival automatically resolves her pin to `.brightTeal` without transmitting color metadata over the air.
 
 ---
 
