@@ -1,17 +1,17 @@
-# TeeKum Code Handbook — Volume 09: Feature — Main Map & Spatial Awareness
+# TeeKum Code Handbook — Volume 09: Feature — Main Map & Spatial Awareness (Definitive Deep-Dive)
 
-This volume examines the primary MapKit SwiftUI spatial interface, custom directional friend pins, $52^\circ$ vision cone shapes, live sharing toggle controls, friend detail sheets, and communal relay configuration modals in TeeKum.
+This volume provides an exhaustive, method-by-method architectural deep-dive into the primary MapKit spatial canvas, custom directional friend pins, $52^\circ$ vision cone geometry, live sharing toggle controls, friend detail telemetry inspectors, and communal mesh settings in TeeKum.
 
 ---
 
-## 📑 Included Files
+## 📑 Included Source Files
 
-1. [`TeeKum Prototype/Features/Map/ViewModels/MapViewModel.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/ViewModels/MapViewModel.swift) — Presentation ViewModel managing live sharing state, status pills, and heading streams.
-2. [`TeeKum Prototype/Features/Map/Views/MainMapView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/Views/MainMapView.swift) — Main MapKit canvas rendering friend annotations, meeting point pins, and floating action buttons.
-3. [`TeeKum Prototype/Features/Map/Views/FriendPinAnnotationView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/Views/FriendPinAnnotationView.swift) — Custom friend pin avatar with initials, neon outline, and heading pointer.
-4. [`TeeKum Prototype/Features/Map/Views/HeadingVisionCone.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/Views/HeadingVisionCone.swift) — Geometric $52^\circ$ field-of-view radial gradient wedge.
-5. [`TeeKum Prototype/Features/Map/Views/FriendDetailView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/Views/FriendDetailView.swift) — Telemetry inspector displaying friend distance, battery, signal RSSI, and age.
-6. [`TeeKum Prototype/Features/Map/Views/RelaySettingsSheet.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/Views/RelaySettingsSheet.swift) — Opt-in modal governing communal packet forwarding and battery cutoffs.
+1. [`TeeKum Prototype/Features/Map/ViewModels/MapViewModel.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/ViewModels/MapViewModel.swift) (161 lines) — Presentation ViewModel managing live sharing state, status pills, and heading streams.
+2. [`TeeKum Prototype/Features/Map/Views/MainMapView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/Views/MainMapView.swift) (876 lines) — Main MapKit canvas rendering friend annotations, meeting point pins, and floating action palettes.
+3. [`TeeKum Prototype/Features/Map/Views/FriendPinAnnotationView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/Views/FriendPinAnnotationView.swift) (118 lines) — Custom friend pin avatar with initials, neon outline, and heading pointer.
+4. [`TeeKum Prototype/Features/Map/Views/HeadingVisionCone.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/Views/HeadingVisionCone.swift) (109 lines) — Geometric $52^\circ$ field-of-view radial gradient wedge.
+5. [`TeeKum Prototype/Features/Map/Views/FriendDetailView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/Views/FriendDetailView.swift) (351 lines) — Telemetry inspector displaying friend distance, battery, signal RSSI, and age.
+6. [`TeeKum Prototype/Features/Map/Views/RelaySettingsSheet.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Map/Views/RelaySettingsSheet.swift) (407 lines) — Opt-in modal governing communal packet forwarding and battery cutoffs.
 
 ---
 
@@ -40,20 +40,74 @@ public final class MapViewModel {
             }
         }
     }
-    
-    public var selectedMember: Member?
-    public var currentHeading: CLLocationDirection?
 ```
 
-### Architectural Highlights
-* **Weak Capture**: `service.onHeadingUpdate = { [weak self] heading in self?.currentHeading = heading }` ensures that hardware heading updates cannot cause memory retain cycles between `LocationService` and `MapViewModel`.
-* **Two-Way Toggle Sync**: Changing `isLiveSharingEnabled` immediately pauses radio publication at the `LocationService` hardware layer.
+### Architectural Analysis & Rosetta Stone
+* **Weak Capture**: `service.onHeadingUpdate = { [weak self] heading in self?.currentHeading = heading }` ensures that high-frequency hardware heading updates cannot cause memory retain cycles between `LocationService` and `MapViewModel`.
+* **Synchronized State**: Mutating `isLiveSharingEnabled` immediately propagates down to `LocationService.isLiveSharingEnabled`, pausing background radio broadcasts.
 
 ---
 
-# 2. Vision Cone Geometry: `HeadingVisionCone.swift`
+## 1.1 Dynamic Status Pill Messages
 
-When looking at a map, knowing which direction a friend is facing is essential for finding them in a crowded festival crowd.
+```swift
+    public var statusPillMessage: String {
+        guard let locationService else {
+            return isLiveSharingEnabled ? "Live Sharing Active" : "Live Sharing Paused"
+        }
+        
+        let auth = locationService.authorizationStatus
+        if auth == .denied || auth == .restricted {
+            return "Permission Denied"
+        }
+        if locationService.isSurvivalModeActive {
+            return "Survival Mode (<20%)"
+        }
+        if !isLiveSharingEnabled {
+            return "Live Sharing Paused"
+        }
+        if locationService.isLocationStale {
+            return "GPS Searching..."
+        }
+        return "Live Sharing Active"
+    }
+```
+
+* Renders non-intrusive status pills at the top of the map to inform the user of GPS availability and battery survival throttling without modal alerts.
+
+---
+
+# 2. Main MapKit Canvas: `MainMapView.swift`
+
+`MainMapView` (876 lines) serves as the primary operational HUD for attendees:
+
+```swift
+public struct MainMapView: View {
+    // ViewModels
+    @Bindable var mapViewModel: MapViewModel
+    @Bindable var sessionViewModel: GroupSessionViewModel
+    @Bindable var sosViewModel: SOSViewModel
+    @Bindable var meetingPointViewModel: MeetingPointViewModel
+    @Bindable var chatViewModel: ChatViewModel
+    var relayPolicyManager: RelayPolicyManager?
+    var peerTransport: PeerTransportService?
+```
+
+---
+
+## 2.1 Floating Action Palette & Gesture Mapping
+
+1. **Top HUD Bar**: Displays active group name, live peer count, and battery indicator.
+2. **Right Floating Tools**:
+   * **Radar Button**: Opens `FinderBeaconView` for close-range crowd navigation.
+   * **Chat Button**: Opens `ChatSheetView` with unread message badge.
+   * **Relay Shield**: Displays communal mesh forwarding status and opens `RelaySettingsSheet`.
+3. **Bottom Dock**: Prominent 3-second continuous hold emergency SOS button (`SOSButtonView`).
+4. **Map Long-Press**: Long-pressing anywhere on the map captures coordinates and opens `SetMeetingPointSheet` to drop a shared landmark.
+
+---
+
+# 3. Vision Cone Geometry: `HeadingVisionCone.swift`
 
 ```swift
 public struct VisionConeShape: Shape, Sendable {
@@ -100,13 +154,14 @@ public struct VisionConeShape: Shape, Sendable {
     }
 ```
 
-### Trigonometric Precision
-* Generates a circular wedge centered at $(midX, midY)$.
-* Applying a `RadialGradient` creates an intuitive "flashlight beam" effect pointing in the exact compass heading reported by the remote friend's phone over the mesh.
+### Trigonometric Construction
+* Slices a circular wedge of $52^\circ$ centered at $(midX, midY)$.
+* Shifting angles by $-90^\circ$ aligns $0^\circ$ with North (Straight Up).
+* The radial gradient creates a soft flashlight beam pointing in the exact compass heading reported by the remote friend's phone over the mesh.
 
 ---
 
-# 3. Friend Map Pin: `FriendPinAnnotationView.swift`
+# 4. Custom Friend Pin: `FriendPinAnnotationView.swift`
 
 ```swift
 public struct FriendPinAnnotationView: View {
@@ -119,28 +174,35 @@ public struct FriendPinAnnotationView: View {
         let pinAccentColor = isEmergency ? Color.red : (isStale ? memberColor.opacity(0.6) : memberColor)
 ```
 
-### Visual State Mapping
-* **Emergency Active**: Overrides user color with high-visibility **Pulsing Pure Red** (`Color.red`) and adds a double ring track.
-* **Fresh Connection**: Displays personal neon color with sharp outline and active directional heading cone.
-* **Stale Fix (>30s)**: Dims opacity to 0.6 and displays a relative age badge (e.g., *"45s ago"*), preventing users from navigating toward outdated coordinates.
+### State-Driven Rendering
+* **Pulsing Pure Red Ring**: If `member.isEmergency == true`, overrides personal colors with Pure Red and animates an expanding ring.
+* **Directional Pointer**: If `member.heading` is available, renders `DirectionalHeadingIndicator` showing vision cone and rim arrow.
+* **Stale Fix (>30s)**: Dims opacity to 0.6 and displays relative age badge (e.g. *"45s ago"*).
 
 ---
 
-# 4. Communal Mesh Relay Control: `RelaySettingsSheet.swift`
+# 5. Telemetry Inspector: `FriendDetailView.swift`
+
+Tapping any friend pin presents `FriendDetailView` (351 lines), showing full physical telemetry:
+1. **Distance & Bearing**: Displays formatted distance (e.g. *"140 m away"*) and tactical clock direction (*"2 o'clock"*).
+2. **Radio Link Quality**: Shows signal strength in dBm (e.g. `"-68 dBm"`) and connection status (Direct 1-Hop Peer vs Multi-Hop Relay).
+3. **Freshness & Battery**: Displays battery level percentage and exact seconds since last authenticated packet arrival.
+
+---
+
+# 6. Communal Relay Settings: `RelaySettingsSheet.swift`
 
 ```swift
 public struct RelaySettingsSheet: View {
-    @State private var selectedMode: RelayParticipationMode = .disabled
-    
-    // Modes:
+    let relayPolicyManager: RelayPolicyManager
+    // Participation Modes:
     // 1. .communalRelayActive (Always active forwarding)
-    // 2. .timedParticipation (30-minute volunteer session)
-    // 3. .disabled (Forwarding turned off)
+    // 2. .timedParticipation (30-minute festival volunteer mode)
+    // 3. .disabled (Forwarding off)
 ```
 
-### User Sovereignty Guarantee
-* Users are never forced to relay packets. The settings sheet allows choosing between permanent participation, a timed 30-minute festival volunteer mode, or turning relaying off completely.
-* Prominently displays the device battery level and automatically disables forwarding if battery drops below 20%.
+* **User Sovereignty**: Users explicitly control whether their device participates in stranger packet forwarding.
+* **Immediate Drain**: Selecting "Disabled" immediately purges all queued stranger packets from memory and updates Bonjour TXT records to notify neighboring peers.
 
 ---
 
