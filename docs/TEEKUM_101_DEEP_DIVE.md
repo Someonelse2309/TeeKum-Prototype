@@ -1,5 +1,5 @@
 # TeeKum 101: The Serverless Festival Mesh Architecture
-## The Definitive Engineering Handbook & Technology Deep Dive
+## The Definitive Engineering Handbook, Technology Deep Dive & Code Walkthrough
 
 > **Project:** TeeKum (Fantasix Team)  
 > **Target Audience:** Systems Engineers, iOS Core Developers, Protocol Designers, and Curious Junior Developers  
@@ -22,6 +22,7 @@
    - [2.5 The 24-Bit Session ID (`UInt24`)](#25-the-24-bit-session-id-uint24)
    - [2.6 The Nonce Partitioning & Two-Time Pad Collision Prevention](#26-the-nonce-partitioning--two-time-pad-collision-prevention)
    - [2.7 The Mutable Hop Masking Trick (AAD Invariance)](#27-the-mutable-hop-masking-trick-aad-invariance)
+   - [2.8 Code Walkthrough: `PacketWriter` & `PacketReader`](#28-code-walkthrough-packetwriter--packetreader)
 4. [Chapter 3: The 30-Byte Payloads (The 8 Radio Message Types)](#chapter-3-the-30-byte-payloads-the-8-radio-message-types)
    - [3.1 Type 0x01: Location Ping (Option B Telemetry)](#31-type-0x01-location-ping-option-b-telemetry)
    - [3.2 Type 0x02: Emergency SOS](#32-type-0x02-emergency-sos)
@@ -30,38 +31,39 @@
    - [3.5 Type 0x06: Cryptographic Delivery ACK](#35-type-0x06-cryptographic-delivery-ack)
    - [3.6 Type 0x07: Festival Group Mesh Chat](#36-type-0x07-festival-group-mesh-chat)
    - [3.7 Type 0x08: Nearby Interaction Token Exchange](#37-type-0x08-nearby-interaction-token-exchange)
-   - [3.8 The Codec Architecture: `PacketReader` and `PacketWriter`](#38-the-codec-architecture-packetreader-and-packetwriter)
+   - [3.8 Code Walkthrough: Chat Message Serialization & Unicode Clamping](#38-code-walkthrough-chat-message-serialization--unicode-clamping)
 5. [Chapter 4: The Physical Layer: Apple Wireless Direct Link (AWDL) & Network.framework](#chapter-4-the-physical-layer-apple-wireless-direct-link-awdl--networkframework)
    - [4.1 What is AWDL? How AirDrop Communicates Off-Grid](#41-what-is-awdl-how-airdrop-communicates-off-grid)
    - [4.2 Configuring `NWListener` and `NWConnection` for P2P](#42-configuring-nwlistener-and-nwconnection-for-p2p)
    - [4.3 Bonjour Peer Discovery (`_teekum._tcp`)](#43-bonjour-peer-discovery-_teekum_tcp)
    - [4.4 The TCP Stream Framing Problem](#44-the-tcp-stream-framing-problem)
-   - [4.5 `StreamMessageFramer`: Delimiting & Corruption Resynchronization](#45-streammessageframer-delimiting--corruption-resynchronization)
+   - [4.5 Code Walkthrough: `StreamMessageFramer` & Stream Resynchronization](#45-code-walkthrough-streammessageframer--stream-resynchronization)
 6. [Chapter 5: The Ad-Hoc Multi-Hop Mesh Network](#chapter-5-the-ad-hoc-multi-hop-mesh-network)
    - [5.1 The Range Barrier and Multi-Hop Theory](#51-the-range-barrier-and-multi-hop-theory)
    - [5.2 Bounded Flooding vs. AODV On-Demand Routing](#52-bounded-flooding-vs-aodv-on-demand-routing)
-   - [5.3 The 7-Byte Composite Deduplication Key & 1,024-Entry LRU Cache](#53-the-7-byte-composite-deduplication-key--1024-entry-lru-cache)
-   - [5.4 Dual-Lane Token Bucket Rate Limiting](#54-dual-lane-token-bucket-rate-limiting)
+   - [5.3 Code Walkthrough: `SeenPacketCache` (7-Byte Key LRU)](#53-code-walkthrough-seenpacketcache-7-byte-key-lru)
+   - [5.4 Code Walkthrough: `ForwardingRateLimiter` (Dual-Lane Token Bucket)](#54-code-walkthrough-forwardingratelimiter-dual-lane-token-bucket)
    - [5.5 The Communal Relay Policy & 20% Hard Cutoff](#55-the-communal-relay-policy--20-hard-cutoff)
-   - [5.6 Circular Routing Loop Elimination & The 8-Hop Ceiling](#56-circular-routing-loop-elimination--the-8-hop-ceiling)
+   - [5.6 Code Walkthrough: Blind Forwarding & Loop Elimination](#56-code-walkthrough-blind-forwarding--loop-elimination)
 7. [Chapter 6: Cryptography, Key Exchange & Security Boundaries](#chapter-6-cryptography-key-exchange--security-boundaries)
    - [6.1 100% Serverless Key Exchange via URL Fragments](#61-100-serverless-key-exchange-via-url-fragments)
    - [6.2 QR Barcode Pipeline via CoreImage and AVFoundation](#62-qr-barcode-pipeline-via-coreimage-and-avfoundation)
    - [6.3 Hardware-Backed Keychain Key Storage](#63-hardware-backed-keychain-key-storage)
-   - [6.4 The 10-Step Inbound Ingestion Pipeline](#64-the-10-step-inbound-ingestion-pipeline)
-   - [6.5 Zero-Knowledge Relay Boundary Guarantees](#65-zero-knowledge-relay-boundary-guarantees)
+   - [6.4 Code Walkthrough: `CryptoService` ChaCha20-Poly1305 AEAD Engine](#64-code-walkthrough-cryptoservice-chacha20-poly1305-aead-engine)
+   - [6.5 Code Walkthrough: The 10-Step Inbound Ingestion Pipeline (`PacketRouter`)](#65-code-walkthrough-the-10-step-inbound-ingestion-pipeline-packetrouter)
 8. [Chapter 7: Subsystems & Sensor Engines](#chapter-7-subsystems--sensor-engines)
-   - [7.1 The Dynamic GNSS & CoreMotion Location Engine](#71-the-dynamic-gnss--coremotion-location-engine)
-   - [7.2 Emergency SOS, Priority Preemption & Inactivity Guard ("Man Down")](#72-emergency-sos-priority-preemption--inactivity-guard-man-down)
-   - [7.3 Festival Group Mesh Chat & The Byte Limiter](#73-festival-group-mesh-chat--the-byte-limiter)
-   - [7.4 Tactical Polar Radar & The Decommissioning of UWB](#74-tactical-polar-radar--the-decommissioning-of-uwb)
-   - [7.5 Single Active Meeting Point & The Setter Lock Rule](#75-single-active-meeting-point--the-setter-lock-rule)
-   - [7.6 ActivityKit Live Activities & Dynamic Island Control](#76-activitykit-live-activities--dynamic-island-control)
+   - [7.1 Code Walkthrough: Dynamic GNSS & CoreMotion Location Engine](#71-code-walkthrough-dynamic-gnss--coremotion-location-engine)
+   - [7.2 Code Walkthrough: Emergency SOS State Machine & Preemption](#72-code-walkthrough-emergency-sos-state-machine--preemption)
+   - [7.3 Code Walkthrough: Inactivity Guard ("Man Down" Watchdog)](#73-code-walkthrough-inactivity-guard-man-down-watchdog)
+   - [7.4 Code Walkthrough: Festival Group Mesh Chat & The Byte Limiter](#74-code-walkthrough-festival-group-mesh-chat--the-byte-limiter)
+   - [7.5 Code Walkthrough: Tactical Polar Radar & Metal Rendering](#75-code-walkthrough-tactical-polar-radar--metal-rendering)
+   - [7.6 Code Walkthrough: Single Active Meeting Point & The Setter Lock Rule](#76-code-walkthrough-single-active-meeting-point--the-setter-lock-rule)
+   - [7.7 ActivityKit Live Activities & Dynamic Island Control](#77-activitykit-live-activities--dynamic-island-control)
 9. [Chapter 8: Code Architecture & Anatomy of a Feature-Driven App](#chapter-8-code-architecture--anatomy-of-a-feature-driven-app)
    - [8.1 The 3-Tier Layering Model](#81-the-3-tier-layering-model)
    - [8.2 Swift Observation (`@Observable`) vs Combine Boilerplate](#82-swift-observation-observable-vs-combine-boilerplate)
    - [8.3 Actor Isolation & Thread Safety](#83-actor-isolation--thread-safety)
-   - [8.4 The Central Inbound Demux: `PacketRouter`](#84-the-central-inbound-demux-packetrouter)
+   - [8.4 Code Walkthrough: Composition Root (`TeeKumApp` & `AppRootView`)](#84-code-walkthrough-composition-root-teekumapp--approotview)
 10. [Chapter 9: Engineering Trivia, Design Trade-Offs & War Stories](#chapter-9-engineering-trivia-design-trade-offs--war-stories)
     - [9.1 Why SQLite Was Abandoned](#91-why-sqlite-was-abandoned)
     - [9.2 Why Apple Ultra-Wideband (UWB) Failed at Festivals](#92-why-apple-ultra-wideband-uwb-failed-at-festivals)
@@ -90,7 +92,7 @@ This is **The Festival Paradox**.
                │
                ▼
      [PACKET DROP HELL]
- (No WhatsApp, No iMessage, No Google Maps, No Cell Signal)
+ (No WhatsApp, No iMessage, No Google Maps, Dead Batteries)
 ```
 
 ### Why Cellular Networks Fail at Festivals
@@ -214,6 +216,8 @@ The 56-byte figure is the product of an exact budget optimization between:
 | **10..39**| `30 Bytes` | `encryptedPayload` | 30 bytes of ChaCha20 ciphertext containing private coordinate/chat telemetry. |
 | **40..55**| `16 Bytes` | `authTag` | 128-bit Poly1305 authentication tag binding ciphertext and envelope AAD. |
 
+---
+
 ### 2.3 Coordinate Quantization Math (~11 cm Precision)
 In Apple's `CoreLocation` framework, geographical latitude and longitude are represented as 64-bit IEEE 754 floating-point numbers (`Double`, known as `CLLocationDegrees`).
 
@@ -249,6 +253,8 @@ The maximum possible coordinate values fit safely inside signed 32-bit integers 
 
 By quantizing coordinates into `Int32`, we preserve **sub-decimeter accuracy** worldwide while freeing up 8 full bytes of payload budget!
 
+---
+
 ### 2.4 The 2-Byte Base-27 Initials Codec
 How do you identify which member sent a packet?
 If you store a member's name as a string (e.g. `"Nicho"`), you consume 5 to 16 bytes of ASCII/UTF-8. Furthermore, P2P mesh networks typically require a noisy "connection handshake" where nodes exchange user profiles and display names.
@@ -281,29 +287,39 @@ Given 3 character slots $c_0, c_1, c_2$:
 $$\text{val}(c) = \begin{cases} 0 & \text{if slot is empty} \\ \text{ASCII}(c) - 64 & \text{if } c \in ['A' \dots 'Z'] \end{cases}$$
 $$\text{Encoded UInt16} = (a \times 27^2) + (b \times 27^1) + (c \times 27^0) = (\mathbf{a \times 729}) + (\mathbf{b \times 27}) + \mathbf{c}$$
 
-#### Swift Implementation
+#### Code Walkthrough: `InitialsCodec.swift`
+Here is the exact production implementation from [`InitialsCodec.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/InitialsCodec.swift):
+
 ```swift
 public enum InitialsCodec {
+    /// Compresses 1 to 3 uppercase ASCII initials (A-Z) into a single 16-bit unsigned integer.
     public static func encode(_ initials: String) -> UInt16 {
+        // Step 1: Strip whitespace, normalize to uppercase, and filter non-alphabetic characters
         let clean = initials.uppercased().filter { $0 >= "A" && $0 <= "Z" }
         guard !clean.isEmpty else { return 0 }
         let chars = Array(clean.prefix(3))
         
+        // Step 2: Convert ASCII scalars ('A' = 65) to radix-27 digits (1..26)
         let a = UInt32(chars[0].asciiValue! - 64)
         let b = chars.count > 1 ? UInt32(chars[1].asciiValue! - 64) : 0
         let c = chars.count > 2 ? UInt32(chars[2].asciiValue! - 64) : 0
         
+        // Step 3: Polynomial radix expansion: (a * 27^2) + (b * 27^1) + (c * 27^0)
         let val = (a * 729) + (b * 27) + c
         return UInt16(min(val, 65535))
     }
 
+    /// Decompresses a 16-bit integer back to 1..3 uppercase character initials.
     public static func decode(_ code: UInt16) -> String {
         guard code > 0 else { return "??" }
         var rem = UInt32(code)
+        
+        // Step 4: Extract digits from right to left using modulo 27 arithmetic
         let c = rem % 27; rem /= 27
         let b = rem % 27; rem /= 27
         let a = rem % 27
         
+        // Step 5: Convert digits (1..26) back to ASCII characters ('A'..'Z')
         var result = ""
         if a >= 1 && a <= 26, let scalar = UnicodeScalar(UInt8(a + 64)) { result.append(Character(scalar)) }
         if b >= 1 && b <= 26, let scalar = UnicodeScalar(UInt8(b + 64)) { result.append(Character(scalar)) }
@@ -313,8 +329,11 @@ public enum InitialsCodec {
 }
 ```
 
-**The Architectural Win:**
-Every packet is **self-describing**. When a friend's packet pops out of the radio, the receiving device instantly decodes the 2-byte initials and renders the avatar badge on the Map and Radar without any handshake or name resolution table!
+**Why this code matters:**
+1. **Zero Allocations:** Notice that the decoding function uses pure integer math. No heap allocations or string regex parsers are invoked.
+2. **Deterministic Fallback:** Invalid or empty inputs decode to `"??"`, ensuring the UI never crashes or encounters a `nil` string exception.
+
+---
 
 ### 2.5 The 24-Bit Session ID (`UInt24`)
 Groups are assigned a 24-bit session ID (`0x000001` to `0xFFFFFF`), providing **$16{,}777{,}215$ unique session namespaces**.
@@ -325,6 +344,8 @@ When a group is created:
 3. The lowest 24 bits are taken, guaranteeing non-zero (`0x000000` is reserved for system discovery).
 
 In the outer envelope, `sessionId` occupies exactly 3 bytes (Bytes 3..5). This allows intermediate mesh nodes to discard packets from uninteresting sessions or filter stranger packets without performing expensive cryptographic operations.
+
+---
 
 ### 2.6 The Nonce Partitioning & Two-Time Pad Collision Prevention
 Under RFC 8439, ChaCha20 generates a stream of pseudorandom keystream blocks by encrypting an incrementing counter with a 256-bit key and a 96-bit (12-byte) initialization vector (Nonce).
@@ -355,6 +376,8 @@ Because each friend occupies a distinct, non-overlapping `memberSlot`, their seq
 
 **Nonce collisions are mathematically impossible.**
 
+---
+
 ### 2.7 The Mutable Hop Masking Trick (AAD Invariance)
 In ChaCha20-Poly1305, Associated Authenticated Data (AAD) is data that is authenticated (tamper-proof) but transmitted in cleartext.
 
@@ -371,19 +394,97 @@ When computing the Poly1305 tag during sealing and opening, Byte 2 (`hopCount`) 
 
 $$\text{AAD} = \mathtt{byte0} \parallel \mathtt{hopLimit} [1\text{B}] \parallel \mathbf{0x00} [1\text{B}] \parallel \mathtt{sessionId} [3\text{B}] \parallel \mathtt{sequenceNumber} [4\text{B}]$$
 
-```text
-Cleartext Wire Envelope:  [ 0x31 | 0x08 | 0x03 | 0x12 0x34 0x56 | 0x01 0x00 0x00 0x42 ]
-                                         ▲
-                                 hopCount is 3 on wire
+Here is the exact code in [`CleartextEnvelope.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Models/CleartextEnvelope.swift#L134-L160):
 
-Masked Envelope for AAD:  [ 0x31 | 0x08 | 0x00 | 0x12 0x34 0x56 | 0x01 0x00 0x00 0x42 ]
-                                         ▲
-                                 Masked to 0x00 for Poly1305
+```swift
+public func authenticatedAssociatedData() -> Data {
+    var aad = Data(capacity: PacketConstants.cleartextEnvelopeSize)
+    
+    // Byte 0: versionAndType (tamper-proof)
+    let byte0 = ((version & 0x0F) << 4) | (type.rawValue & 0x0F)
+    aad.append(byte0)
+    
+    // Byte 1: hopLimit (tamper-proof, sealed verbatim)
+    aad.append(hopLimit)
+    
+    // Byte 2: hopCount MASKED TO 0x00 (allows relays to increment on the wire!)
+    aad.append(0x00)
+    
+    // Bytes 3..5: sessionId (tamper-proof)
+    let sid3Bytes: [UInt8] = [
+        UInt8((sessionId >> 16) & 0xFF),
+        UInt8((sessionId >> 8) & 0xFF),
+        UInt8(sessionId & 0xFF)
+    ]
+    aad.append(contentsOf: sid3Bytes)
+    
+    // Bytes 6..9: sequenceNumber (tamper-proof)
+    var seqBE = sequenceNumber.bigEndian
+    aad.append(Data(bytes: &seqBE, count: 4))
+    
+    return aad
+}
 ```
 
-**What this achieves:**
-1. `version`, `type`, `hopLimit`, `sessionId`, and `sequenceNumber` are 100% tamper-proof. If an adversary attempts to modify `hopLimit` to induce broadcast storms, the Poly1305 tag fails instantly and the packet is dropped.
-2. Relays can freely increment `hopCount` across multiple hops without breaking the recipient's ability to verify the cryptographic signature!
+---
+
+### 2.8 Code Walkthrough: `PacketWriter` & `PacketReader`
+In lower-level systems, pointer arithmetic can lead to memory corruption or buffer overflows. TeeKum encapsulates all byte manipulation inside two bounds-checked value types in [`PacketCodec.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/PacketCodec.swift):
+
+```swift
+/// Fast, bounds-checked binary buffer builder for fixed-size wire datagrams.
+public struct PacketWriter: Sendable {
+    public private(set) var data: Data
+    
+    public init(capacity: Int) {
+        // Pre-allocates exact capacity to avoid heap reallocations during packet packing
+        self.data = Data(capacity: capacity)
+    }
+    
+    public mutating func writeUInt8(_ value: UInt8) {
+        data.append(value)
+    }
+    
+    public mutating func writeUInt16BigEndian(_ value: UInt16) {
+        var be = value.bigEndian // Normalizes to Network Byte Order (Big-Endian)
+        data.append(Data(bytes: &be, count: MemoryLayout<UInt16>.size))
+    }
+    
+    public mutating func writeUInt24BigEndian(_ value: UInt32) {
+        // Serializes a 24-bit integer across exactly 3 bytes
+        data.append(UInt8((value >> 16) & 0xFF))
+        data.append(UInt8((value >> 8) & 0xFF))
+        data.append(UInt8(value & 0xFF))
+    }
+    
+    public mutating func writeInt32BigEndian(_ value: Int32) {
+        var be = value.bigEndian // Signed 32-bit big-endian for quantized GPS coordinates
+        data.append(Data(bytes: &be, count: MemoryLayout<Int32>.size))
+    }
+}
+```
+
+And its companion, `PacketReader`:
+```swift
+/// Bounds-checked binary stream reader that prevents buffer overflows and underflows.
+public struct PacketReader: Sendable {
+    private let data: Data
+    public private(set) var offset: Int
+    
+    public var remainingBytes: Int {
+        data.endIndex - offset
+    }
+    
+    public mutating func readInt32BigEndian() throws -> Int32 {
+        // Guarantees at least 4 unconsumed bytes remain before reading
+        guard remainingBytes >= 4 else { throw PacketCodecError.bufferUnderflow }
+        let sub = data.subdata(in: offset..<(offset + 4))
+        offset += 4
+        // Safe typed byte loading from memory without unsafe pointers
+        return sub.withUnsafeBytes { $0.load(as: Int32.self).bigEndian }
+    }
+}
+```
 
 ---
 
@@ -498,44 +599,62 @@ Byte 4:       tokenLength (UInt8, byte length of serialized NIDiscoveryToken)
 Bytes 5..29:  tokenData (25 bytes raw Apple UWB token payload)
 ```
 
-### 3.8 The Codec Architecture: `PacketReader` and `PacketWriter`
-In C or low-level systems, pointer manipulation can easily lead to buffer overruns. In TeeKum, all binary serialization and deserialization is governed by **bounds-checked safe streams** in [`PacketCodec.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/PacketCodec.swift):
+---
+
+### 3.8 Code Walkthrough: Chat Message Serialization & Unicode Clamping
+Let us examine the exact serialization logic from [`ChatMessagePayload.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/Payloads/ChatMessagePayload.swift):
 
 ```swift
-public final class PacketWriter {
-    public private(set) var data: Data
-
-    public init(capacity: Int = 30) {
-        self.data = Data(capacity: capacity)
+public func serializeUnchecked() -> Data {
+    var data = Data(capacity: PacketConstants.encryptedPayloadSize) // 30 bytes
+    
+    // Bytes 0..1: senderInitials (2B Base-27)
+    let initialBytes = InitialsCodec.encode(senderInitials) ?? [0, 0]
+    data.append(contentsOf: initialBytes)
+    
+    // Bytes 2..5: timestamp (4B Unix epoch seconds)
+    var ts = UInt32(timestamp.timeIntervalSince1970).bigEndian
+    data.append(Data(bytes: &ts, count: 4))
+    
+    // Byte 6: textLength (1B, 0..20)
+    let rawUtf8 = Array(text.utf8.prefix(Self.maxTextBytes))
+    data.append(UInt8(rawUtf8.count))
+    
+    // Bytes 7..26: textContent (20B UTF-8, zero-padded for unused bytes)
+    data.append(contentsOf: rawUtf8)
+    if rawUtf8.count < Self.maxTextBytes {
+        data.append(Data(repeating: 0, count: Self.maxTextBytes - rawUtf8.count))
     }
-
-    public func writeUInt8(_ value: UInt8) {
-        data.append(value)
-    }
-
-    public func writeUInt16BigEndian(_ value: UInt16) {
-        var bigEndian = value.bigEndian
-        withUnsafeBytes(of: &bigEndian) { data.append(contentsOf: $0) }
-    }
-
-    public func writeInt32BigEndian(_ value: Int32) {
-        var bigEndian = value.bigEndian
-        withUnsafeBytes(of: &bigEndian) { data.append(contentsOf: $0) }
-    }
-
-    public func writeBytes(_ bytes: Data) {
-        data.append(bytes)
-    }
+    
+    // Bytes 27..29: reserved (3B padding: 0x000000)
+    data.append(Data(repeating: 0, count: Self.reservedBytesCount))
+    
+    return data
 }
 ```
 
-The matching `PacketReader` checks bounds before every read operation; if a packet has fewer remaining bytes than requested, it throws a safe `PacketCodecError.bufferUnderflow` rather than triggering a crash or undefined memory read.
+#### Unicode Grapheme Cluster Clamping:
+Why can't you just write `text.prefix(20)`? Because in Swift, a single emoji like 👨‍👩‍👧‍👦 takes 1 `Character`, but **25 UTF-8 bytes**! 
+Here is how `clampTo20Bytes` prevents splitting multi-byte code points:
+
+```swift
+public static func clampTo20Bytes(_ input: String) -> String {
+    var accumulated = ""
+    for char in input {
+        let candidate = accumulated + String(char)
+        if candidate.utf8.count <= maxTextBytes {
+            accumulated = candidate
+        } else {
+            break // Stops before breaking the Unicode scalar boundary
+        }
+    }
+    return accumulated
+}
+```
 
 ---
 
 ## Chapter 4: The Physical Layer: Apple Wireless Direct Link (AWDL) & Network.framework
-
-How does TeeKum communicate between two iPhones in the middle of a desert when there are no Wi-Fi access points or cellular towers?
 
 ### 4.1 What is AWDL? How AirDrop Communicates Off-Grid
 Most developers know Apple AirDrop. You can send a 2 GB video to a friend sitting next to you on an airplane with Wi-Fi and Bluetooth toggled on, without being connected to an internet router.
@@ -587,98 +706,149 @@ Here is an essential networking lesson for every junior developer:
 
 If your code simply assumes `content.count == 56`, it will drop packets or crash when network fragmentation occurs.
 
-### 4.5 `StreamMessageFramer`: Delimiting & Corruption Resynchronization
-To solve this, TeeKum routes all inbound network data through [`StreamMessageFramer.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Transport/StreamMessageFramer.swift).
+---
 
-```
-Incoming Stream Chunks:
-[ 24 Bytes ] ───┐
-                ├──> Accumulate in Ring Buffer ──> Emit [ 56 Bytes Frame 1 ]
-[ 48 Bytes ] ───┘                                  Accumulate remaining [ 16 Bytes ]
-                                                           │
-[ 40 Bytes ] ──────────────────────────────────────────────┴──> Emit [ 56 Bytes Frame 2 ]
-```
+### 4.5 Code Walkthrough: `StreamMessageFramer` & Stream Resynchronization
+Look at the framing engine in [`StreamMessageFramer.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Transport/StreamMessageFramer.swift#L43-L78):
 
-#### How the Framer Works:
-1. **Accumulation:** Raw bytes are appended to an internal buffer (`Data`).
-2. **Frame Emission:** While `buffer.count >= 56`:
-   - Inspect the first byte: high nibble must equal `0x03` (Protocol Version 3) and low nibble must be a valid `PacketType` (`0x01`..`0x08`).
-   - If valid: Slice exactly 56 bytes, emit as a verified `InboundPacket`, and remove those 56 bytes from the buffer head.
-3. **Corruption Resynchronization:** If Byte 0 is not a valid version and type header (e.g. noise or stream corruption), the framer scans forward byte-by-byte until it finds a valid `0x3X` marker, discarding corrupted bytes and resynchronizing the stream.
-4. **Buffer Overflow Guard:** The internal buffer is capped at $64\text{ KB}$. If malicious noise fills the buffer without a valid frame marker, the entire buffer is purged to prevent memory exhaustion.
+```swift
+public func processIncomingChunk(_ chunk: Data) throws -> [Data] {
+    guard !chunk.isEmpty else { return [] }
+    
+    // Step 1: Accumulate incoming stream bytes into ring buffer
+    buffer.append(chunk)
+    
+    // Step 2: Buffer overflow protection (64 KB ceiling)
+    guard buffer.count <= maxBufferSize else {
+        buffer.removeAll()
+        throw TransportError.listenerFailed("Stream buffer overflow")
+    }
+    
+    var frames: [Data] = []
+    
+    // Step 3: Loop while at least 56 bytes exist in the buffer
+    while buffer.count >= PacketConstants.wirePacketSize {
+        let startIndex = buffer.startIndex
+        let byte0 = buffer[startIndex]
+        let version = (byte0 >> 4) & 0x0F
+        let typeRaw = byte0 & 0x0F
+        
+        // Step 4: Verify Byte 0 contains Protocol Version (0x03) & a valid PacketType (0x01..0x08)
+        if version == PacketConstants.protocolVersion, PacketType(rawValue: typeRaw) != nil {
+            let frameEnd = startIndex + PacketConstants.wirePacketSize
+            let frameData = buffer.subdata(in: startIndex..<frameEnd)
+            frames.append(frameData)
+            buffer.removeSubrange(startIndex..<frameEnd) // Advances buffer head
+        } else {
+            // Step 5: Corruption Resync: Discard 1 byte and scan forward to seek the next valid frame marker
+            buffer.removeFirst(1)
+        }
+    }
+    
+    return frames
+}
+```
 
 ---
 
 ## Chapter 5: The Ad-Hoc Multi-Hop Mesh Network
 
-Direct peer-to-peer radio (AWDL) has an effective physical range of **30 to 50 meters** in an open field, and often drops to **15 to 25 meters** in dense crowds packed with human bodies (which are 70% water and absorb 2.4 GHz radio waves).
-
-However, festival venues are often **500 to 1,500 meters wide**.
+Direct peer-to-peer radio reaches **30 to 50 meters**. But music festivals span **500 to 1,500 meters**.
 
 ```
-[ Alice (Stage A) ] 
-       │ 30m
-       ▼
- [ Stranger Node 1 ] 
-       │ 35m
-       ▼
- [ Stranger Node 2 ] 
-       │ 40m
-       ▼
-  [ Bob (Food Court) ]
+[ Alice (Main Stage) ] ──30m──> [ Stranger Node 1 ] ──35m──> [ Stranger Node 2 ] ──40m──> [ Bob (Food Tent) ]
 ```
-
-To bridge this distance, TeeKum turns festival phones into a **multi-hop cooperative mesh**.
 
 ### 5.1 The Range Barrier and Multi-Hop Theory
 In a multi-hop mesh, every node acts as both an endpoint and a router. When Alice sends a packet to Bob, Intermediate Node 1 forwards it to Node 2, which forwards it to Bob.
 
 ### 5.2 Bounded Flooding vs. AODV On-Demand Routing
 TeeKum implements a **Hybrid Routing Strategy**:
+- **Emergency SOS & Location Pings:** Immediate bounded flooding (up to 8 hops) radiating through all available neighbors.
+- **Delivery ACKs:** Reverse-path unicast following the exact chain of nodes that delivered the original message.
+- **Stale Peer Recovery:** On-demand AODV (`ROUTE_REQ` / `ROUTE_RESP`) triggered sequentially when a friend has been unseen for $>45$ seconds.
 
-| Traffic Kind | Routing Algorithm | Max Hops | Behavior |
-| :--- | :--- | :---: | :--- |
-| **Emergency SOS** | Immediate Bounded Flooding | 15 | Radiates in all directions through all available neighbors with maximum priority. |
-| **Location Telemetry** | Bounded Flooding | 8 | Disseminates periodically across direct neighbors and relays. |
-| **Delivery ACKs** | Reverse-Path Unicast | 8 | Follows the cached reverse path over which the original message arrived. |
-| **Stale Peer Recovery** | AODV (`ROUTE_REQ` / `ROUTE_RESP`) | 8 | On-demand route discovery triggered only when a friend goes unseen for $>45$s. |
+---
 
-### 5.3 The 7-Byte Composite Deduplication Key & 1,024-Entry LRU Cache
-In flooding meshes, the greatest danger is a **Broadcast Storm**: Node A sends to Node B; Node B sends to Node C; Node C sends back to Node A; and packets loop indefinitely, crashing the radio network.
+### 5.3 Code Walkthrough: `SeenPacketCache` (7-Byte Key LRU)
+In flooding meshes, circular loops cause catastrophic broadcast storms.
+[`SeenPacketCache.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/SeenPacketCache.swift) uses a 1,024-entry LRU sliding cache with a 5-minute (300s) retention window:
 
-TeeKum eliminates broadcast loops using [`SeenPacketCache.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/SeenPacketCache.swift).
-
-#### The 7-Byte Key
-A packet is uniquely identified by:
-$$\text{PacketKey} = (\text{sessionId: 3 Bytes}) \parallel (\text{sequenceNumber: 4 Bytes})$$
-
-> [!IMPORTANT]
-> **Why `hopCount` must NOT be in the Deduplication Key:**  
-> When a packet is forwarded across 3 hops, `hopCount` changes ($0 \rightarrow 1 \rightarrow 2$). If the deduplication key included `hopCount`, a node seeing the same packet arrive from two different paths with different hop counts would fail to recognize it as a duplicate! By keying strictly on `(sessionId, sequenceNumber)`, the packet is recognized as duplicate regardless of which hop it arrived on.
-
-#### The 1,024-Entry Sliding Window
-- Implemented as an actor-isolated Doubly Linked List + Dictionary (LRU Cache).
-- Capacity: 1,024 entries.
-- Retention Window: 300 seconds (5 minutes).
-- Any packet whose `PacketKey` exists in the cache is dropped immediately with `.dropDuplicate`.
-
-### 5.4 Dual-Lane Token Bucket Rate Limiting
-To prevent battery drain and radio congestion, [`ForwardingRateLimiter.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/ForwardingRateLimiter.swift) enforces a **Dual-Lane Token Bucket**:
-
+```swift
+public actor SeenPacketCache {
+    private let capacity: Int = 1024
+    private let ttl: TimeInterval = 300.0 // 5-minute sliding window
+    
+    // 7-Byte Key: (sessionId: 3B) || (sequenceNumber: 4B)
+    private var cache: [PacketKey: Date] = [:]
+    
+    public func isDuplicateAndRecord(_ key: PacketKey, now: Date = Date()) -> Bool {
+        // Step 1: Evict stale records older than 5 minutes
+        evictExpiredEntries(now: now)
+        
+        // Step 2: Check if key exists within active window
+        if let arrival = cache[key], now.timeIntervalSince(arrival) < ttl {
+            return true // Duplicate detected! Drop packet.
+        }
+        
+        // Step 3: Record newly observed packet
+        cache[key] = now
+        
+        // Step 4: Evict oldest entry if capacity exceeds 1,024
+        if cache.count > capacity {
+            if let oldest = cache.min(by: { $0.value < $1.value })?.key {
+                cache.removeValue(forKey: oldest)
+            }
+        }
+        
+        return false // First time seeing this packet!
+    }
+}
 ```
-                       [ Incoming Packets to Relay ]
-                                     │
-                    Is Packet Type == SOS (0x02)?
-                                ╱         ╲
-                             YES           NO
-                             ╱               ╲
-     [ SOS Token Bucket Lane ]               [ Ordinary Token Bucket Lane ]
-     • Fill Rate: 4.0 tokens/sec             • Fill Rate: 2.0 tokens/sec
-     • Max Burst Capacity: 8 tokens          • Max Burst Capacity: 4 tokens
-     • Preempts ordinary queue               • Throttled during heavy traffic
+
+> **Trivia:** `hopCount` is intentionally excluded from the cache key! If `hopCount` were in the key, a node receiving the same packet via two different paths with different hop counts would fail to detect the duplicate.
+
+---
+
+### 5.4 Code Walkthrough: `ForwardingRateLimiter` (Dual-Lane Token Bucket)
+To prevent rogue nodes or broadcast storms from draining festival batteries, [`ForwardingRateLimiter.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/ForwardingRateLimiter.swift) enforces a dual-lane token bucket:
+
+```swift
+public actor ForwardingRateLimiter: ForwardingBudgetManaging {
+    // Ordinary Traffic Bucket: 2 pkts/sec (Capacity: 4.0)
+    private var ordinaryTokens: Double = 4.0
+    private var lastOrdinaryRefill: Date
+    
+    // Emergency SOS Bucket: 4 pkts/sec (Capacity: 8.0)
+    private var sosTokens: Double = 8.0
+    private var lastSOSRefill: Date
+    
+    public func attemptConsumeOrdinaryToken(now: Date = Date()) -> Bool {
+        refillOrdinary(now: now)
+        guard ordinaryTokens >= 1.0 else { return false } // Rate-limited!
+        ordinaryTokens -= 1.0
+        return true
+    }
+    
+    public func attemptConsumeSOSToken(now: Date = Date()) -> Bool {
+        refillSOS(now: now)
+        guard sosTokens >= 1.0 else { return false }
+        sosTokens -= 1.0
+        return true
+    }
+    
+    private func refillOrdinary(now: Date) {
+        let elapsed = max(0.0, now.timeIntervalSince(lastOrdinaryRefill))
+        if elapsed > 0 {
+            let refilled = elapsed * 2.0 // Refill 2.0 tokens per second
+            ordinaryTokens = min(4.0, ordinaryTokens + refilled)
+            lastOrdinaryRefill = now
+        }
+    }
+}
 ```
 
-If an outside node attempts to spam packets through your phone, the token bucket exhausts its tokens and excess packets are dropped with `.rateLimited`. Emergency SOS traffic uses an independent reserve lane that can burst up to 4 packets/second.
+---
 
 ### 5.5 The Communal Relay Policy & 20% Hard Cutoff
 Participation in the mesh is strictly governed by [`RelayPolicyManager.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/RelayPolicyManager.swift):
@@ -688,18 +858,54 @@ Participation in the mesh is strictly governed by [`RelayPolicyManager.swift`](f
 
 When device battery drops below 20%, the system enters **Festival Survival Mode**: relaying is killed instantly, no matter what setting was selected.
 
-### 5.6 Circular Routing Loop Elimination & The 8-Hop Ceiling
-Every packet enforces two hard termination checks:
-1. `envelope.hopCount >= envelope.hopLimit`: Drop packet.
-2. `envelope.hopCount >= 8`: Drop packet (Protocol ceiling for normal traffic).
+---
 
-This guarantees that no packet can ever survive more than 8 hops, mathematically bounding total mesh bandwidth consumption.
+### 5.6 Code Walkthrough: Blind Forwarding & Loop Elimination
+Here is the stranger packet forwarding pipeline from [`PacketRouter.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/PacketRouter.swift#L283-L323):
+
+```swift
+public func handleStrangerRelayPacket(_ inbound: InboundPacket) async {
+    let envelope = inbound.rawPacket.envelope
+    
+    // Check 1: Verify communal relay policy permits forwarding (Opt-in + Battery >= 20%)
+    let policyState = await relayPolicyManager.currentState()
+    guard policyState.isRelayPermitted else {
+        await relayPolicyManager.recordDropEvent(reason: .policyDisabled)
+        return
+    }
+    
+    // Check 2: Bounded hop limit enforcement (max 8 hops ceiling)
+    guard envelope.hopCount < envelope.hopLimit else {
+        await relayPolicyManager.recordDropEvent(reason: .hopLimitExceeded)
+        return
+    }
+    
+    // Check 3: Deduplicate via 5-minute LRU cache
+    let packetKey = PacketKey(wirePacket: inbound.rawPacket)
+    let isDuplicate = await seenPacketCache.isDuplicateAndRecord(packetKey)
+    if isDuplicate {
+        await relayPolicyManager.recordDropEvent(reason: .duplicate)
+        return
+    }
+    
+    // Check 4: Rate-limited blind forwarding to neighboring direct links
+    do {
+        let wireData = try inbound.rawPacket.toWireData()
+        let directPeers = await peerTransport.neighborTable.activeNeighbors()
+        let eligible = directPeers.filter { $0.id != inbound.sourcePeerId } // Don't echo back to sender!
+        for peer in eligible {
+            _ = try await peerTransport.forwardFrame(wireData, to: peer.id)
+        }
+        await relayPolicyManager.recordForwardEvent(type: envelope.type)
+    } catch {
+        print("[PacketRouter] Stranger relay dropped: \(error)")
+    }
+}
+```
 
 ---
 
 ## Chapter 6: Cryptography, Key Exchange & Security Boundaries
-
-Security in TeeKum is designed around the assumption that **the radio spectrum is hostile**. Anybody with a Wi-Fi sniffer or SDR (Software Defined Radio) can record every byte transmitted over the venue.
 
 ### 6.1 100% Serverless Key Exchange via URL Fragments
 How do you create a private encrypted group when you have no internet access and no cloud server?
@@ -737,369 +943,424 @@ Once acquired, the group's 256-bit key is written to the iOS Keychain via `Secur
 - The key cannot be extracted via cloud backups or synced across devices.
 - The moment the user taps *"Leave Group"* or the session expires (1-hour inactivity), `SecItemDelete` purges the key material from disk and Secure Enclave.
 
-### 6.4 The 10-Step Inbound Ingestion Pipeline
-Every 56-byte datagram received over the radio passes through an unyielding 10-step gauntlet in [`PacketRouter.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/PacketRouter.swift):
+---
 
-```mermaid
-flowchart TD
-    Step1["1. Wire Size == 56 Bytes"] --> Step2["2. Protocol Version == 0x03"]
-    Step2 --> Step3["3. PacketType in 0x01..0x08"]
-    Step3 --> Step4["4. Hop Limit Valid (hopCount < limit & hopCount < 8)"]
-    Step4 --> Step5["5. LRU Deduplication (SeenPacketCache)"]
-    Step5 --> Step6["6. Poly1305 MAC Verification (ChaChaPoly.open)"]
-    Step6 --> Step7["7. Payload Deserialization Boundary Check"]
-    Step7 --> Step8["8. Clock Skew Check (<300s in future)"]
-    Step8 --> Step9["9. Monotonic Sequence & Timestamp Anti-Replay"]
-    Step9 --> Step10["10. Coordinate Sanity (Lat [-90,90], Lon [-180,180])"]
-    Step10 --> Success["Deliver to Feature / Mutate State"]
+### 6.4 Code Walkthrough: `CryptoService` ChaCha20-Poly1305 AEAD Engine
+Let us study the sealing and opening methods in [`CryptoService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Security/CryptoService.swift#L148-L215):
 
-    Step1 -- Fail --> Drop[Drop & Record Diagnostic Telemetry]
-    Step2 -- Fail --> Drop
-    Step3 -- Fail --> Drop
-    Step4 -- Fail --> Drop
-    Step5 -- Fail --> Drop
-    Step6 -- Fail --> Drop
-    Step7 -- Fail --> Drop
-    Step8 -- Fail --> Drop
-    Step9 -- Fail --> Drop
-    Step10 -- Fail --> Drop
+```swift
+public func seal(
+    payload: Data,
+    envelope: CleartextEnvelope,
+    using key: SymmetricKey
+) throws -> (ciphertext: Data, authTag: Data) {
+    guard payload.count == PacketConstants.encryptedPayloadSize else {
+        throw PacketCodecError.invalidPacketSize(expected: 30, actual: payload.count)
+    }
+    
+    // Step 1: Construct the deterministic 96-bit Nonce
+    let nonceData = envelope.constructNonce()
+    guard let nonce = try? ChaChaPoly.Nonce(data: nonceData) else {
+        throw CryptoServiceError.encryptionFailed("Nonce construction failed")
+    }
+    
+    // Step 2: Build the 10-byte Associated Authenticated Data (AAD) with hopCount masked to 0x00
+    let aad = envelope.authenticatedAssociatedData()
+    
+    // Step 3: Apple CryptoKit hardware-accelerated ChaCha20-Poly1305 seal
+    let sealedBox = try ChaChaPoly.seal(payload, using: key, nonce: nonce, authenticating: aad)
+    return (ciphertext: Data(sealedBox.ciphertext), authTag: Data(sealedBox.tag))
+}
 ```
 
-If a packet fails **any** step:
-- It is immediately discarded.
-- Zero application state is mutated.
-- The failure reason is logged into `MeshDiagnostics` counters for real-time triage.
+And opening:
+```swift
+public func open(
+    ciphertext: Data,
+    envelope: CleartextEnvelope,
+    authTag: Data,
+    using key: SymmetricKey
+) throws -> Data {
+    let nonceData = envelope.constructNonce()
+    guard let nonce = try? ChaChaPoly.Nonce(data: nonceData) else {
+        throw CryptoServiceError.authenticationFailed
+    }
+    
+    let aad = envelope.authenticatedAssociatedData()
+    
+    // Reconstructs RFC 8439 SealedBox
+    guard let sealedBox = try? ChaChaPoly.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: authTag) else {
+        throw CryptoServiceError.authenticationFailed
+    }
+    
+    // Verifies Poly1305 MAC tag over ciphertext + AAD. If tampered, throws error instantly.
+    return try ChaChaPoly.open(sealedBox, using: key, authenticating: aad)
+}
+```
 
-### 6.5 Zero-Knowledge Relay Boundary Guarantees
-Notice where Step 6 sits:
-If a packet arrives whose `sessionId` does not match our active group:
-- The router bypasses Step 6 (it does not attempt decryption because it lacks the key).
-- It routes the packet directly to `handleStrangerRelayPacket`.
-- Stranger payloads are forwarded as completely opaque ciphertext.
+---
+
+### 6.5 Code Walkthrough: The 10-Step Inbound Ingestion Pipeline (`PacketRouter`)
+In [`PacketRouter.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/PacketRouter.swift#L67-L144), incoming datagrams are demultiplexed through a clean pipeline:
+
+```swift
+public func routeInboundPacket(_ inbound: InboundPacket, for session: GroupSession) async {
+    let raw = inbound.rawPacket
+    let envelope = raw.envelope
+    
+    // 1. Stranger Packet Check: Route to Communal Relay if SID does not match
+    guard envelope.sessionId == session.sessionId else {
+        await handleStrangerRelayPacket(inbound)
+        return
+    }
+    
+    // 2. Immediate ACK Processing (SOS delivery tracking & Chat per-recipient receipts)
+    if envelope.type == .ack {
+        await sosViewModel?.processInboundPacket(inbound)
+        _ = await chatMessageEngine.processDeliveryACK(rawPacket: raw, fromPeerId: inbound.sourcePeerId)
+        await relayMeshPacketIfNeeded(inbound, for: session)
+        return
+    }
+    
+    // 3. Process SOS Packets through SOSViewModel (triggers sirens, haptics, incoming alert HUD)
+    if envelope.type == .sos {
+        await sosViewModel?.processInboundPacket(inbound)
+    }
+    
+    // 4. Authenticated AEAD Decryption with Session Symmetric Key
+    let key = SymmetricKey(data: session.symmetricKeyData)
+    guard let decrypted = try? await cryptoService.open(
+        ciphertext: raw.ciphertext,
+        envelope: envelope,
+        authTag: raw.authTag,
+        using: key
+    ) else {
+        // Fallback: If packet is an emergency SOS, still relay multi-hop even if local decryption fails
+        if envelope.type == .sos {
+            await relayMeshPacketIfNeeded(inbound, for: session)
+        }
+        return
+    }
+    
+    // 5. Payload Demux by Type
+    switch envelope.type {
+    case .sos:
+        await handleDecryptedSOS(decrypted, inbound: inbound, session: session)
+        await relayMeshPacketIfNeeded(inbound, for: session)
+        
+    case .locationPing:
+        handleDecryptedLocationPing(decrypted, inbound: inbound, session: session)
+        await relayMeshPacketIfNeeded(inbound, for: session)
+        
+    case .meetingUpdate:
+        handleDecryptedMeetingUpdate(decrypted, session: session)
+        await relayMeshPacketIfNeeded(inbound, for: session)
+        
+    case .chatMessage:
+        await handleDecryptedChatMessage(inbound: inbound)
+        await relayMeshPacketIfNeeded(inbound, for: session)
+        
+    default:
+        break
+    }
+}
+```
 
 ---
 
 ## Chapter 7: Subsystems & Sensor Engines
 
-### 7.1 The Dynamic GNSS & CoreMotion Location Engine
-GPS receivers consume substantial power. If an app runs the iPhone GPS at full accuracy continuously, an iPhone 15 battery will drain in approximately 4 to 5 hours.
+### 7.1 Code Walkthrough: Dynamic GNSS & CoreMotion Location Engine
+In [`LocationService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Location/LocationService.swift), accuracy is scaled dynamically:
 
-TeeKum implements an **Adaptive Cadence & Dynamic Accuracy Engine** in [`LocationService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Location/LocationService.swift):
-
-```
-                                  [ User Motion State ]
-                                            │
-                       ┌────────────────────┴────────────────────┐
-                       ▼                                         ▼
-              [ Device Stationary ]                     [ Device Walking ]
-        • GPS: kCLLocationAccuracyHundredMeters    • GPS: kCLLocationAccuracyBest
-        • Distance Filter: 15 meters              • Distance Filter: None (Continuous)
-        • Broadcast Cadence: Every 15–30s         • Broadcast Cadence: Every 3–5s
-```
-
-#### Motion Coprocessor Sleep
-Using `CMMotionActivityManager`, TeeKum queries the iPhone's low-power M-series motion coprocessor:
-- When the user stands still at a stage, the GPS receiver is throttled down to 100-meter accuracy and broadcasts only once every 20 seconds. This saves **~70% of GPS battery consumption**.
-- When the user starts walking, the coprocessor wakes up the GPS receiver within 2–3 seconds, transitioning to high-cadence 3–5s pings.
-
-#### Dual-Frequency L1/L5 Navigation Boost
-When the user opens the **Tactical Radar View**, `LocationService.applyDynamicAccuracy()` automatically engages `kCLLocationAccuracyBestForNavigation`:
-- Activates the iPhone's dual-frequency **L1/L5 GNSS radio**, filtering out multipath radio bounces from festival stages and metal scaffolding.
-- Heading filter is set to $0^\circ$ for butter-smooth compass rotation.
-- When the user closes the radar back to the Map, accuracy returns to standard battery-optimized levels.
-
-### 7.2 Emergency SOS, Priority Preemption & Inactivity Guard ("Man Down")
-Distress alerts are the most critical function of TeeKum.
-
-#### 1. The 3-Second Hold State Machine
-To prevent accidental triggers in crowded mosh pits or while jumping to music:
-- Tapping the SOS button does nothing.
-- The user must maintain continuous thumb contact for **3.0 continuous seconds**.
-- An animated neon progress ring fills clockwise with haptic ticking patterns (`UIImpactFeedbackGenerator`).
-- If the user releases before 3.0 seconds, the timer cancels and resets to zero.
-
-#### 2. Urgent Queue Preemption
-Standard location pings sit in a coalescing outbox. When an SOS packet is triggered:
-- It bypasses all normal queues and is inserted at the head of `PriorityOutboxQueue`.
-- It broadcasts immediately, preempting pending pings.
-- The device triggers 3 rapid-fire burst transmissions spaced by 1.5 seconds.
-- An audible siren alert (`AudioServicesPlaySystemSound(1304)`) and heavy alert haptics (`UINotificationFeedbackGenerator`) play on all recipient friend devices.
-
-#### 3. Inactivity Guard ("Man Down" Watchdog)
-If a festival attendee collapses, faints from dehydration, or suffers an overdose, they may be unable to press the SOS button.
-
-In Phase 3, TeeKum introduced [`InactivityGuardService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Services/InactivityGuardService.swift):
-- An opt-in motion watchdog monitors accelerometer data.
-- If the device remains completely motionless for **180 seconds** (3 minutes) in an active festival session:
-  1. The app starts a **30-second Pre-Alarm Warning**:
-     - The screen pulses with amber visual rings.
-     - Gentle haptic pulses tap the user's wrist/pocket.
-     - A large **[I'M OK]** button is presented.
-  2. If the user touches the screen, moves the phone, or taps "I'M OK", the alarm cancels immediately.
-  3. If 30 seconds elapse without movement or interaction, the system automatically constructs and broadcasts an **Emergency SOS** (`emergencyType = .inactivity`), alerting all group members that their friend is down and unconscious.
-
-### 7.3 Festival Group Mesh Chat & The Byte Limiter
-In Phase 3, TeeKum replaced rigid 1-byte status codes with **Festival Group Mesh Chat** (`PacketType.chatMessage = 0x07`):
-
-```
-┌────────────────────────────────────────────────────────┐
-│ [Beer line]  [At Main Stage]  [Restroom]  [On my way]  │ <- Preset Chips
-├────────────────────────────────────────────────────────┤
-│ Meet at sound booth                               18/20│ <- Dynamic Byte Meter
-└────────────────────────────────────────────────────────┘
+```swift
+public func applyDynamicAccuracy(for mode: NavigationMode) {
+    switch mode {
+    case .tacticalRadar:
+        // Dual-frequency L1/L5 GNSS bands + 0° heading filter for high precision
+        locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.headingFilter = kCLHeadingFilterNone
+        
+    case .standardMap:
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = 5.0
+        locationManager.headingFilter = 5.0
+        
+    case .stationary, .survivalMode:
+        // Scaled back to 100 meters to save ~70% battery during long shows
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        locationManager.distanceFilter = 15.0
+        locationManager.headingFilter = 15.0
+    }
+}
 ```
 
-#### The 20-Byte Boundary & Byte Limiter
-Why 20 bytes?
-Because $2\text{B initials} + 4\text{B timestamp} + 1\text{B length} + \mathbf{20\text{B text}} + 3\text{B reserved} = \mathbf{30\text{ Bytes}}$ (our exact encrypted payload budget!).
+---
 
-However, in UTF-8:
-- ASCII characters (`A-Z`, `0-9`, punctuation) take 1 byte each.
-- Accented characters (`é`, `ñ`) take 2 bytes each.
-- Emojis (🍺, 📍, 🆘) take **4 bytes each**.
+### 7.2 Code Walkthrough: Emergency SOS State Machine & Preemption
+In [`SOSButtonView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Views/SOSButtonView.swift#L114-L124), the continuous hold gesture is captured via `DragGesture(minimumDistance: 0)`:
 
-If a user pastes a string with 20 emojis, that would require 80 bytes!
-[`ByteMeterView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Chat/Views/ByteMeterView.swift) intercepts text input on every keystroke and paste:
-1. It measures the exact UTF-8 byte count: `text.utf8.count`.
-2. If pasted text exceeds 20 bytes, it truncates the string along valid Unicode scalar character boundaries $\le 20$ bytes.
-3. It renders a real-time byte gauge:
-   - Green: $0 \dots 14$ bytes.
-   - Orange: $15 \dots 18$ bytes.
-   - Red: $19 \dots 20$ bytes.
-
-Messages are transmitted over a dedicated FIFO outbox lane (up to 2 retries, 3s cooldown) with per-friend cryptographic delivery tracking (*"Delivered to 3/4 friends"*).
-
-### 7.4 Tactical Polar Radar & The Decommissioning of UWB
-How do you guide a user toward their friend in a pitch-black, 80,000-person crowd?
-
-```
-                     Ahead (0°)
-                     ┌───▲───┐
-                  15m│   │   │
-                     │  (•)  │ <- Friend Blip
-                  30m│       │
-      9 o'clock ─────┼───+───┼───── 3 o'clock
-                  60m│       │
-                     │       │
-                     └───▼───┘
-                    Behind (180°)
+```swift
+.gesture(
+    DragGesture(minimumDistance: 0)
+        .onChanged { _ in
+            if !isPressing && (sosViewModel.deliveryState == .idle || sosViewModel.deliveryState == .searchingPeers) {
+                startContinuousPress()
+            }
+        }
+        .onEnded { _ in
+            cancelContinuousPress() // Early release cancels hold progress!
+        }
+)
 ```
 
-#### Why Apple Ultra-Wideband (UWB) Was Decommissioned
-In Phase 1 and 2, TeeKum attempted to use Apple's `NearbyInteraction.framework` (the U1/U2 Ultra-Wideband chip used in AirTags) for centimeter-level precision finding.
+In `startContinuousPress`:
+```swift
+private func startContinuousPress() {
+    isPressing = true
+    sosViewModel.handlePressStarted()
+    
+    pressTask = Task {
+        let startTime = Date()
+        while !Task.isCancelled {
+            let elapsed = Date().timeIntervalSince(startTime)
+            let progress = min(1.0, elapsed / 3.0)
+            sosViewModel.holdProgress = progress
+            
+            if progress >= 1.0 {
+                // 3.0 continuous seconds reached: TRIGGER SOS!
+                await sosViewModel.triggerSOS()
+                break
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms smooth tick
+        }
+    }
+}
+```
 
-However, extensive testing revealed **severe real-world failure modes**:
-1. **Antenna Asymmetry:** Base iPhone models (iPhone 11, 12, 13, 14, 15 non-Pro) lack Angle-of-Arrival (AoA) antenna arrays; they can measure distance, but **cannot measure horizontal direction**.
-2. **Session Freezes in Crowds:** Apple's `NISession` requires constant line-of-sight RF packets. When human bodies or metal stages obstructed the direct line of sight, `NISession` frequently suspended with `sessionWasSuspended`.
-3. **Complex Handshake Exchange:** Exchanging 25-byte discovery tokens for every peer over a constrained radio mesh proved fragile.
+---
 
-#### The 360° Tactical Polar Radar Solution
-In Phase 3, TeeKum replaced UWB with the **60m Tactical Polar Radar** (`RadarView.swift`):
-- It projects all group members simultaneously onto a forward-up 60-meter polar radar disk.
-- It calculates polar coordinates:
-  $$\theta = \operatorname{bearingToFriend} - \operatorname{userHeading}$$
-  $$r = \operatorname{min}(\operatorname{distance}, 60\text{ meters})$$
-- Converts polar coordinates to 2D screen Cartesian coordinates:
-  $$x = r \times \sin(\theta)$$
-  $$y = -r \times \cos(\theta)$$
-- **Perimeter Boundary Clamping:** Friends further than 60 meters away are clamped to the outer rim of the radar disk with a directional chevron and distance tag (e.g. `120m ↗`), ensuring no friend ever disappears from view.
-- **Clock Direction Guidance:** The UI translates angles into intuitive festival vernacular: *"Ahead"*, *"2 o'clock"*, *"Right"*, *"7 o'clock"*, *"Behind"*.
+### 7.3 Code Walkthrough: Inactivity Guard ("Man Down" Watchdog)
+In [`InactivityGuardService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Services/InactivityGuardService.swift), the watchdog runs an accelerometer motion loop:
 
-#### The Neon Screen Strobe Torch
-When you navigate within 10 meters of your friend in the dark, you still might not spot them in a sea of dancing bodies. 
-TeeKum includes a **1-tap Visual Strobe Beacon**:
-- Sets screen brightness to 100%.
-- Rapidly strobes the entire screen between high-contrast neon cyan and black at 8 Hz.
-- The user holds the phone high above their head, creating an unmistakable visual beacon visible across hundreds of feet of dark festival crowd!
+```swift
+public func processMotionSample(acceleration: CMAcceleration) {
+    let magnitude = sqrt(acceleration.x * acceleration.x + acceleration.y * acceleration.y + acceleration.z * acceleration.z)
+    let delta = abs(magnitude - 1.0) // 1.0G gravity baseline
+    
+    if delta > 0.15 {
+        // Physical movement detected: reset 180s stillness timer
+        lastMovementTime = Date()
+        if isWarningActive {
+            cancelWarning()
+        }
+    } else {
+        // Device is immobile: check if 180s has elapsed
+        let stillnessDuration = Date().timeIntervalSince(lastMovementTime)
+        if stillnessDuration >= 180.0 && !isWarningActive {
+            start30SecondPreAlarm()
+        }
+    }
+}
+```
 
-### 7.5 Single Active Meeting Point & The Setter Lock Rule
-When groups get separated at a music festival, setting meeting spots is notoriously chaotic: Member A texts *"Meet at sound tent"*, while Member B texts *"Meet at Ferris wheel"*, and nobody knows which spot is real.
+---
 
-TeeKum enforces the **Single Active Meeting Point & Setter Lock Rule**:
-1. A group has **strictly one** active rendezvous point at any given time.
-2. **The Setter Lock Rule:** When Member A creates a meeting point, **only Member A can cancel or move it**. Other members cannot overwrite it.
-3. **Non-Setter RSVP:** Other members can only tap 1-touch attendance confirmations:
-   - *"I'll be there"* (`.attending`)
-   - *"Can't make it"* (`.declined`)
-   - *"Arrived"* (`.atMeetingPoint`)
-4. **Auto-Arrival Geofencing:** When a member walks within **25 meters** of the meeting point coordinates, `MeetingPointViewModel` automatically transitions their status to *"Arrived"*, informing the rest of the group without requiring manual phone interaction.
-5. **Auto-Expiry:** Meeting points automatically expire after 1 hour to prevent stale landmarks from cluttering the map.
+### 7.4 Code Walkthrough: Festival Group Mesh Chat & The Byte Limiter
+In [`ChatViewModel.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Chat/ViewModels/ChatViewModel.swift#L240-L248):
 
-### 7.6 ActivityKit Live Activities & Dynamic Island Control
-During an intense festival performance, users keep their iPhones locked in their pockets or bags.
+```swift
+public func updateDraft(_ input: String) {
+    let clamped = ChatMessagePayload.clampTo20Bytes(input)
+    if input.utf8.count > Self.maxBytes {
+        errorMessage = "Capped at 20 bytes for mesh radio transmission."
+    } else {
+        errorMessage = nil
+    }
+    self.draftText = clamped
+}
+```
 
-TeeKum integrates native **iOS ActivityKit Live Activities**:
-- **Dynamic Island:** Displays active session status, count of connected mesh peers, and distance to the active meeting point.
-- **Lock Screen Banner:** Shows the active rendezvous landmark and countdown clock.
-- **Interactive Relay Control:** Features an iOS 17 `LiveActivityIntent` button on the Lock Screen, allowing the user to toggle Communal Relay between *Always Active*, *Timed 30m*, and *Disabled* without unlocking their phone.
-- **Background Anchor:** Operating an active Live Activity signals to iOS that the session is user-facing, preventing the operating system from aggressively terminating background peer-to-peer radio sockets.
+The dynamic color for [`ByteMeterView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Chat/Views/ByteMeterView.swift):
+```swift
+public var byteMeterColor: Color {
+    if currentByteCount < 16 {
+        return Color.cyan // Normal typing
+    } else if currentByteCount < 20 {
+        return Color.yellow // Approaching wire ceiling
+    } else {
+        return Color.red // Hard 20-byte wire limit reached!
+    }
+}
+```
+
+---
+
+### 7.5 Code Walkthrough: Tactical Polar Radar & Metal Rendering
+In [`RadarView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/Finder/Views/Radar/RadarView.swift#L115-L150), trigonometry projects friend coordinates onto the forward-up screen:
+
+```swift
+private func computeBlipPosition(for member: Member, center: CGPoint, radius: CGFloat) -> BlipPosition? {
+    guard let userLoc = userLocation, let targetCoord = member.coordinate else { return nil }
+    
+    let dist = userLoc.distance(to: targetCoord)
+    let absoluteBearing = userLoc.bearing(to: targetCoord)
+    let heading = currentHeading ?? 0.0
+    
+    // Forward-Up (Heading-Up) Relative Angle
+    let relativeAngle = (absoluteBearing - heading + 360.0).truncatingRemainder(dividingBy: 360.0)
+    let isClamped = dist > theme.maxDisplayRange
+    let displayDistance = min(dist, theme.maxDisplayRange)
+    
+    // Polar to Cartesian conversion (0° is North / Screen Up)
+    let rad = relativeAngle * .pi / 180.0
+    let radialFraction = CGFloat(displayDistance / theme.maxDisplayRange)
+    let blipRadius = radius * radialFraction
+    
+    let dx = sin(rad) * blipRadius
+    let dy = -cos(rad) * blipRadius
+    
+    let point = CGPoint(x: center.x + dx, y: center.y + dy)
+    return BlipPosition(point: point, distance: dist, relativeBearing: relativeAngle, isClamped: isClamped)
+}
+```
+
+The view body attaches `.drawingGroup()`:
+```swift
+ZStack { ... }
+    .drawingGroup() // Metal hardware acceleration for butter-smooth 60fps heading rotation!
+```
+
+---
+
+### 7.6 Code Walkthrough: Single Active Meeting Point & The Setter Lock Rule
+In [`MeetingPointViewModel.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/MeetingPoint/ViewModels/MeetingPointViewModel.swift):
+
+```swift
+public func applyInboundUpdate(_ update: MeetingUpdatePayload) -> Bool {
+    switch update.action {
+    case .propose:
+        // THE SETTER LOCK RULE:
+        // If an active meeting point exists, ONLY the original setter can propose updates!
+        if let current = activeMeetingPoint, !current.isExpired {
+            guard current.proposerInitials == update.senderInitials else {
+                print("[MeetingPoint] Rejected unauthorized proposal from non-setter \(update.senderInitials)")
+                return false
+            }
+        }
+        self.activeMeetingPoint = MeetingPoint(from: update)
+        return true
+        
+    case .cancel:
+        // Only the setter can cancel
+        guard let current = activeMeetingPoint, current.proposerInitials == update.senderInitials else {
+            return false
+        }
+        self.activeMeetingPoint = nil
+        return true
+        
+    case .accept, .decline:
+        // Non-setters record RSVP attendance
+        activeMeetingPoint?.recordAttendance(memberInitials: update.senderInitials, status: update.attendanceStatus)
+        return true
+    }
+}
+```
+
+---
+
+### 7.7 ActivityKit Live Activities & Dynamic Island Control
+In [`LiveActivityManager.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/LiveActivity/LiveActivityManager.swift):
+- Pushes live updates to Dynamic Island compact leading/trailing and expanded views.
+- Dispatches interactive `RelayAppIntent` directly from the Lock Screen.
 
 ---
 
 ## Chapter 8: Code Architecture & Anatomy of a Feature-Driven App
 
-TeeKum is architected around **Radical Simplicity**:
-- Pure MVVM (Model–View–ViewModel).
-- Modern Swift Observation (`@Observable`).
-- Swift Concurrency (`actor`, `async/await`).
-- Zero Coordinators (No MVVM+C).
-- 100% Native Apple Frameworks (No CocoaPods, No Carthage, No Swift Package Manager external dependencies).
-
+### 8.1 The 3-Tier Layering Model
 ```
 TeeKum Prototype/
 ├── App/                       -> Window Lifecycle & Composition Root
-│   ├── TeeKumApp.swift        -> Entry point, retains state, supervisor loop
-│   └── AppRootView.swift      -> Clean root view switcher (Pairing vs Map)
-├── Features/                  -> User-Facing Product Domains
-│   ├── Pairing/               -> QR Scan/Create, Initials, Mesh Agreement
-│   ├── Map/                   -> MapKit Canvas, Member Pins, Vision Cones
-│   ├── Chat/                  -> Phase 3 Mesh Chat, Presets, Byte Limiter
-│   ├── MeetingPoint/          -> Single Rendezvous, 25m Arrival Geofence
-│   ├── SOS/                   -> 3s Hold Button, Sirens, Inactivity Guard
-│   ├── Finder/                -> 60m Tactical Radar, Strobe Beacon
-│   └── Diagnostics/           -> Debug HUD, 56B Packet Inspector, Sandbox
+├── Features/                  -> User-Facing Product Domains (Views, ViewModels)
 ├── Core/                      -> System Engines & Infrastructure (No UI)
-│   ├── Messaging/             -> Codecs, Payloads, Router, Outbox
-│   ├── Mesh/                  -> RoutingTable, PacketForwarder, SeenCache
-│   ├── Transport/             -> PeerTransportService, StreamMessageFramer
-│   ├── Security/              -> CryptoService, Keychain Key Storage
-│   ├── Location/              -> LocationService, Dynamic GNSS Profile
-│   ├── LiveActivity/          -> ActivityKit Controller, Lock Screen Intents
-│   └── Models/                -> Pure Swift Data Entities & Enums
 └── Shared/UI/                 -> Reusable Colors, Formatters & Components
 ```
 
-### 8.1 The 3-Tier Layering Model
-
-```mermaid
-graph TD
-    subgraph Layer1 ["Layer 1: SwiftUI Presentation Views"]
-        AppRootView["App/AppRootView"]
-        Features["Features/ (Pairing, Map, Chat, MeetingPoint, SOS, Finder)"]
-    end
-
-    subgraph Layer2 ["Layer 2: Observable ViewModels (@Observable)"]
-        ViewModels["ViewModels/ (MapVM, ChatVM, SOSVM, PairingVM, MeetingVM)"]
-    end
-
-    subgraph Layer3 ["Layer 3: Actor-Isolated Services & Infrastructure"]
-        PacketRouter["Core/Messaging/PacketRouter"]
-        Mesh["Core/Mesh/ (RoutingTable, PacketForwarder, SeenPacketCache)"]
-        Transport["Core/Transport/ (PeerTransportService - AWDL)"]
-        Crypto["Core/Security/ (CryptoService - ChaCha20-Poly1305)"]
-        Location["Core/Location/ (LocationService - CoreLocation)"]
-    end
-
-    Layer1 --> Layer2
-    Layer2 --> Layer3
-```
-
-1. **Views (SwiftUI):** Declarative, lightweight presentation components. Views possess zero cryptographic logic, zero network socket access, and zero raw binary serialization.
-2. **ViewModels (`@Observable`):** Manage presentation state, validate user input (such as 1–3 letter initials and 20-byte text limits), format relative dates, and dispatch commands to core services.
-3. **Services (`actor`):** Manage thread-sensitive hardware resources (radio transceivers, GPS callbacks, cryptographic operations, keychain entries) safely inside Swift `actor` isolation domains.
-
 ### 8.2 Swift Observation (`@Observable`) vs Combine Boilerplate
-Prior to iOS 17, SwiftUI apps relied on `ObservableObject` and `@Published` properties from Apple's Combine framework. 
-
-`@Published` had a major performance flaw: whenever *any* `@Published` property changed on a ViewModel, SwiftUI was forced to evaluate the `body` of every View observing that ViewModel, even if the View only cared about an untouched property.
-
-TeeKum uses Swift 5.9's **Observation Framework (`@Observable`)**:
-- No `@Published` annotations required.
-- SwiftUI tracks property access at runtime on a micro-field level.
-- If a View only accesses `member.batteryLevel`, that View will **only** re-render when `batteryLevel` changes, completely ignoring rapid coordinate updates! This maximizes battery efficiency on OLED displays.
+Swift Observation tracks property reads at micro-field resolution. When a view binds to `member.batteryLevel`, SwiftUI invalidates that view's body **only** when `batteryLevel` changes, completely ignoring high-frequency coordinate pings.
 
 ### 8.3 Actor Isolation & Thread Safety
-In an ad-hoc mesh application, concurrency is intense:
-- Network packets arrive asynchronously on background AWDL socket queues.
-- CoreLocation delivers GPS coordinate fixes on location manager queues.
-- CoreMotion delivers accelerometer events on motion queues.
-- The user taps buttons on the `@MainActor` UI thread.
+All stateful services (`PeerTransportService`, `CryptoService`, `SeenPacketCache`, `ForwardingRateLimiter`) are isolated inside Swift `actor`s, guaranteeing compile-time thread safety without manual mutex locks.
 
-If multiple threads accessed network buffers or routing tables simultaneously, data races and memory corruption would be inevitable.
+---
 
-TeeKum eliminates data races by isolating all stateful services inside **Swift Actors**:
-- `PeerTransportService` is an `actor`.
-- `CryptoService` is an `actor`.
-- `PacketForwarder` is an `actor`.
-- `SeenPacketCache` is an `actor`.
-- `RoutingTable` is an `actor`.
-- `NeighborTable` is an `actor`.
+### 8.4 Code Walkthrough: Composition Root (`TeeKumApp` & `AppRootView`)
+Look at [`AppRootView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/App/AppRootView.swift):
 
-By using Swift `actor` boundaries, the Swift compiler enforces that only one task can mutate routing tables or packet queues at a time, guaranteeing **100% thread safety without manual mutex locking**.
+```swift
+public struct AppRootView: View {
+    @Bindable var sessionViewModel: GroupSessionViewModel
+    @Bindable var mapViewModel: MapViewModel
+    @Bindable var sosViewModel: SOSViewModel
+    @Bindable var meetingPointViewModel: MeetingPointViewModel
+    @Bindable var chatViewModel: ChatViewModel
+    
+    public var body: some View {
+        Group {
+            if sessionViewModel.hasActiveSession {
+                MainMapView(
+                    sessionViewModel: sessionViewModel,
+                    mapViewModel: mapViewModel,
+                    sosViewModel: sosViewModel,
+                    meetingPointViewModel: meetingPointViewModel,
+                    chatViewModel: chatViewModel
+                )
+            } else {
+                GroupPairingView(
+                    sessionViewModel: sessionViewModel,
+                    mapViewModel: mapViewModel
+                )
+            }
+        }
+    }
+}
+```
 
-### 8.4 The Central Inbound Demux: `PacketRouter`
-In earlier prototypes, incoming packet routing logic was tangled inside `TeeKumApp.swift`. During the architectural refactor, all routing was extracted into [`PacketRouter.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Messaging/PacketRouter.swift).
-
-When a packet arrives from `PeerTransportService`:
-1. `PacketRouter.routeInboundPacket(_:for:)` evaluates the packet through the 10-step gauntlet.
-2. If the session ID matches strangers, it dispatches to `handleStrangerRelayPacket` for zero-knowledge forwarding.
-3. If the session ID matches our active group, it decrypts the payload via `CryptoService.open(...)` and demuxes to the matching payload handler:
-   - `0x01` $\rightarrow$ Updates friend location and heading on the map.
-   - `0x02` $\rightarrow$ Triggers emergency sirens and displays incoming distress banners.
-   - `0x03` $\rightarrow$ Updates the active group meeting point and RSVP attendance.
-   - `0x04` & `0x05` $\rightarrow$ Updates AODV routing tables and caches discovered routes.
-   - `0x06` $\rightarrow$ Matches `originalEventId` and marks messages as cryptographically delivered.
-   - `0x07` $\rightarrow$ Delivers mesh chat messages to `ChatMessageEngine` and plays audio feedback.
+The composition root in [`TeeKumApp.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/App/TeeKumApp.swift) initializes all ViewModels as top-level `@State` variables, wires them to `PacketRouter`, and handles universal link deep-links (`teekum://join#...`).
 
 ---
 
 ## Chapter 9: Engineering Trivia, Design Trade-Offs & War Stories
 
 ### 9.1 Why SQLite Was Abandoned
-Early specifications included an on-device SQLite database (`libsqlite3`) to persist historical location snapshots across app restarts.
-
-During Phase 2, the team made an intentional decision: **completely abandon SQLite**.
-
-**Why?**
-1. **Privacy Invariant:** In a festival app, user coordinates are sensitive telemetry. Persisting user locations to a SQLite database on unencrypted flash storage poses a privacy risk if a phone is lost or stolen at a venue.
-2. **Ephemeral Value:** Festival coordinate pings expire in value within minutes. If a phone crashes and restarts 10 minutes later, 10-minute-old GPS coordinates are stale and misleading.
-3. **Simplicity:** Managing SQLite schemas, migrations, prepared statements, and disk serialization adds thousands of lines of fragile C-bridge code.
-
-TeeKum replaced SQLite with **pure in-memory reactive state**: session keys live strictly in the Secure Enclave Keychain, and member states live strictly in memory. If the app exits, state vanishes instantly, leaving zero forensic trace on disk.
+Early plans included an on-device SQLite database. We eliminated it completely:
+- Coordinates become stale within minutes at a festival; historical coordinates have zero value after a reboot.
+- Writing coordinates to unencrypted flash storage is a privacy hazard if a phone is lost or stolen.
+- TeeKum uses **pure in-memory reactive state**: session keys live in the Secure Enclave Keychain, and member states live in memory. When the app exits, state vanishes cleanly.
 
 ### 9.2 Why Apple Ultra-Wideband (UWB) Failed at Festivals
 On paper, Apple's U1/U2 Ultra-Wideband chip sounds like the dream festival technology: 10-centimeter spatial awareness with AirTag-style directional arrows pointing right at your friend!
 
 In practice, **it was an operational failure in real festival conditions**:
-- **The Human Shield Problem:** UWB operates at very high radio frequencies (6.5 GHz to 8.0 GHz). High-frequency radio signals are easily blocked by dense water. Because the human body is 70% water, standing in a crowd of 50,000 people creates an impenetrable forest of radio absorption. Line-of-sight is broken within 5 meters.
-- **Hardware Asymmetry:** If Alice had an iPhone 15 Pro (which has 3 UWB antennas and supports Angle-of-Arrival direction finding) but Bob had an iPhone 14 (which has only 1 UWB antenna and supports only scalar distance without direction), Bob's screen could not point toward Alice!
-- **Transceiver Session Stalls:** `NearbyInteraction.framework` expects steady, uninterrupted peer-to-peer token updates. When peer signals dropped below threshold in crowds, `NISession` stalled, requiring full session teardowns and restarts.
+- **The Human Shield Problem:** UWB operates at 6.5 GHz to 8.0 GHz. The human body is 70% water, absorbing high-frequency RF. Line-of-sight was broken within 5 meters in crowds.
+- **Hardware Asymmetry:** Non-Pro iPhone models (iPhone 11–15 base models) lack Angle-of-Arrival (AoA) antenna arrays; they could measure distance, but **could not determine direction**.
+- **Transceiver Session Stalls:** `NearbyInteraction.framework` stalled when signals dropped below threshold in crowds, requiring full session teardowns.
 
 **The Lesson:** Never choose fragile, high-maintenance hardware over a simple, robust mathematical alternative. The 60m Tactical Polar Radar (dual-frequency GPS + magnetometer) proved 100x more resilient in physical venues.
 
 ### 9.3 Why the URL `#` Fragment Is an Anonymous Privacy Superpower
-When designing link sharing for group invites, most developers write:
-`https://example.com/join?key=SECRET_KEY`
-
-If you use a query parameter (`?key=...`):
-- When the user taps the link, their phone sends an HTTP `GET` request across the cellular network to `example.com`.
-- The web server's `access.log` logs the full URL, including the secret encryption key!
-- Any proxy, CDN, or network interceptor along the path records the private key.
-
-TeeKum uses the URL **Fragment (`#`)**:
-`teekum://join#key=SECRET_KEY&sid=A1B2C3`
-
-Under standard browser and URI specifications, **fragments are strictly local client identifiers**. The browser or operating system strips the fragment before dispatching any network request. The secret key never touches the internet, never enters server logs, and remains 100% serverless.
+When sharing a group invite: `teekum://join#key=SECRET_KEY&sid=A1B2C3`
+In RFC 3986, **the fragment of a URI is strictly a local client identifier**. If a user taps this link, the web browser **never transmits the fragment across the network to the server**. The secret key never touches the internet, never enters server access logs, and remains 100% serverless.
 
 ### 9.4 The 20-Byte Text Limit & Byte Budgeting
 Why did we restrict Festival Group Mesh Chat to 20 bytes?
-Because 20 bytes is the **optimal micro-communication budget for crowded venues**:
-- In emergency and crowded situations, nobody writes essays. People write: *"Beer line"*, *"Main Stage"*, *"Lost by sound tent"*, *"At medical tent"*.
-- 20 UTF-8 bytes fits perfectly into our fixed 30-byte encrypted payload without requiring multi-packet fragmentation.
-- Multi-packet message fragmentation over an ad-hoc mesh with 30% packet loss is an engineering nightmare: if 1 fragment of a 3-fragment message drops, the entire message is lost. By keeping messages single-frame (1 datagram = 1 message), message delivery success rates jumped from 62% to **98.4%**.
+Multi-packet message fragmentation over an ad-hoc mesh with 30% packet loss is an engineering nightmare: if 1 of 3 packets drops, the entire message is lost. By keeping chat messages to a single 56-byte wire datagram, message delivery reliability reached **98.4%**.
 
 ### 9.5 Dancing in Place: Fooling the Motion Coprocessor
-When developing the motion-adaptive location engine, we encountered an amusing bug during real-world testing:
-
-When a user was dancing in place at a concert stage:
-- The iPhone accelerometer registered rapid, continuous rhythmic impacts ($128\text{ BPM}$ dance music).
-- `CMMotionActivityManager` classified the user as **actively running**!
-- The app ramped up GPS polling to maximum frequency, draining battery while the user had not moved a single meter from their spot!
-
-**The Fix:**
-We combined motion coprocessor data with a **horizontal displacement filter**:
-- The app checks both `activity.walking` AND `lastKnownLocation.distance(from: newLocation) > 15.0`.
-- If the phone registers motion but total GPS displacement remains $< 15$ meters over a 30-second window, the system recognizes the user is dancing in place and keeps the GPS receiver asleep!
+When developing the motion-adaptive location engine, we encountered an amusing bug:
+Rhythmic 128 BPM dancing at concert stages tricked `CMMotionActivityManager` into reporting "running", keeping GPS awake. We added a 15-meter horizontal displacement filter: if the user moves energetically but remains within 15 meters over 30 seconds, the phone stays in battery-saving sleep!
 
 ---
 
@@ -1125,4 +1386,4 @@ Welcome to the TeeKum team. Now go explore the code!
 
 ---
 *Authored by the Fantasix Team & Google Antigravity*  
-*Document Revision: 3.2 · November 2026*
+*Document Revision: 3.3 · November 2026*
