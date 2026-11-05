@@ -8,52 +8,6 @@
 import Foundation
 import CoreLocation
 
-/// Action taken regarding a group rendezvous point over the mesh.
-public enum MeetingAction: UInt8, CaseIterable, Codable, Sendable {
-    case propose = 0x01
-    case accept  = 0x02
-    case decline = 0x03
-    case cancel  = 0x04
-}
-
-/// Member attendance state for the single active meeting point.
-public enum AttendanceStatus: UInt8, CaseIterable, Codable, Sendable {
-    case attending      = 0x01
-    case cantMakeIt     = 0x02
-    case atMeetingPoint = 0x09
-    
-    public var title: String {
-        switch self {
-        case .attending:      return "I'll be there"
-        case .cantMakeIt:     return "Can't make it"
-        case .atMeetingPoint: return "Arrived"
-        }
-    }
-}
-
-/// Rapid 1-tap presets for selecting when to meet at the festival.
-public enum MeetingTimePreset: Int, CaseIterable, Identifiable, Sendable {
-    case rightNow = 0
-    case in15Mins = 15
-    case in30Mins = 30
-    case in1Hour  = 60
-    
-    public var id: Int { rawValue }
-    
-    public var title: String {
-        switch self {
-        case .rightNow: return "Right Now"
-        case .in15Mins: return "In 15m"
-        case .in30Mins: return "In 30m"
-        case .in1Hour:  return "In 1h"
-        }
-    }
-    
-    public func targetDate(from base: Date = Date()) -> Date {
-        base.addingTimeInterval(TimeInterval(rawValue * 60))
-    }
-}
-
 /// Model representing the single active rendezvous point for a group session.
 /// Location naming has been redesigned to be dynamic (proposer initials + target time & countdown).
 public struct MeetingPoint: Identifiable, Equatable, Hashable, Sendable {

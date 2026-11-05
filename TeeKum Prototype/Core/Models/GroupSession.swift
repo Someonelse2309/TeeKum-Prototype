@@ -8,19 +8,6 @@
 import Foundation
 import CryptoKit
 
-/// Decoded details from a serverless share link or QR barcode invite.
-public struct GroupSessionInvite: Equatable, Sendable {
-    public let sessionId: UInt16
-    public let sessionName: String
-    public let keyData: Data
-    
-    public init(sessionId: UInt16, sessionName: String, keyData: Data) {
-        self.sessionId = sessionId
-        self.sessionName = sessionName
-        self.keyData = keyData
-    }
-}
-
 /// Active ephemeral group session model representing local participation.
 /// Auto-mesh enabled: connects to nearby peers on a shared festival key.
 public struct GroupSession: Identifiable, Equatable, Sendable, Codable {
