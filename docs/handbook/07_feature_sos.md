@@ -1,31 +1,31 @@
-# TeeKum Code Handbook — Volume 07: Feature — SOS & Inactivity Guard
+# TeeKum Code Handbook — Volume 07: Feature — SOS & Inactivity Guard (Definitive Deep-Dive)
 
-This volume breaks down the emergency life-safety subsystem in TeeKum, covering the 3-second continuous hold gesture, immediate radio dispatch, multi-hop siren forwarding, honest delivery feedback states, accelerometer-based immobility detection ("Man Down" Auto-SOS), and audio-haptic alerting.
+This volume provides an exhaustive, method-by-method architectural deep-dive into the emergency SOS life-safety subsystem, the 3-second continuous hold state machine, bounded retries, honest delivery feedback states, accelerometer-based immobility detection ("Man Down" Auto-SOS), and audio-haptic alerting in TeeKum.
 
 ---
 
-## 📑 Included Files
+## 📑 Included Source Files
 
-1. [`TeeKum Prototype/Features/SOS/ViewModels/SOSViewModel.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/ViewModels/SOSViewModel.swift) — Primary ViewModel governing the 3-second trigger, bounded retries, and incoming siren banners.
-2. [`TeeKum Prototype/Features/SOS/Services/SOSForwardingEngine.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Services/SOSForwardingEngine.swift) — Multi-hop route selector (`directPeer`, `knownRoute`, `boundedFlooding`).
-3. [`TeeKum Prototype/Features/SOS/Services/InactivityGuardService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Services/InactivityGuardService.swift) — Accelerometer stillness and screen inactivity monitor with 30-second pre-alarm countdown.
-4. [`TeeKum Prototype/Features/SOS/Services/SOSAudioAlert.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Services/SOSAudioAlert.swift) — Hardware audio chime synthesis and haptic generator.
-5. [`TeeKum Prototype/Features/SOS/Views/SOSButtonView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Views/SOSButtonView.swift) — The prominent red emergency button with continuous circular progress ring.
-6. [`TeeKum Prototype/Features/SOS/Views/IncomingSOSAlertBannerView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Views/IncomingSOSAlertBannerView.swift) — Screen-wide emergency siren banner presenting distance, direction, and dismiss controls.
-7. [`TeeKum Prototype/Features/SOS/Views/RecipientAckBreakdownView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Views/RecipientAckBreakdownView.swift) — Detailed sheet breaking down delivery receipts across all group members.
+1. [`TeeKum Prototype/Features/SOS/ViewModels/SOSViewModel.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/ViewModels/SOSViewModel.swift) (686 lines) — Primary ViewModel governing the 3-second trigger, bounded retries, siren banners, and honest delivery state transitions.
+2. [`TeeKum Prototype/Features/SOS/Services/SOSForwardingEngine.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Services/SOSForwardingEngine.swift) (280 lines) — Multi-hop route selector (`directPeer`, `knownRoute`, `boundedFlooding`).
+3. [`TeeKum Prototype/Features/SOS/Services/InactivityGuardService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Services/InactivityGuardService.swift) (317 lines) — Accelerometer stillness and screen inactivity monitor with 30-second silent warning countdown.
+4. [`TeeKum Prototype/Features/SOS/Services/SOSAudioAlert.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Services/SOSAudioAlert.swift) (59 lines) — Hardware audio chime synthesis and haptic generator.
+5. [`TeeKum Prototype/Features/SOS/Views/SOSButtonView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Views/SOSButtonView.swift) (374 lines) — The prominent red emergency button with continuous circular progress ring.
+6. [`TeeKum Prototype/Features/SOS/Views/IncomingSOSAlertBannerView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Views/IncomingSOSAlertBannerView.swift) (220 lines) — Screen-wide emergency siren banner presenting distance, direction, and dismiss controls.
+7. [`TeeKum Prototype/Features/SOS/Views/RecipientAckBreakdownView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Features/SOS/Views/RecipientAckBreakdownView.swift) (247 lines) — Detailed sheet breaking down delivery receipts across all group members.
 
 ---
 
 # 1. Honest Delivery Feedback: `SOSViewModel.swift`
 
-In life-safety mesh systems, **falsely reassuring the victim** that help is on the way when packets are dropping is dangerous. `SOSViewModel` implements four strictly defined delivery feedback states:
+In life-safety systems, **giving false reassurance** that help is on the way when packets are dropping over the air is dangerous. `SOSViewModel` implements four technical delivery states:
 
 ```
 +-------------------+-------------------------------------------------------------+
 | Delivery State    | Honest Technical Meaning                                    |
 +-------------------+-------------------------------------------------------------+
-| LOCAL_SENDING     | Sealed wire datagram has been queued onto local radio link. |
-| SEARCHING_PEERS   | Dispatched without direct peers; radio actively scanning.   |
+| LOCAL_SENDING     | Sealed 56B packet has been enqueued onto local radio socket.|
+| SEARCHING_PEERS   | Radio has zero direct peers; actively scanning for links.   |
 | RELAY_ACK         | Intermediary stranger relayed the packet (NOT confirmed).   |
 | DELIVERED_TO_FRIEND| Confirmed decrypted and acknowledged on a FRIEND device.    |
 +-------------------+-------------------------------------------------------------+
@@ -33,66 +33,110 @@ In life-safety mesh systems, **falsely reassuring the victim** that help is on t
 
 ---
 
-## 1.1 The 3-Second Hold Gesture & Cancellation
+## 1.1 The 3-Second Hold State Machine
 
-Accidental taps at a music festival must never dispatch emergency sirens to friends' phones. `SOSViewModel` enforces a continuous 3.0-second hold:
+Accidental taps in a crowded concert crowd must never sound emergency sirens on friends' phones:
 
 ```swift
-    public func startHoldPress() {
-        guard deliveryState == .idle || deliveryState == .failed else { return }
+    public func handlePressBegan() {
+        guard deliveryState == .idle || deliveryState == .searchingPeers || deliveryState.isFailed else { return }
+        holdStartTime = dateProvider()
         holdProgress = 0.0
+        deliveryState = .countdown(remainingSeconds: holdThresholdSeconds)
+    }
+    
+    public func updateProgress(elapsedSeconds: Double) {
+        let progress = min(1.0, elapsedSeconds / holdThresholdSeconds)
+        self.holdProgress = progress
+        let remaining = max(0.0, holdThresholdSeconds - elapsedSeconds)
+        self.deliveryState = .countdown(remainingSeconds: remaining)
         
-        holdTask?.cancel()
-        holdTask = Task { @MainActor in
-            let stepInterval: Double = 0.05
-            let totalSteps = Int(holdThresholdSeconds / stepInterval) // 60 steps
-            
-            for step in 1...totalSteps {
-                try? await Task.sleep(nanoseconds: UInt64(stepInterval * 1_000_000_000))
-                guard !Task.isCancelled else { return }
-                holdProgress = Double(step) / Double(totalSteps)
-            }
-            
-            // 3.0 seconds elapsed continuously! Trigger emergency dispatch
-            await triggerSOS(type: currentEmergencyType)
+        if progress >= 1.0 {
+            triggerSOS(emergencyType: currentEmergencyType)
         }
     }
     
-    public func cancelHoldPress() {
-        holdTask?.cancel()
-        holdTask = nil
-        holdProgress = 0.0
+    public func handlePressCancelled() {
+        if case .countdown = deliveryState {
+            holdStartTime = nil
+            holdProgress = 0.0
+            deliveryState = .idle
+        }
     }
 ```
 
-### UX Rationale
-* If the user lifts their finger at 2.8 seconds, `cancelHoldPress()` executes. `holdTask` is cancelled, progress snaps back to 0.0, and **zero radio packets are broadcast**.
+### State Machine Analysis
+* If the user presses the button, `deliveryState` transitions to `.countdown(3.0s)`.
+* Every 50ms, `updateProgress` updates the circular progress trim on `SOSButtonView`.
+* **Early Release Invariant**: If the user lifts their finger at 2.8 seconds, `handlePressCancelled()` immediately cancels the countdown, resets progress to 0.0, and **zero radio packets are broadcast**.
 
 ---
 
-## 1.2 Bypassing Ordinary Intervals
+## 1.2 Bounded Retries & Honest Location Timestamps
 
 ```swift
-    public func triggerSOS(type: SOSType = .general) async {
-        deliveryState = .localSending
-        retryCount = 0
+    public func broadcastSOSWirePacket(eventId: UInt32, emergencyType: SOSType, session: GroupSession) async {
+        guard let cryptoService, let transport else { return }
         
-        let eventId = UInt32.random(in: 1...UInt32.max)
-        self.activeSOSEventId = eventId
+        // Freshest available coordinate without pretending an old fix is new
+        let latestLocation = locationService?.getLatestLocationForSOS()
         
-        // Immediate priority dispatch: Does NOT wait for GPS lock or cadence timers
-        await dispatchSOSWirePacket(eventId: eventId, type: type)
-        startBoundedRetries(eventId: eventId, type: type)
-    }
+        let coordinate: CLLocationCoordinate2D
+        let timestamp: Date
+        let accuracy: UInt8
+        
+        if let latestLocation {
+            coordinate = latestLocation.coordinate
+            timestamp = latestLocation.timestamp // Original hardware GPS measurement time
+            accuracy = latestLocation.rawAccuracyByte
+        } else {
+            coordinate = CLLocationCoordinate2D(latitude: 0, longitude: 0)
+            timestamp = Date(timeIntervalSince1970: 0)
+            accuracy = 255
+        }
 ```
 
-* Emergency SOS packets enter `PriorityOutboxQueue.urgentLane` immediately. They bypass ordinary location ping timers and are given the highest hop limit (`sosHopLimit = 15`).
+### The Truth-in-Telemetry Rule
+* If GPS was lost 2 minutes ago because the user walked into an underground bunker, TeeKum transmits the last known coordinate **with its original 2-minute-old timestamp**.
+* It **never manufactures** a fresh timestamp. Responders see the exact age of the location fix, preventing them from searching the wrong area if the victim was moving.
+
+---
+
+## 1.3 Route Selection: Known Next-Hop vs Bounded Flooding
+
+```swift
+        // Route Selection: Prefer known usable route when available
+        var routeUsed = false
+        if let routingTable = routingTable {
+            let neighbors = await neighborTable?.activeNeighbors() ?? []
+            let connectedPeerIds = Set(neighbors.map(\.id))
+            for neighbor in neighbors where neighbor.isGroupMember {
+                if let route = await routingTable.findRoute(to: neighbor.id),
+                   route.isFresh,
+                   connectedPeerIds.contains(route.nextHopPeerId) {
+                    self.currentRouteChoice = .knownRoute(nextHop: route.nextHopPeerId, hopCount: route.hopCount)
+                    _ = try await meshTransport.sendFrame(wireData, to: route.nextHopPeerId)
+                    routeUsed = true
+                    break
+                }
+            }
+        }
+        
+        if !routeUsed {
+            let directCount = await neighborTable?.activeNeighbors().count ?? 0
+            self.currentRouteChoice = directCount > 0 ? .boundedFlooding(neighborCount: directCount) : .none
+            try await transport.broadcastPacket(wireData)
+        }
+```
+
+* **Tier 1 (Known Route)**: If an active unexpired path exists in `RoutingTable`, unicasts directly along the recorded next-hop (`RouteChoice.knownRoute`).
+* **Tier 2 (Bounded Flooding)**: If routing tables are empty or degraded, falls back to multi-hop flooding across up to 15 hops (`RouteChoice.boundedFlooding`), maximizing the likelihood that nearby festival attendees hear the distress call.
 
 ---
 
 # 2. "Man Down" Inactivity Guard: `InactivityGuardService.swift`
 
-The Inactivity Guard detects if an attendee collapses, becomes unconscious, or falls into a crowd surge without being able to press the SOS button.
+The Inactivity Guard automatically triggers an SOS alert if an attendee collapses or loses consciousness in a remote area:
 
 ```swift
 @Observable
@@ -106,60 +150,42 @@ public final class InactivityGuardService {
 
 ---
 
-## 2.1 Hybrid Sensor Motion Detection
+## 2.1 Accelerometer Stillness Detection Math
 
 ```swift
     private func evaluateMotionSample(acceleration: CMAcceleration) {
-        // Calculate total gravitational magnitude vector
+        // Compute Euclidean magnitude of 3-axis accelerometer vector
         let magnitude = sqrt(
             acceleration.x * acceleration.x +
             acceleration.y * acceleration.y +
             acceleration.z * acceleration.z
         )
         
-        // At rest, magnitude equals 1.0g (Earth gravity)
+        // At rest on Earth, magnitude equals exactly 1.0g (gravity)
         let delta = abs(magnitude - 1.0)
         
         if delta > motionThresholdG { // Default: 0.05g
-            // Movement detected! User is active
+            // Movement detected! User is walking or dancing
             registerActivity()
         }
     }
 ```
 
 ### The 30-Second Silent Warning Countdown
-1. If the device experiences zero motion ($|g - 1.0| < 0.05g$) and zero screen touches for 15 minutes (`inactivityStillnessDuration`), the service enters `.warning(remainingSeconds: 30)`.
-2. **Crucial Invariant**: During this 30-second window, **NO loud sirens sound**. The phone vibrates gently with increasing haptic pulses and displays a prominent *"Are you OK?"* dialog.
-3. If the user picks up their phone, changes position, or taps *"I'm OK"*, the countdown is immediately aborted.
-4. If the countdown reaches 0 seconds without response, `onTriggerSOS?()` automatically broadcasts an emergency alert with `SOSType.inactivity`.
+1. If the device experiences zero motion ($\Delta g < 0.05g$) and zero screen touches for 15 minutes (`inactivityStillnessDuration`), the service transitions to `.warning(remainingSeconds: 30)`.
+2. **The Golden Invariant: NO Loud Sirens**. During this 30-second window, the phone emits gentle haptic pulses and displays a prominent visual banner: *"Are you OK? Tap to cancel"*. This prevents embarrassing loud false alarms if the user fell asleep at a festival campsite.
+3. **Effortless Cancellation**: If the user picks up the phone (triggering $\Delta g > 0.05g$) or taps *"I'm OK"*, the countdown immediately aborts.
+4. If the countdown reaches 0 without response, the service calls `onTriggerSOS?()`, broadcasting an emergency alert with `SOSType.inactivity`.
 
 ---
 
-# 3. Multi-Hop SOS Forwarding: `SOSForwardingEngine.swift`
-
-When an SOS is dispatched, the engine inspects the network topology:
-
-```swift
-public enum RouteChoice: Equatable, Sendable {
-    case directPeer(peerId: String)
-    case knownRoute(nextHop: String, hopCount: UInt8)
-    case boundedFlooding(neighborCount: Int)
-    case none
-}
-```
-
-* If a direct connection to a group friend exists, unicasts directly (`directPeer`).
-* If a multi-hop path was previously learned, forwards along the recorded next-hop (`knownRoute`).
-* If routes are uncertain or broken, defaults to **bounded multi-hop flooding** to all direct radio neighbors, ensuring the emergency reaches someone in range.
-
----
-
-# 4. Audio-Haptic Feedback: `SOSAudioAlert.swift`
+# 3. Audio & Haptic Alerts: `SOSAudioAlert.swift`
 
 ```swift
 public final class DefaultSOSAudioAlerter: SOSAudioAlerting {
     public func triggerEmergencyAlertFeedback() {
         #if os(iOS) && canImport(AudioToolbox)
+        // System Sound 1005: High-priority SMS alert / warning chime
         AudioServicesPlayAlertSound(SystemSoundID(1005))
         AudioServicesPlayAlertSound(kSystemSoundID_Vibrate)
         #endif
@@ -175,7 +201,9 @@ public final class DefaultSOSAudioAlerter: SOSAudioAlerting {
 }
 ```
 
-* Combines high-priority system chimes with `UINotificationFeedbackGenerator(.error)` heavy haptics, alerting the user even inside loud festival environments.
+### Hardware Constraints & Platform Realities
+* **Silent Switch Behavior**: Standard system audio calls (`AudioServicesPlayAlertSound`) respect the iPhone physical mute switch. When muted, `AudioServicesPlayAlertSound(kSystemSoundID_Vibrate)` and `UINotificationFeedbackGenerator(.error)` fire heavy tactile vibrations.
+* Bypassing the hardware mute switch requires Apple's restricted **Critical Alerts** entitlement (`UNAuthorizationOptions.criticalAlert`), which requires special developer licensing from Apple. In offline peer-to-peer operation, heavy haptics guarantee sensory notification even in loud concert environments.
 
 ---
 
