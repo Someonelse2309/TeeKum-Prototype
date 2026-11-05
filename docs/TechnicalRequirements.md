@@ -56,7 +56,7 @@ The system is designed to be completely serverless (*100% serverless*). Devices 
 | **D16 — Integrated On-Device Mesh Debugger & Virtual Simulation Lab** | Native on-device diagnostic and testing suite (`MeshDebuggerView`, `MeshDebuggerViewModel`) featuring 1-tap automated triage health check, live 56-byte packet stream logger and bitfield inspector, packet injection (valid/fault corrupted MAC), and virtual multi-node topology sandbox with real-time link breaking. |
 | **D17 — Phase 3 Festival Group Mesh Chat & 20-Character Text Engine (Approved via /grill-me)** | Serverless, offline group chat channel (`PacketType.chatMessage = 0x07`) broadcast across the multi-hop mesh. Transmits concise messages up to 20 characters encoded directly as standard UTF-8/ASCII bytes (eliminating radix codec complexity and supporting full lowercase, uppercase, numbers, and standard punctuation). The 30-byte encrypted payload is cleanly structured as: 2B Base-27 sender initials + 4B Unix epoch timestamp + 1B text length ($0 \dots 20$) + 20B text content + 3B reserved padding. Transmitted via a dedicated FIFO outbox lane ahead of stranger relays (up to 2 retries, 3s cooldown). Employs individual per-person ACK tracking (`Delivered M/N` friends) utilizing existing `ACKPayload` (Type `0x06`). Embedded as a non-intrusive bottom sheet overlay on `MainMapView` (`ChatSheetView`) with quick-tap festival preset chips above keyboard ("Beer line", "At Main Stage", "Restroom", "Where are you?"). Strictly ephemeral (in-memory only, purged on exit) and auto-suspended at <20% battery (Festival Survival Mode). |
 | **D18 — Phase 3 Peer Facing Direction & Live Map Orientation** | Real-time visualization of peer and local user compass heading on `MainMapView`. Telemetry heading (`0...255` UInt8 on wire) is reconstructed via `LocationPingPayload.headingDegrees` ($0.0^\circ \dots 359.9^\circ$). Friend map annotations feature `DirectionalHeadingIndicator`: a glowing $50^\circ$ translucent vision beam cone (`HeadingVisionCone`) and a crisp directional pointer chevron on the avatar rim rotated to match the friend's physical facing orientation. The friend detail sheet (`FriendDetailView`) renders exact compass bearing and cardinal direction (`180° (S)`). |
-| **D19 — Native Apple Ultra-Wideband (U1/U2) Precision Finding & Token Fragmentation (Approved via /grill-me)** | Native integration of Apple `NearbyInteraction.framework` (`NISession`, `NISessionDelegate`, `NIDiscoveryToken`) for sub-meter directional guidance and centimeter-level distance tracking. Discovery tokens (~297 bytes) are securely fragmented across 25-byte wire chunks in Type `0x08` (`UWBTokenExchangePayload`), authenticated with ChaCha20-Poly1305, and strictly limited to a direct 1-hop link (`uwbHopLimit = 1`). User initiates ranging via an explicit "Start Precision Finding" button in `FinderBeaconView`, triggering an automatic silent background handshake with the target peer. The active session renders an AirTag-style overlay with dynamic 3D directional arrow (`simd_float3` / `horizontalAngle`), live centimeter readout, coaching hints, and rhythmic distance-scaled haptics (`UIImpactFeedbackGenerator`). Gracefully disables and indicates hardware requirements on unsupported devices (e.g. iPhone SE or Simulator). |
+| **D19 — 360° Tactical Radar & Visual Strobe Torch (Decommissioned UWB)** | Replaced fragile Apple Ultra-Wideband (UWB) precision finding with a unified, resilient 360° Tactical Radar (`FinderBeaconView`, `RadarView`). Features dynamic 15m/30m/60m concentric range rings, real-time friend blips, relative distance, and clock-bearing guidance (e.g. `• 5 o'clock`) driven by dual-frequency GPS and device magnetometer heading. Includes the high-visibility neon screen strobe torch to visually locate friends in dense crowds. Hardware UWB (`NearbyInteraction.framework`) was decommissioned due to persistent iOS session suspensions and lack of Angle-of-Arrival directional hardware on base iPhone models. |
 
 ---
 
@@ -72,7 +72,6 @@ This project utilizes **100% Native Apple Frameworks (Zero External Packages / Z
 | **CoreLocation** | Apple Framework | Retrieves GPS coordinates (`CLLocationDegrees` as `Double`), magnetic compass heading, dynamic adaptive accuracy profile | `Services/LocationService.swift` |
 | **CoreMotion** | Apple Framework | Detects physical movement (walking vs stationary) via motion coprocessor to sleep GPS and save ~70% battery | `Services/LocationService.swift` |
 | **CryptoKit** | Apple Framework | Authenticated encryption (ChaCha20-Poly1305 / AES-256-GCM), symmetric key exchange, and tamper verification | `Services/CryptoService.swift` |
-| **NearbyInteraction** | Apple Framework | High-precision relative distance and 3D directional pointing (Ultra-Wideband U1/U2) within a 5–8 meter radius | `Views/FinderBeaconView.swift` |
 | **MapKit** | Apple Framework | Renders venue maps, friend pins, accuracy circles, and rendezvous points using cached offline map data | `Views/MainMapView.swift` |
 | **Tactical Polar Radar** | Native SwiftUI Canvas / Math | Forward-up 60m polar radar disk, range rings (15m, 30m, 60m), 60m perimeter clamping & clock guidance | `Views/Components/Radar/RadarView.swift` |
 | **ActivityKit** | Apple Framework | Presents persistent session status, friend proximity, and interactive communal relay approval on Lock Screen & Dynamic Island | `Views/DiagnosticsView.swift` & Widgets |
@@ -254,22 +253,10 @@ final class LocationSamplingPolicy {
 
 ---
 
-#### NearbyInteraction
+#### NearbyInteraction (Decommissioned)
 
-**What it is:**  
-`NearbyInteraction` leverages Apple's Ultra-Wideband (UWB U1/U2) chip available on iPhone 11 and later. In this application, it solves the *"Last 10 Meters in the Dark"* problem by computing high-precision relative distance and 3D directional vectors (accurate to centimeters) toward a friend's device within an 8-meter radius.
-
-**Setup required:**
-- Add `NSNearbyInteractionUsageDescription` to `Info.plist`.
-- Check device compatibility at runtime via `NISession.isSupported`.
-
-**Methods / functions / classes we use:**
-
-| Method / Function / Class | What it does | How we use it in our app | File |
-| :--- | :--- | :--- | :--- |
-| `NISession` | Coordinates an active Ultra-Wideband distance and direction tracking session. | Activated when a user approaches within ~5–8 meters of a targeted friend. | `FinderBeaconView.swift` |
-| `NIDiscoveryToken` | Ephemeral radio token exchanged between peers to pair a UWB session. | Exchanged over the local peer-to-peer transport to initiate UWB ranging. | `FinderBeaconView.swift` |
-| `session(_:didUpdate:)` | Delegate callback delivering distance (`Float` meters) and direction (`simd_float3`). | Updates the close-range precision radar arrow on the screen. | `FinderBeaconView.swift` |
+**Status:** Decommissioned & Removed  
+**Reason:** Ultra-Wideband (UWB) precision tracking via Apple's `NearbyInteraction.framework` proved fragile in festival environments due to frequent system session suspensions, hardware Angle-of-Arrival direction asymmetry on base iPhone models (which lack AoA antenna arrays), and transceiver stalls. The functionality has been completely transitioned to the resilient 360° Tactical Radar (`FinderBeaconView`, `RadarView`) combining dual-frequency GPS with device magnetometer heading and the high-visibility visual screen strobe torch.
 
 ---
 
@@ -413,7 +400,6 @@ flowchart TD
         NetFramework["Network.framework (AWDL & Wi-Fi Direct: NWListener, NWBrowser, NWConnection)"]
         CoreLocation["CoreLocation (Dual-Frequency L1/L5 GNSS & Magnetometer Heading)"]
         CoreMotion["CoreMotion (CMMotionActivityManager Coprocessor Stationary Sleep)"]
-        NearbyInt["NearbyInteraction (Ultra-Wideband U1/U2 Centimeter Radar)"]
         Keychain["Security.framework (Secure Enclave 256-Bit Symmetric Key Storage)"]
     end
 
@@ -526,7 +512,6 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── MeshProtocols.swift          // Phase 2 multi-hop mesh protocol interfaces, MeshClock & PacketKey
 │   │   ├── MeshTimingConfiguration.swift // Centralized timing configuration for cadence, AODV & stale recovery
 │   │   ├── MeshTopologySimulator.swift  // In-memory virtual mesh simulator (linear & star topologies, fault injection)
-│   │   ├── NearbyInteractionService.swift // Apple NearbyInteraction (NISession), UWB token exchange, AirTag haptics
 │   │   ├── NeighborTable.swift          // Phase 2 neighbor table actor, link RSSI tracking & eviction
 │   │   ├── NotificationService.swift    // System local notifications (UNUserNotificationCenter) & in-app toasts
 │   │   ├── PacketForwarder.swift        // Phase 2 blind zero-knowledge relay actor (8-hop ceiling, AAD invariant)
@@ -551,7 +536,6 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── MeshDebuggerTests.swift      // 10 automated tests: 1-tap triage, 56B packet inspector, injection, sandbox
 │   │   ├── MeshFailureIntegrationTests.swift // 12 automated tests: link breakage, partitions, loops, corruption resync
 │   │   ├── MultiHopSOSTests.swift       // 11 automated tests: Multi-hop flooding, hopCount increment, reverse ACK
-│   │   ├── NearbyInteractionTests.swift // 7 automated tests: UWB token codec, 12-chunk reassembly, 1-hop limit, simulation fallback
 │   │   ├── NeighborDiscoveryTests.swift // 13 automated tests: Bonjour _teekum._tcp peering, TXT relay flag, RSSI
 │   │   ├── PacketCodecTests.swift       // 20 automated tests: 56-byte codec, MemberColor, InitialsCodec, Int32 quantization, bounds
 │   │   ├── PeerTransportTests.swift     // 14 automated tests: 56B framer chunks, outbox priority, tie-breaking
@@ -627,8 +611,7 @@ The automated test harness comprises 18 suites in `TeeKum Prototype/Tests/`, pro
 | **Chat Messaging Engine Tests** | `ChatMessagingEngineTests.swift` | 16 | Phase 3 multi-hop chat engine, 20-byte UTF-8 payload serialization, FIFO outbox, exponential backoff retries, per-recipient ACK delivery states (`sent` $\rightarrow$ `relayed` $\rightarrow$ `delivered`), duplicate message suppression, and unread badge counters. |
 | **Chat UI & Byte Meter Tests** | `ChatUITests.swift` | 11 | Phase 3 docked chat overlay sheet (`ChatSheetView`), message bubbles, preset chips, real-time `ByteMeterView` 20-byte clamp on typing and pasting, and unread badge count tracking. |
 | **Inactivity Guard Tests** | `InactivityGuardTests.swift` | 9 | Opt-in motion stillness watchdog, 180s inactivity trigger, 30-second silent pre-alarm countdown with visual pulse, touch/motion cancellation, manual "I'M OK" button dismissal, auto-SOS dispatch (`SOSType.inactivity`), and friend device alert banner. |
-| **Nearby Interaction Tests** | `NearbyInteractionTests.swift` | 7 | 30-byte UWB token exchange packet wire codec, action codes, malformed length rejection, 12-fragment token chunking and reassembly (~297B discovery token), strict 1-hop limit enforcement (`uwbHopLimit = 1`), `NearbyInteractionService` lifecycle, AirTag-style haptics, and simulation sensor fallback. |
-| **TOTAL** | **18 TEST SUITES** | **220** | **100% PASS RATE ACROSS ALL AUTOMATED SUBSYSTEMS** |
+| **TOTAL** | **17 TEST SUITES** | **213** | **100% PASS RATE ACROSS ALL AUTOMATED SUBSYSTEMS** |
 
 ### 4.2 Test Execution Command & Verification
 

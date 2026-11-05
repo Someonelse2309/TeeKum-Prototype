@@ -328,7 +328,6 @@ flowchart TD
         NetFramework["Network.framework (AWDL & Wi-Fi Direct: NWListener, NWBrowser, NWConnection)"]
         CoreLocation["CoreLocation (Dual-Frequency L1/L5 GNSS & Magnetometer Heading)"]
         CoreMotion["CoreMotion (CMMotionActivityManager Coprocessor Stationary Sleep)"]
-        NearbyInt["NearbyInteraction (Ultra-Wideband U1/U2 Centimeter Radar)"]
         Keychain["Security.framework (Secure Enclave 256-Bit Symmetric Key Storage)"]
     end
 
@@ -420,7 +419,6 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── MeshProtocols.swift          // Phase 2 multi-hop mesh protocol interfaces, MeshClock & PacketKey
 │   │   ├── MeshTimingConfiguration.swift // Centralized timing configuration for cadence, AODV & stale recovery
 │   │   ├── MeshTopologySimulator.swift  // In-memory virtual mesh simulator (linear & star topologies, fault injection)
-│   │   ├── NearbyInteractionService.swift // Apple NearbyInteraction (NISession), UWB token exchange, AirTag haptics
 │   │   ├── NeighborTable.swift          // Phase 2 neighbor table actor, link RSSI tracking & eviction
 │   │   ├── NotificationService.swift    // System local notifications (UNUserNotificationCenter) & in-app toasts
 │   │   ├── PacketForwarder.swift        // Phase 2 blind zero-knowledge relay actor (8-hop ceiling, AAD invariant)
@@ -445,7 +443,6 @@ TeeKum Prototype/ (Root Repository)
 │   │   ├── MeshDebuggerTests.swift      // 10 automated tests: 1-tap triage, 56B packet inspector, injection, sandbox
 │   │   ├── MeshFailureIntegrationTests.swift // 12 automated tests: link breakage, partitions, loops, corruption resync
 │   │   ├── MultiHopSOSTests.swift       // 11 automated tests: Multi-hop flooding, hopCount increment, reverse ACK
-│   │   ├── NearbyInteractionTests.swift // 7 automated tests: UWB token codec, 12-chunk reassembly, 1-hop limit, simulation fallback
 │   │   ├── NeighborDiscoveryTests.swift // 13 automated tests: Bonjour _teekum._tcp peering, TXT relay flag, RSSI
 │   │   ├── PacketCodecTests.swift       // 20 automated tests: 56-byte codec, MemberColor, InitialsCodec, Int32 quantization, bounds
 │   │   ├── PeerTransportTests.swift     // 14 automated tests: 56B framer chunks, outbox priority, tie-breaking
@@ -1198,7 +1195,7 @@ All developers and AI coding agents writing Swift code for TeeKum must strictly 
 - **Thread-Safe State Bridging:** Use `AsyncStream` or `@MainActor` callbacks to publish updates from actors to view models. Avoid synchronous dispatch locks (`NSLock`, `DispatchQueue.sync`) inside actors.
 
 ### 17.2 Swift Language & Safety Rules
-- **Zero External Dependencies:** Only import official Apple SDK frameworks (`Network`, `CoreLocation`, `CoreMotion`, `CryptoKit`, `NearbyInteraction`, `MapKit`, `ActivityKit`, `AVFoundation`, `SwiftUI`). No SPM or CocoaPods.
+- **Zero External Dependencies:** Only import official Apple SDK frameworks (`Network`, `CoreLocation`, `CoreMotion`, `CryptoKit`, `MapKit`, `ActivityKit`, `AVFoundation`, `SwiftUI`). No SPM or CocoaPods.
 - **Zero Force-Unwraps:** Force-unwrapping (`!`), forced casting (`as!`), and `try!` are strictly prohibited in production application code. Use `guard let`, `if let`, or default coalescing (`??`).
 - **Immutability First:** Declare properties with `let` by default. Use `var` only when mutation is necessary.
 - **Explicit Access Control:** Use `public`, `package`, `internal`, or `private` deliberately. Value models and codecs are value types (`struct` or `enum`).

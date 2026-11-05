@@ -66,7 +66,6 @@ graph LR
             T8["CoreLocation"]
             T9["CoreMotion"]
             T10["MapKit"]
-            T11["NearbyInteraction"]
             T12["simd"]
         end
         subgraph UserExpSafety ["System Services & Safety"]
@@ -291,22 +290,12 @@ graph LR
 
 ---
 
-### 2.10 NearbyInteraction
+### 2.10 NearbyInteraction (Decommissioned)
 
-1. **What it is used for:**  
-   Ultra-Wideband (UWB) spatial precision finding, delivering centimeter-accurate distance and 3D relative bearing between compatible devices equipped with Apple U1 or U2 chips (iPhone 11 or newer) `[VERIFIED]`.
-2. **Which part of the application uses it:**  
-   Precision finding modal overlay ([`PrecisionFindingOverlay.swift`](../../TeeKum%20Prototype/Views/Components/Radar/PrecisionFindingOverlay.swift)) launched from [`FinderBeaconView.swift`](../../TeeKum%20Prototype/Views/FinderBeaconView.swift), managed by [`NearbyInteractionService.swift`](../../TeeKum%20Prototype/Services/NearbyInteractionService.swift) `[VERIFIED]`.
-3. **Important implementation details:**  
-   - **Out-of-Band Token Exchange via 56-Byte Mesh Wire:** Apple's `NIDiscoveryToken` is ~100 bytes, exceeding the 30-byte packet payload limit. TeeKum serializes discovery tokens into 4 chunked datagrams of type `UWBTokenExchangePayload` (`Type 0x08`), allowing peers to initiate `NISession` over the mesh without Bluetooth or cellular signaling `[VERIFIED]`.
-   - **Centimeter Ranging & 3D Directional Vector:** Operates within a 6–8 meter line-of-sight radius, presenting an AirTag-style directional arrow with haptic pulses `[VERIFIED]`.
-   - **Sensor-Assisted Software Fallback:** If the device lacks an Apple UWB chip (e.g. iPhone SE, iPad, or Simulator), the service automatically activates a sensor-assisted fallback that calculates relative bearing via compass heading and distance via GPS coordinate delta (`LocationPin.bearing(to:)`) `[VERIFIED]`.
-4. **Relevant source files:**  
-   - [`TeeKum Prototype/Services/NearbyInteractionService.swift`](../../TeeKum%20Prototype/Services/NearbyInteractionService.swift)
-   - [`TeeKum Prototype/Views/Components/Radar/PrecisionFindingOverlay.swift`](../../TeeKum%20Prototype/Views/Components/Radar/PrecisionFindingOverlay.swift)
-   - [`TeeKum Prototype/Models/Packet.swift`](../../TeeKum%20Prototype/Models/Packet.swift) (`UWBTokenExchangePayload`)
-5. **Implementation Status:**  
-   **IMPLEMENTED & VERIFIED** `[VERIFIED]`.
+1. **Status:**  
+   **DECOMMISSIONED & REMOVED** `[VERIFIED]`.
+2. **Decommissioning Rationale:**  
+   Apple Ultra-Wideband (U1/U2) precision tracking via `NISession` demonstrated persistent OS-level session suspensions and direction vector asymmetry on base iPhone models (which lack hardware Angle-of-Arrival antenna arrays). The feature was removed and its functionality consolidated into the resilient 360° Tactical Radar (`FinderBeaconView`, `RadarView`).
 
 ---
 
@@ -480,13 +469,12 @@ graph LR
 | **CoreMotion** | Activity Sleep & Immobility Watchdog | `Services/LocationService.swift`, `InactivityGuardService.swift` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
 | **CryptoKit** | ChaCha20-Poly1305 AEAD & Nonces | `Services/CryptoService.swift`, `Models/Packet.swift` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
 | **MapKit** | Offline Venue Map & Vision Cones | `Views/MainMapView.swift`, `ViewModels/MapViewModel.swift` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
-| **NearbyInteraction** | U1/U2 Centimeter Precision Finding | `Services/NearbyInteractionService.swift`, `PrecisionFindingOverlay.swift` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
+| **Tactical Polar Radar** | 360° Multi-Peer Polar Radar & Strobe | `Views/FinderBeaconView.swift`, `Views/Components/Radar/` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
 | **WatchConnectivity** | Tethered Apple Watch Companion | Documented in `TechnicalRequirements.md` (D10) | **PLANNED** `[PLANNED]` |
 | **ActivityKit** | Live Activities & Dynamic Island | `Services/LiveActivityManager.swift`, `TeeKumWidgets/` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
 | **SQLite3 (libsqlite3)** | Ephemeral Crash-Recovery Store | Documented in Phase 1 POC Plan; Purged in Cleanup | **UNUSED / ABANDONED** `[UNUSED / ABANDONED]` |
-| **XCTest** | Automated Regression Test Suites | `TeeKum Prototype/Tests/` (18 Test Suites) | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
+| **XCTest** | Automated Regression Test Suites | `TeeKum Prototype/Tests/` (17 Test Suites) | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
 | **Security.framework** | Hardware Keychain & CSPRNG | `Services/CryptoService.swift`, `GroupSessionViewModel.swift` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
-| **simd** | 3D Spatial Vector Mathematics | `Services/NearbyInteractionService.swift` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
 | **AudioToolbox** | High-Intensity SOS Siren Audio | `Services/SOSAudioAlert.swift` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
 | **AVFoundation** | Offline QR Camera Scanner | `Views/Components/QRScannerView.swift` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |
 | **UserNotifications** | Floating In-App Banner Toasts | `Services/NotificationService.swift` | **IMPLEMENTED & VERIFIED** `[VERIFIED]` |

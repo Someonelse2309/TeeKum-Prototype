@@ -492,6 +492,7 @@ public struct DiagnosticsView: View {
                                 .font(.caption.monospaced())
                                 .foregroundStyle(chatSummary.contains("PASSED") ? .green : .red)
                         }
+                        
                     }
                 }
                 .scrollContentBackground(.hidden)

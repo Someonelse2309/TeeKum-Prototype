@@ -34,7 +34,6 @@ public struct MainMapView: View {
     @State private var isShowingRelaySettings: Bool = false
     @State private var isShowingColorPicker: Bool = false
     @State private var radarInitialMember: Member? = nil
-    @State private var radarAutoStartPrecisionFinding: Bool = false
     @State private var relayState: RelayPolicyState?
     @State private var mapCameraPosition: MapCameraPosition = .automatic
     @State private var hasInitialZoomedToUser: Bool = false
@@ -201,13 +200,6 @@ public struct MainMapView: View {
                 userLocation: mapViewModel.userLocation,
                 onStartNavigation: {
                     radarInitialMember = member
-                    radarAutoStartPrecisionFinding = false
-                    mapViewModel.selectedMember = nil
-                    isShowingNavigationBeacon = true
-                },
-                onStartPrecisionFinding: {
-                    radarInitialMember = member
-                    radarAutoStartPrecisionFinding = true
                     mapViewModel.selectedMember = nil
                     isShowingNavigationBeacon = true
                 },
@@ -238,10 +230,8 @@ public struct MainMapView: View {
                 userColor: sessionViewModel.localColor.swiftUIColor,
                 session: sessionViewModel.activeSession,
                 peerTransport: peerTransport,
-                autoStartPrecisionFinding: radarAutoStartPrecisionFinding,
                 onDismiss: {
                     radarInitialMember = nil
-                    radarAutoStartPrecisionFinding = false
                     isShowingNavigationBeacon = false
                 }
             )
@@ -560,7 +550,6 @@ public struct MainMapView: View {
             // Festival Tactical Radar Button (Glowing Cyan)
             Button {
                 radarInitialMember = nil
-                radarAutoStartPrecisionFinding = false
                 isShowingNavigationBeacon = true
             } label: {
                 Image(systemName: "dot.radiowaves.left.and.right")

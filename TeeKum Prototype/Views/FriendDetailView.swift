@@ -15,7 +15,6 @@ public struct FriendDetailView: View {
     public let member: Member
     public let userLocation: LocationPin?
     public let onStartNavigation: () -> Void
-    public var onStartPrecisionFinding: (() -> Void)? = nil
     public let onDismiss: () -> Void
     
     @State private var currentTime: Date = Date()
@@ -24,13 +23,11 @@ public struct FriendDetailView: View {
         member: Member,
         userLocation: LocationPin? = nil,
         onStartNavigation: @escaping () -> Void,
-        onStartPrecisionFinding: (() -> Void)? = nil,
         onDismiss: @escaping () -> Void
     ) {
         self.member = member
         self.userLocation = userLocation
         self.onStartNavigation = onStartNavigation
-        self.onStartPrecisionFinding = onStartPrecisionFinding
         self.onDismiss = onDismiss
     }
     
@@ -313,22 +310,6 @@ public struct FriendDetailView: View {
             }
             .accessibilityLabel("Track \(member.name) in Tactical Radar")
             .accessibilityHint("Opens 360 degree tactical radar and crowd finding beacon.")
-            
-            if let onStartPrecisionFinding = onStartPrecisionFinding {
-                Button {
-                    onStartPrecisionFinding()
-                } label: {
-                    Label("Precision Finding (UWB)", systemImage: "dot.radiowaves.left.and.right")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.cyan)
-                        .foregroundStyle(.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                .accessibilityLabel("Precision Finding for \(member.name)")
-                .accessibilityHint("Opens directional arrow and distance guidance towards \(member.name).")
-            }
         }
         .padding()
         .background(Color(white: 0.1))

@@ -60,8 +60,8 @@ In compliance with project architectural principles, capabilities are classified
 | **23** | **Preset Quick Chips & Byte Meter** | Phase 3 | `IMPLEMENTED` | [`PresetChipsView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Views/Components/PresetChipsView.swift) | `ChatUITests.swift` |
 | **24** | **ACK & Delivery States** | Phase 3 | `IMPLEMENTED` | [`ChatMessageEngine.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Services/ChatMessageEngine.swift) | `ChatMessagingEngineTests.swift`, `SOSEndToEndTests.swift` |
 | **25** | **Inactivity Guard ("Man Down")** | Phase 3 | `IMPLEMENTED` | [`InactivityGuardService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Services/InactivityGuardService.swift) | `InactivityGuardTests.swift` |
-| **26** | **UWB Precision Finding (U1/U2)** | Phase 3 | `IMPLEMENTED` | [`NearbyInteractionService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Services/NearbyInteractionService.swift) | `NearbyInteractionTests.swift` |
-| **27** | **Sensor Simulation Fallback** | Phase 3 | `IMPLEMENTED` | [`NearbyInteractionService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Services/NearbyInteractionService.swift) | `NearbyInteractionTests.swift` |
+| **26** | **UWB Precision Finding (U1/U2)** | Phase 3 | `DECOMMISSIONED` | Decommissioned due to hardware session instability; replaced by 360° Tactical Radar | Purged |
+| **27** | **Tactical Radar Friend Tracking** | Phase 3 | `IMPLEMENTED` | [`FinderBeaconView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Views/FinderBeaconView.swift) | `UIStateTests.swift` |
 | **28** | **Finder Beacon (Screen & Torch)** | Phase 3 | `IMPLEMENTED` | [`FinderBeaconView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Views/FinderBeaconView.swift) | `UIStateTests.swift` |
 | **29** | **Apple Watch Companion App** | Phase 3 / Phase 4 | `PLANNED` | [`TechnicalRequirements.md`](file:///Users/nicho/Developer/TeeKum%20Prototype/docs/TechnicalRequirements.md) (D10) | *Target Not Yet Added to Xcode Project* |
 | **30** | **Altitude & Multi-Floor Support** | Phase 3 / Phase 4 | `PLANNED` | [`Packet.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Models/Packet.swift#L372-L446) | `PacketCodecTests.swift` (Wire Padding) |
@@ -622,38 +622,21 @@ flowchart TD
 
 ---
 
-#### 26. Apple U1/U2 Nearby Interaction (Precision Finding)
-- **Purpose:** Provides centimeter-grade spatial finding (< 8m) using Apple U1/U2 Ultra-Wideband silicon with 3D directional guidance arrows and proximity haptics.
-- **Current Implementation Status:** `IMPLEMENTED`
-- **Relevant Source Files:**
-  - [`NearbyInteractionService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Services/NearbyInteractionService.swift#L25-L310)
-  - [`PrecisionFindingOverlay.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Views/Components/Radar/PrecisionFindingOverlay.swift#L15-L210)
-  - [`Packet.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Models/Packet.swift#L1074-L1147) (`UWBTokenExchangePayload` Type `0x08`)
-- **Dependencies:** `NearbyInteraction` (`NISession`, `NIDiscoveryToken`), `simd`, `AudioToolbox`, `CoreHaptics`, `Network.framework`.
-- **Important Implementation Details:**
-  - Exchanges serialized `NIDiscoveryToken` out-of-band over 56-byte Type `0x08` datagrams.
-  - Chunks tokens across up to 12 fragments (25 bytes per fragment) with byte-perfect reassembly.
-  - Strictly limits UWB token packets to direct 1-hop delivery (`hopLimit = 1`).
-  - Renders AirTag-style directional arrow pointing precisely toward the target peer, with real-time distance readouts in meters/centimeters and arrival state (< 0.8m).
-- **Known Limitations:** Requires iPhone 11 or newer (excluding iPhone SE) with U1/U2 silicon. Line of sight can be obstructed by dense human bodies.
-- **Tests Available:** [`NearbyInteractionTests.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Tests/NearbyInteractionTests.swift#L20-L185) (Tests 1–6).
-- **Remaining Work:** None for core UWB driver and UI.
+#### 26. Apple U1/U2 Nearby Interaction (Precision Finding) — DECOMMISSIONED
+- **Purpose:** Previously provided centimeter-grade spatial finding (< 8m) using Apple U1/U2 Ultra-Wideband silicon with 3D directional guidance arrows.
+- **Current Implementation Status:** `DECOMMISSIONED`
+- **Decommissioning Rationale:** Real-world multi-device testing revealed persistent iOS system session suspensions, hardware Angle-of-Arrival (AoA) antenna asymmetry across iPhone models, and transceiver stalls in festival crowd environments. The feature was cleanly removed and replaced by the resilient 360° Tactical Radar.
 
 ---
 
-#### 27. Sensor Simulation Fallback for Precision Finding
-- **Purpose:** Automatically provides directional guidance and distance estimation on hardware lacking U1/U2 silicon or when running in the iOS Simulator.
+#### 27. Tactical Polar Radar & Friend Tracking
+- **Purpose:** Real-time 360° relative tracking for all group members on a dynamic 15m/30m/60m polar radar disk with clock-bearing orientation and distance estimation.
 - **Current Implementation Status:** `IMPLEMENTED`
 - **Relevant Source Files:**
-  - [`NearbyInteractionService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Services/NearbyInteractionService.swift#L190-L280)
-- **Dependencies:** `CoreLocation` (GPS delta & compass heading), `SwiftUI`.
-- **Important Implementation Details:**
-  - Checks `NISession.isSupported`. If false or simulation mode active, boots fallback loop.
-  - Derives relative distance from GPS coordinates and relative yaw angle from difference between forward compass heading and bearing to target.
-  - Seamlessly drives identical UI components in [`PrecisionFindingOverlay.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Views/Components/Radar/PrecisionFindingOverlay.swift).
-- **Known Limitations:** Simulation accuracy is limited to GPS resolution (±3–5m) rather than true UWB centimeter precision.
-- **Tests Available:** [`NearbyInteractionTests.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Tests/NearbyInteractionTests.swift#L145-L185) (Test 7).
-- **Remaining Work:** None.
+  - [`FinderBeaconView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Views/FinderBeaconView.swift)
+  - [`RadarView.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Views/Components/Radar/RadarView.swift)
+- **Dependencies:** `CoreLocation` (Dual-frequency GPS coordinates & magnetometer heading), `SwiftUI`.
+- **Tests Available:** `UIStateTests.swift`.
 
 ---
 

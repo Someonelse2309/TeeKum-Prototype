@@ -250,21 +250,12 @@ struct TeeKumApp: App {
                     fflush(stdout)
                     _ = await InactivityGuardTests.runAllTests()
                     fflush(stdout)
-                    _ = await NearbyInteractionTests.runAllTests()
-                    fflush(stdout)
                     print(">>> ALL AUTOMATED TEST RUNS FINISHED <<<")
                     fflush(stdout)
                     if shouldExit {
                         exit(0)
                     }
                 } else {
-                    if args.contains("-runNearbyInteractionTests") || envRunner == "nearby" {
-                        _ = await NearbyInteractionTests.runAllTests()
-                        fflush(stdout)
-                        if shouldExit {
-                            exit(0)
-                        }
-                    }
                     if args.contains("-runInactivityTests") || envRunner == "inactivity" {
                         _ = await InactivityGuardTests.runAllTests()
                         fflush(stdout)
@@ -701,22 +692,6 @@ struct TeeKumApp: App {
                 }
             }
             await relayMeshPacketIfNeeded(inbound, for: session)
-            
-        case .uwbTokenExchange:
-            let symKey = SymmetricKey(data: session.symmetricKeyData)
-            if let decrypted = try? await cryptoService.open(
-                ciphertext: inbound.rawPacket.ciphertext,
-                envelope: inbound.rawPacket.envelope,
-                authTag: inbound.rawPacket.authTag,
-                using: symKey
-            ), let payload = try? UWBTokenExchangePayload.deserialize(from: decrypted) {
-                await NearbyInteractionService.shared.handleInboundUWBPayload(
-                    payload,
-                    fromPeerId: inbound.sourcePeerId,
-                    session: session,
-                    transport: peerTransport
-                )
-            }
             
         default:
             break
