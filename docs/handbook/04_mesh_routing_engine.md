@@ -1,51 +1,61 @@
-# TeeKum Code Handbook — Volume 04: Mesh Routing Engine
+# TeeKum Code Handbook — Volume 04: Mesh Routing Engine (Definitive Deep-Dive)
 
-This volume provides an exhaustive, code-block by code-block analysis of TeeKum's Ad-hoc On-Demand Distance Vector (AODV) routing, multi-hop packet forwarding, zero-knowledge blind relaying, duplicate suppression caches, and battery-aware relay policy managers.
-
----
-
-## 📑 Included Files
-
-1. [`TeeKum Prototype/Core/Mesh/PacketForwarder.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/PacketForwarder.swift) — Main multi-hop packet evaluation, zero-knowledge blind relay, and forwarding pipeline.
-2. [`TeeKum Prototype/Core/Mesh/SeenPacketCache.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/SeenPacketCache.swift) — Bounded 1,024-entry LRU duplicate packet suppression cache.
-3. [`TeeKum Prototype/Core/Mesh/ForwardingRateLimiter.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/ForwardingRateLimiter.swift) — Dual-lane token bucket rate limiter (2 pkts/s ordinary, 4 pkts/s SOS).
-4. [`TeeKum Prototype/Core/Mesh/RoutingTable.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/RoutingTable.swift) — Forward and reverse next-hop routing tables.
-5. [`TeeKum Prototype/Core/Mesh/RouteDiscoveryService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/RouteDiscoveryService.swift) — Reactive AODV route discovery engine (`ROUTE_REQ` / `ROUTE_RESP`).
-6. [`TeeKum Prototype/Core/Mesh/NeighborTable.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/NeighborTable.swift) — 1-hop radio neighbor health and packet loss tracker.
-7. [`TeeKum Prototype/Core/Mesh/RelayPolicyManager.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/RelayPolicyManager.swift) — Communal mesh participation modes, 20% battery cutoff, and telemetry.
-8. [`TeeKum Prototype/Core/Mesh/MeshTimingConfiguration.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/MeshTimingConfiguration.swift) — Mesh intervals, TTLs, and thresholds.
-9. [`TeeKum Prototype/Core/Mesh/MeshProtocols.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/MeshProtocols.swift) — Abstract interfaces for mesh dependency injection.
+This volume provides an exhaustive, method-by-method architectural deep-dive into Ad-hoc On-Demand Distance Vector (AODV) routing, multi-hop blind packet forwarding, zero-knowledge stranger relaying, token bucket traffic shaping, and duplicate packet suppression in TeeKum.
 
 ---
 
-# 1. Multi-Hop Forwarding Pipeline: `PacketForwarder.swift`
+## 📑 Included Source Files
 
-```mermaid
-flowchart TD
-    InboundPacket["Inbound 56-Byte Wire Packet"] --> Step1["1. Wire Bounds & Magic Header Check"]
-    Step1 -->|Fail| DropMalformed["Drop: Malformed"]
-    Step1 -->|Pass| Step2["2. Hop Limit Enforcement (hopCount < hopLimit)"]
-    Step2 -->|Fail| DropHop["Drop: Hop Limit Exceeded"]
-    Step2 -->|Pass| Step3["3. SeenPacketCache.isDuplicateAndRecord()"]
-    Step3 -->|Seen| DropDup["Drop: Duplicate Suppression"]
-    Step3 -->|Fresh| Step4{"4. Matches Local Session ID?"}
-    
-    Step4 -->|Yes| Step5["5. Authenticate Poly1305 MAC with Group Key"]
-    Step5 -->|Valid| DeliverLocal["Deliver Locally to UI Engines"]
-    Step5 -->|Invalid| DropSec["Drop: Security Verification Failed"]
-    
-    Step4 -->|No: Stranger Relay| Step6{"6. Relay Policy & Battery > 20%?"}
-    Step6 -->|No| DropPolicy["Drop: Policy / Battery Cutoff"]
-    Step6 -->|Yes| Step7{"7. Token Bucket Budget Available?"}
-    Step7 -->|No| DropRate["Drop: Rate Limit Exceeded"]
-    Step7 -->|Yes| Step8["8. Mutate Byte 2 (hopCount += 1)"]
-    Step8 --> Step9["9. Resolve Next Hops (NeighborTable / RoutingTable)"]
-    Step9 --> ForwardOut["Broadcast to Next-Hop Neighbors"]
+1. [`TeeKum Prototype/Core/Mesh/PacketForwarder.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/PacketForwarder.swift) (354 lines) — Authoritative multi-hop packet forwarder, blind relay gate, and wire mutation engine.
+2. [`TeeKum Prototype/Core/Mesh/RouteDiscoveryService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/RouteDiscoveryService.swift) (675 lines) — Reactive AODV route discovery supervisor (`ROUTE_REQ` / `ROUTE_RESP`), in-flight coalescer, and loop detector.
+3. [`TeeKum Prototype/Core/Mesh/RoutingTable.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/RoutingTable.swift) (312 lines) — Forward routing table (64 entries, 30–60s TTL) and reverse return paths (128 entries, 15s TTL).
+4. [`TeeKum Prototype/Core/Mesh/SeenPacketCache.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/SeenPacketCache.swift) (174 lines) — Bounded 1,024-entry LRU duplicate packet suppression cache with 300s sliding window.
+5. [`TeeKum Prototype/Core/Mesh/ForwardingRateLimiter.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/ForwardingRateLimiter.swift) (120 lines) — Dual-lane token bucket traffic shaper (2 pkts/s ordinary, 4 pkts/s SOS).
+6. [`TeeKum Prototype/Core/Mesh/NeighborTable.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/NeighborTable.swift) (386 lines) — 1-hop physical neighbor registry, link health metrics, and packet loss ratio calculation.
+7. [`TeeKum Prototype/Core/Mesh/RelayPolicyManager.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/RelayPolicyManager.swift) (313 lines) — Communal mesh participation modes, 20% battery cutoff, and zero-knowledge telemetry counters.
+8. [`TeeKum Prototype/Core/Mesh/MeshTimingConfiguration.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/MeshTimingConfiguration.swift) (130 lines) — Timing constants, intervals, and hop bounds.
+9. [`TeeKum Prototype/Core/Mesh/MeshProtocols.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Mesh/MeshProtocols.swift) (110 lines) — Dependency injection protocol interfaces.
+
+---
+
+# 1. Hybrid Mesh Architecture: Controlled Flooding vs Reactive AODV
+
+TeeKum utilizes a **hybrid routing architecture** tailored for high-density, dynamic festival crowds:
+
+```
++-----------------------------------+-----------------------------------+
+| Packet Type                       | Routing Strategy                  |
++-----------------------------------+-----------------------------------+
+| Emergency SOS (Type 0x02)         | Controlled Bounded Flooding (15H) |
+| Meeting Point Updates (Type 0x03) | Controlled Bounded Flooding (15H) |
+| Location Pings (Type 0x01)        | Bounded Flooding (8 Hops)         |
+| Chat Messages (Type 0x07)         | Unicast AODV Next-Hop Route (8H)  |
+| Delivery ACKs (Type 0x06)         | Unicast AODV Reverse Path (8 Hops)|
++-----------------------------------+-----------------------------------+
+```
+
+* **Controlled Flooding**: Packets are broadcast to all direct 1-hop neighbors (except the node that sent it). Every node records the packet's canonical key in its `SeenPacketCache`. Duplicate echoes arriving over different paths are instantly dropped.
+* **Reactive AODV (Ad-hoc On-Demand Distance Vector)**: For high-frequency unicast traffic (chat messages), flooding the entire festival is too bandwidth-intensive. TeeKum initiates an on-demand route query (`ROUTE_REQ`), discovers the shortest next-hop path, and caches it in `RoutingTable`.
+
+---
+
+# 2. Main Forwarding Pipeline: `PacketForwarder.swift`
+
+```swift
+public actor PacketForwarder: PacketForwarding {
+    private let routingTable: RoutingTableManaging
+    private let rateLimiter: ForwardingBudgetManaging
+    private let neighborTable: NeighborManaging
+    private let seenPacketCache: SeenPacketCache
+    private let clock: MeshClock
+    private let cryptoService: CryptoServiceProvider?
+    private let sessionProvider: (@Sendable () -> GroupSession?)?
+    private let policyManager: RelayPolicyManaging?
 ```
 
 ---
 
-## 1.1 Inbound Evaluation & Header Validation
+## 2.1 The 7-Stage Forwarding Evaluation Pipeline
 
 ```swift
     public func evaluateInboundPacket(
@@ -54,7 +64,7 @@ flowchart TD
     ) async -> ForwardingDecision {
         totalEvaluatedCount += 1
         
-        // 1. Strict Size & Wire Integrity Verification
+        // Stage 1: Strict Size & Wire Integrity Verification
         guard wireData.count == PacketConstants.wirePacketSize else {
             totalDroppedMalformedCount += 1
             return .dropMalformed
@@ -66,38 +76,27 @@ flowchart TD
             totalDroppedMalformedCount += 1
             return .dropMalformed
         }
-        
         guard let packetType = PacketType(rawValue: byte0 & 0x0F) else {
             totalDroppedMalformedCount += 1
             return .dropMalformed
         }
-        
-        let hopLimit = wireData[wireData.startIndex + 1]
-        let hopCount = wireData[wireData.startIndex + 2]
 ```
 
-### Line-by-Line Breakdown
-* `guard wireData.count == PacketConstants.wirePacketSize`: Enforces the 56-byte wire invariant. Any runt packet or oversized buffer is immediately rejected.
-* `let version = (byte0 >> 4) & 0x0F`: Reads high 4 bits. If `version != 0x03`, drops to prevent protocol version confusion.
-* `let hopCount = wireData[wireData.startIndex + 2]`: Extracts the current hop counter without parsing the ciphertext or allocating memory.
-
----
-
-## 1.2 Type-Specific Hop Limits & Loop Prevention
+### Stage 1: Fast Wire Verification
+* Slices Byte 0. If `version != 0x03` or `packetType` is unrecognized, drops immediately without allocating memory or running cryptographic operations.
 
 ```swift
+        // Stage 2: Type-Specific Hop Limit Enforcement
+        let hopLimit = wireData[wireData.startIndex + 1]
+        let hopCount = wireData[wireData.startIndex + 2]
+        
         let effectiveLimit: UInt8
         switch packetType {
-        case .sos:
-            effectiveLimit = PacketConstants.sosHopLimit           // 15 hops
-        case .meetingUpdate:
-            effectiveLimit = PacketConstants.meetingPointHopLimit  // 15 hops
-        case .chatMessage, .ack:
-            effectiveLimit = PacketConstants.chatHopLimit          // 8 hops
-        case .uwbTokenExchange:
-            effectiveLimit = PacketConstants.uwbHopLimit           // 1 hop
-        default:
-            effectiveLimit = PacketConstants.defaultHopLimit       // 8 hops
+        case .sos:              effectiveLimit = PacketConstants.sosHopLimit          // 15
+        case .meetingUpdate:    effectiveLimit = PacketConstants.meetingPointHopLimit // 15
+        case .chatMessage, .ack:effectiveLimit = PacketConstants.chatHopLimit         // 8
+        case .uwbTokenExchange: effectiveLimit = PacketConstants.uwbHopLimit          // 1
+        default:                effectiveLimit = PacketConstants.defaultHopLimit      // 8
         }
         
         guard hopCount < effectiveLimit else {
@@ -106,137 +105,227 @@ flowchart TD
         }
 ```
 
-### Engineering Rationale
-* **Emergency Priority**: SOS alerts and Meeting Point broadcasts are allocated up to 15 hops, covering several square kilometers across large festival grounds.
-* **Airtime Conservation**: Routine location pings and text messages are capped at 8 hops to prevent radio airtime saturation.
-* **Strict 1-Hop Proximity**: Ultra-Wideband (UWB) token exchanges must never be forwarded (`uwbHopLimit = 1`).
-
----
-
-## 1.3 Zero-Knowledge Blind Relaying & Battery Cutoff
+### Stage 2: Clamping & Hop Limit Defense
+* Clamps hop limit to the strict architectural maximum for that packet type (`effectiveLimit`).
+* Prevents malicious or buggy nodes from injecting packets with `hopLimit = 255` to induce perpetual routing loops.
 
 ```swift
-        // 4. Stranger Packet Relaying: Opt-In & Battery Policy Gate
-        let policyState: RelayPolicyState
-        if let pm = policyManager {
-            policyState = await pm.currentState()
-        } else if let provider = policyProvider {
-            policyState = provider()
-        } else {
-            policyState = RelayPolicyState(mode: .communalRelayActive)
+        // Stage 3: Duplicate Suppression Cache
+        let rawPacket = try RawWirePacket.fromWireData(wireData)
+        let packetKey = PacketKey(wirePacket: rawPacket)
+        let isDuplicate = await seenPacketCache.isDuplicateAndRecord(packetKey, now: clock.now())
+        if isDuplicate {
+            totalDroppedDuplicatesCount += 1
+            return .dropDuplicate
         }
-        
-        let now = clock.now()
-        guard policyState.isPermitted(at: now) else {
-            totalDroppedPolicyCount += 1
-            if policyState.batteryLevel < 0.20 || policyState.isLowPowerModeActive {
-                totalDroppedBatteryCount += 1
+```
+
+### Stage 3: Canonical Key Deduplication
+* Extracts the 7-byte canonical `PacketKey`:
+  $$\mathtt{PacketKey} = (\mathtt{sessionId}, \mathtt{sequenceNumber}, \mathtt{type})$$
+* **Notice**: `hopCount` is intentionally excluded from `PacketKey`! If node A broadcasts a packet at hop 0, and node B relays it at hop 1, both packets share the same `PacketKey`. When node A hears its own packet echoed back from node B, node A recognizes it as a duplicate and drops it.
+
+```swift
+        // Stage 4: Local Group Session Matching
+        let localSession = sessionProvider?()
+        if let session = localSession, rawPacket.envelope.sessionId == session.sessionId {
+            // Addressed to our group! Decrypt and authenticate Poly1305 MAC tag
+            guard let crypto = cryptoService else { return .dropSecurityVerificationFailed }
+            let key = SymmetricKey(data: session.symmetricKeyData)
+            do {
+                let decrypted = try await crypto.open(
+                    ciphertext: rawPacket.ciphertext,
+                    envelope: rawPacket.envelope,
+                    authTag: rawPacket.authTag,
+                    using: key
+                )
+                totalLocallyDeliveredCount += 1
+                return .deliverLocally
+            } catch {
+                return .dropSecurityVerificationFailed
             }
+        }
+```
+
+### Stage 4: Local Group Acceptance
+* If `sessionId == session.sessionId`, the packet belongs to our festival friends.
+* Verifies the 16-byte Poly1305 MAC tag. If authentication succeeds, returns `.deliverLocally` to pass the plaintext to `PacketRouter`.
+
+```swift
+        // Stage 5: Stranger Packet Relaying (Opt-In & Battery Cutoff)
+        let policyState = await policyManager?.currentState() ?? RelayPolicyState(mode: .communalRelayActive)
+        guard policyState.isPermitted(at: clock.now()) else {
+            totalDroppedPolicyCount += 1
             return .dropPolicyDisabled
         }
-```
-
-### The Zero-Knowledge Contract
-* When an iPhone receives a packet for a different group session (`sessionId != localSession.sessionId`), the phone acts as an **opaque relay**.
-* The relay node **does not have the decryption key**. It cannot decrypt the 30-byte payload or see coordinates, text, or names.
-* **The 20% Battery Hard Cutoff**: If the device battery drops below 20% (`batteryLevel < 0.20`) or the user enables iOS Low Power Mode, the phone immediately ceases stranger packet relaying to protect the owner's emergency battery life.
-
----
-
-## 1.4 Wire Mutation: Incrementing `hopCount`
-
-```swift
-        // 6. Mutable Metadata Mutation (Byte 2: hopCount &+= 1)
+        
+        // Stage 6: Token Bucket Rate Limiting
+        if packetType == .sos {
+            guard await rateLimiter.consumeSOSToken() else { return .dropRateLimitExceeded }
+        } else {
+            guard await rateLimiter.consumeOrdinaryToken() else { return .dropRateLimitExceeded }
+        }
+        
+        // Stage 7: Mutate hopCount (+1) & Split-Horizon Next-Hop Forwarding
         var mutatedData = wireData
         mutatedData[mutatedData.startIndex + 2] = hopCount + 1
+        
+        let activeNeighbors = await neighborTable.activeNeighbors()
+        let eligibleNeighbors = activeNeighbors.filter { $0.id != fromPeerId } // Split-Horizon
 ```
 
-### Why Wire Integrity Remains Intact
-* Notice that **ONLY Byte 2** is modified.
-* Because `CleartextEnvelope.authenticatedAssociatedData()` masks Byte 2 to `0x00` during AEAD computation, incrementing `hopCount` does NOT invalidate the sender's 16-byte Poly1305 authentication tag!
+### Stages 5–7: Zero-Knowledge Blind Relaying
+* **Stranger Relaying**: If `sessionId != localSession.sessionId`, the phone does NOT possess the group key and CANNOT decrypt the 30-byte payload. It blindly acts as a transparent relay.
+* **Battery Cutoff**: If battery is $<20\%$ or Low Power Mode is active, stranger relaying drops immediately.
+* **Token Bucket**: Consumes 1 forwarding token (ordinary: 2 pkts/sec; urgent SOS: 4 pkts/sec).
+* **Wire Mutation**: Increments Byte 2 (`hopCount &+= 1`). Because `CleartextEnvelope` masks Byte 2 during AAD calculation, the sender's Poly1305 MAC tag remains completely valid!
+* **Split-Horizon Rule**: `filter { $0.id != fromPeerId }` prevents echoing the packet back to the node that delivered it, eliminating 2-node ping-pong routing loops.
 
 ---
 
-# 2. `SeenPacketCache.swift`: Duplicate Suppression
+# 3. Reactive AODV Route Discovery: `RouteDiscoveryService.swift`
+
+`RouteDiscoveryService` (675 lines) implements on-demand route discovery across multi-hop paths:
+
+```
+[Alice]                                [Relay Node]                                [Bob]
+   │                                         │                                       │
+   │─── ROUTE_REQ (seq: 101, hop: 0) ───────►│                                       │
+   │    (Stores in-flight continuation)      │─── ROUTE_REQ (seq: 101, hop: 1) ─────►│
+   │                                         │    (Records reverse route:            │ (Records forward route to Alice)
+   │                                         │     seq 101 -> Alice, TTL: 15s)       │
+   │                                         │                                       │
+   │                                         │◄── ROUTE_RESP (seq: 101, cost: 0) ────│
+   │◄── ROUTE_RESP (seq: 101, cost: 1) ──────│    (Pops reverse route matching 101)  │
+   │    (Records forward route to Bob;       │                                       │
+   │     resumes continuation with RouteEntry)
+```
+
+---
+
+## 3.1 In-Flight Request Coalescing
+
+```swift
+        let targetKey = "\(session.sessionId):\(sanitizedTarget)"
+        
+        // 1. Coalesce with existing in-flight discovery to avoid duplicate floods
+        if let existingNonce = inFlightByTarget[targetKey],
+           var existing = inFlightDiscoveries[existingNonce] {
+            return try await withCheckedThrowingContinuation { cont in
+                existing.continuations.append(cont)
+                inFlightDiscoveries[existingNonce] = existing
+            }
+        }
+```
+
+### Anti-Flooding Guarantee
+* If three different viewmodels or UI sheets request a route to `"BOB"` simultaneously, TeeKum emits strictly **ONE** broadcast `ROUTE_REQ` datagram over the radio.
+* All three callers await on the same in-flight record. When `ROUTE_RESP` returns, all continuations are resumed at the exact same millisecond.
+
+---
+
+## 3.2 Handling Inbound Route Requests: `handleInboundRouteReq`
+
+```swift
+        // Check if local node is the target destination
+        if payload.targetInitials == session.localInitials {
+            // Target member reached!
+            let forwardHopCount = envelope.hopCount + 1
+            await routingTable.recordForwardRoute(
+                destinationId: payload.originatorInitials,
+                nextHop: fromPeerId,
+                hopCount: forwardHopCount,
+                cost: payload.routeCost + 1,
+                sequenceNumber: envelope.sequenceNumber,
+                ttl: 60.0
+            )
+            
+            // Craft authenticated Route Response
+            let respPayload = RouteRespPayload(
+                originatorInitials: payload.originatorInitials,
+                targetInitials: session.localInitials,
+                discoveryNonce: payload.discoveryNonce,
+                routeCost: 0
+            )
+            let respEnvelope = CleartextEnvelope(
+                type: .routeResp,
+                hopLimit: maxHops,
+                hopCount: 0,
+                sessionId: envelope.sessionId,
+                sequenceNumber: envelope.sequenceNumber // Echo sequenceNumber for reverse route matching
+            )
+            let respWire = try await cryptoService.sealToWireBytes(
+                payload: respPayload.serialize(),
+                envelope: respEnvelope,
+                using: SymmetricKey(data: session.symmetricKeyData)
+            )
+            _ = try await transport.sendFrame(respWire, to: fromPeerId)
+            onTargetReached?(payload.originatorInitials)
+            return .answeredWithRResp(targetInitials: payload.targetInitials, nextHop: fromPeerId)
+        }
+```
+
+### Protocol Mechanics
+1. Target matches `localInitials`.
+2. Target learns the forward route back to the originator (`nextHop: fromPeerId`).
+3. Target crafts a `RouteRespPayload`, copying the exact `sequenceNumber` from the request.
+4. Target seals the datagram using the shared group key and unicasts `ROUTE_RESP` back to `fromPeerId`.
+5. Intermediary relays inspect `sequenceNumber`, query their ephemeral reverse routing table (`reverseRoutes[sequenceNumber]`), and unicast `ROUTE_RESP` back towards the originator without flooding the mesh.
+
+---
+
+# 4. Routing Table & Next-Hop Caching: `RoutingTable.swift`
+
+```swift
+public actor RoutingTable: RoutingTableManaging {
+    private var forwardRoutes: [String: RouteEntry] = [:]       // Bounded: 64 entries, 30s-60s TTL
+    private var reverseRoutes: [UInt32: ReverseRouteEntry] = [:] // Bounded: 128 entries, 15s TTL
+```
+
+### Monotonic Sequence Invariant
+* A new route to `"BOB"` is ONLY accepted if:
+  1. `newRoute.sequenceNumber > existingRoute.sequenceNumber` (fresher route state), OR
+  2. `newRoute.sequenceNumber == existingRoute.sequenceNumber` AND `newRoute.hopCount < existingRoute.hopCount` (shorter path for identical route freshness).
+* Defends against stale, looping, or degraded routing paths.
+
+---
+
+# 5. `SeenPacketCache.swift`: Bounded LRU Cache
 
 ```swift
 public actor SeenPacketCache {
-    public struct CacheEntry: Sendable {
-        public let key: PacketKey
-        public let arrivalTime: Date
-        public var lastAccessed: Date
-    }
-    
-    private let capacity: Int              // Default: 1024
-    private let ttl: TimeInterval          // Default: 300s (5 minutes)
+    private let capacity: Int = 1024
+    private let ttl: TimeInterval = 300.0 // 5 minutes
     private var entries: [PacketKey: CacheEntry] = [:]
     private var lruOrder: [PacketKey] = []
 ```
 
-### Memory Footprint & LRU Eviction
-* **RAM Budget**: Each `PacketKey` is 7 bytes. At 1,024 entries, the entire deduplication cache occupies less than **8 KB of RAM**.
-* **Atomic Deduplication**:
-  ```swift
-  public func isDuplicateAndRecord(_ key: PacketKey, now: Date? = nil) -> Bool {
-      let currentTime = now ?? clock.now()
-      if let existing = entries[key] {
-          if currentTime.timeIntervalSince(existing.arrivalTime) < ttl {
-              touchLRU(key, now: currentTime)
-              return true // Drop duplicate
-          }
-      }
-      recordKey(key, now: currentTime)
-      return false // Process fresh packet
-  }
-  ```
+### Memory Footprint & Deterministic Eviction
+* Each `PacketKey` occupies 7 bytes:
+  $$\text{RAM Footprint} \approx 1024 \times (7\text{B} + 16\text{B Date} + 8\text{B Pointer}) \approx 31.7 \text{ KB}$$
+* When `count > 1024`, the least recently accessed key is evicted (`lruOrder.removeFirst()`).
+* Ensures deterministic bounded memory usage even during multi-day festival operation.
 
 ---
 
-# 3. `ForwardingRateLimiter.swift`: Token Bucket Traffic Shaping
+# 6. `ForwardingRateLimiter.swift`: Token Bucket Traffic Shaper
 
 ```swift
 public actor ForwardingRateLimiter: ForwardingBudgetManaging {
-    // Ordinary traffic token bucket: 2 pkts/sec
+    // Ordinary relay traffic: 2.0 pkts/s, burst capacity 4.0
     private let ordinaryCapacity: Double = 4.0
     private let ordinaryRefillRate: Double = 2.0
     private var ordinaryTokens: Double = 4.0
     
-    // SOS priority token bucket: 4 pkts/sec
+    // Urgent SOS traffic: 4.0 pkts/s, burst capacity 8.0
     private let sosCapacity: Double = 8.0
     private let sosRefillRate: Double = 4.0
     private var sosTokens: Double = 8.0
 ```
 
-### Token Bucket Math
-* **Refill Formula**:
-  $$\text{tokens} = \min(\text{capacity}, \text{tokens} + \Delta t \times \text{refillRate})$$
-* **Bursts**: Allows an initial burst of up to 4 ordinary packets (or 8 SOS packets), then throttles sustained forwarding to 2 packets/second. This prevents malicious flooding attacks or mesh broadcast loops from exhausting device radio airtime.
-
----
-
-# 4. Routing Systems: `RoutingTable.swift` & `RouteDiscoveryService.swift`
-
-## 4.1 Forward & Ephemeral Reverse Routes
-
-```swift
-public actor RoutingTable: RoutingTableManaging {
-    private var forwardRoutes: [String: RouteEntry] = [:]        // 64 max, 30s-60s TTL
-    private var reverseRoutes: [UInt32: ReverseRouteEntry] = [:]  // 128 max, 15s TTL
-```
-
-* **Forward Route**: Stores the optimal `nextHopPeerId` towards a destination node based on the freshest sequence number and lowest hop count.
-* **Reverse Route**: When a `ROUTE_REQ` hops through intermediary nodes, each node remembers where it came from (`incomingPeerId`) for 15 seconds. When the destination responds with `ROUTE_RESP`, it travels back down the reverse route without flooding the network.
-
----
-
-## 4.2 Split-Horizon Flooding Defense
-
-```swift
-let activeNeighbors = await neighborTable.activeNeighbors()
-let eligibleNeighbors = activeNeighbors.filter { $0.id != fromPeerId }
-```
-
-* **Split-Horizon Rule**: A packet is NEVER echoed back to the peer from which it was received (`id != fromPeerId`). This eliminates immediate 2-node ping-pong routing loops.
+### Continuous Refill Formula
+$$\text{tokens}_{\text{current}} = \min\left(\text{capacity}, \text{tokens}_{\text{last}} + \Delta t \times \text{refillRate}\right)$$
+* Prevents battery depletion caused by high-rate packet storms while allowing instant transmission bursts for emergency alerts.
 
 ---
 
