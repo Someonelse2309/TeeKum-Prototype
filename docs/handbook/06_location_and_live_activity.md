@@ -1,22 +1,22 @@
-# TeeKum Code Handbook — Volume 06: Location & Background Services
+# TeeKum Code Handbook — Volume 06: Location & Background Services (Definitive Deep-Dive)
 
-This volume examines the Core Location GPS and compass heading streams, Core Motion activity classifiers, adaptive publishing cadence engines, ActivityKit Dynamic Island controllers, and background system notification handlers in TeeKum.
-
----
-
-## 📑 Included Files
-
-1. [`TeeKum Prototype/Core/Location/LocationService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Location/LocationService.swift) — Authoritative GPS positioning, CoreMotion activity detection, and adaptive cadence scheduler.
-2. [`TeeKum Prototype/Core/Location/LocationPublisher.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Location/LocationPublisher.swift) — Coordinates 30-byte `LocationPingPayload` packing, monotonic counter incrementing, and radio dispatch.
-3. [`TeeKum Prototype/Core/Location/LocationServiceProtocol.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Location/LocationServiceProtocol.swift) — Interface defining location services for unit test mocking.
-4. [`TeeKum Prototype/Core/LiveActivity/LiveActivityManager.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/LiveActivity/LiveActivityManager.swift) — ActivityKit Dynamic Island and Lock Screen companion manager.
-5. [`TeeKum Prototype/Core/Notifications/NotificationService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Notifications/NotificationService.swift) — In-app HUD toasts and iOS local notification dispatch.
+This volume provides an exhaustive, method-by-method architectural deep-dive into Core Location GPS tracking, Core Motion pedestrian activity classifiers, adaptive publishing cadence engines, ActivityKit Dynamic Island controllers, and background system notification handlers in TeeKum.
 
 ---
 
-# 1. Authoritative Positioning: `LocationService.swift`
+## 📑 Included Source Files
 
-## 1.1 State & Hardware Managers
+1. [`TeeKum Prototype/Core/Location/LocationService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Location/LocationService.swift) (767 lines) — Authoritative GPS, compass heading, CoreMotion detector, and adaptive cadence scheduler.
+2. [`TeeKum Prototype/Core/Location/LocationPublisher.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Location/LocationPublisher.swift) (222 lines) — High-level publishing coordinator bridging location fixes into sealed wire datagrams.
+3. [`TeeKum Prototype/Core/Location/LocationServiceProtocol.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Location/LocationServiceProtocol.swift) (90 lines) — Abstract dependency injection contracts for testing.
+4. [`TeeKum Prototype/Core/LiveActivity/LiveActivityManager.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/LiveActivity/LiveActivityManager.swift) (171 lines) — ActivityKit Dynamic Island and Lock Screen widget manager.
+5. [`TeeKum Prototype/Core/Notifications/NotificationService.swift`](file:///Users/nicho/Developer/TeeKum%20Prototype/TeeKum%20Prototype/Core/Notifications/NotificationService.swift) (186 lines) — In-app floating toast alerts and iOS local notifications.
+
+---
+
+# 1. Hardware Positioning Architecture: `LocationService.swift`
+
+Running on the `@MainActor`, `LocationService` acts as the single source of truth for physical sensors:
 
 ```swift
 @Observable
@@ -27,115 +27,126 @@ public final class LocationService: NSObject, CLLocationManagerDelegate, Locatio
     private let motionActivityManager: CMMotionActivityManager?
     private let motionQueue = OperationQueue()
     #endif
-    
-    public private(set) var currentLocation: LocationPin?
-    public private(set) var currentHeading: CLLocationDirection?
-    public private(set) var isStationary: Bool = false
-    public var hasDistantPeers: Bool = false
-    public var hasStalePeers: Bool = false
-    public var isLiveSharingEnabled: Bool = true
-    public private(set) var isSurvivalModeActive: Bool = false
-    public private(set) var currentBatteryLevel: Float = 1.0
 ```
 
-### iOS Hardware Configuration
+---
+
+## 1.1 Core Location Hardware Configuration
+
 ```swift
     self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
     self.locationManager.distanceFilter = kCLDistanceFilterNone
     self.locationManager.activityType = .fitness
     self.locationManager.pausesLocationUpdatesAutomatically = false
-    self.locationManager.allowsBackgroundLocationUpdates = true
-    self.locationManager.showsBackgroundLocationIndicator = true
+    
+    #if os(iOS)
+    if let bgModes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String],
+       bgModes.contains("location") {
+        self.locationManager.allowsBackgroundLocationUpdates = true
+        self.locationManager.showsBackgroundLocationIndicator = true
+    }
+    #endif
 ```
 
-* `activityType = .fitness`: Informs iOS that the user is on foot (walking, dancing, or running across festival grounds), optimizing Kalman filter algorithms for pedestrian speeds.
-* `pausesLocationUpdatesAutomatically = false`: Crucial invariant. Prevents iOS from killing location updates when the user stands still near a music stage for 10 minutes.
-* `allowsBackgroundLocationUpdates = true`: Keeps GPS active when the phone is locked in a pocket.
+### Platform Realities & Sensor Invariants
+* `activityType = .fitness`: Informs iOS baseband GPS filters that the user is pedestrian (walking, dancing, or navigating on foot), tuning the Kalman filtering for low-speed navigation rather than highway speeds.
+* `pausesLocationUpdatesAutomatically = false`: **Crucial Invariant**. By default, iOS suspends GPS updates if the device remains stationary for several minutes to save battery. In a festival, an attendee may stand at a music stage for 45 minutes; setting this flag to `false` prevents iOS from killing mesh positioning in the background.
+* `showsBackgroundLocationIndicator = true`: Displays the blue privacy pill in the status bar, guaranteeing that iOS will not terminate the app's background execution runloop.
 
 ---
 
-## 1.2 Motion-Aware Adaptive Cadence Engine
+## 1.2 Motion-Aware Adaptive Cadence State Matrix
 
-Continuously firing high-power GPS and AWDL radio bursts every 2 seconds drains the iPhone battery in ~4 hours. `LocationService` calculates an **adaptive duty cycle**:
+Continuously firing high-power GPS updates and AWDL radio transmissions every 2 seconds drains an iPhone battery in ~4 hours. `LocationService` calculates a dynamic duty cycle based on motion and network state:
 
 ```
-+-----------------------------------+-----------------------------------+
-| System & User Condition           | Requested Publishing Cadence      |
-+-----------------------------------+-----------------------------------+
-| Moving / Walking on foot          | 4.0 seconds                       |
-| Stationary / Standing at a stage  | 20.0 seconds (saves 80% battery)  |
-| Distant Peer (>30m or <-75 dBm)   | 2.0 seconds (accelerated link)    |
-| Stale Peer (within recovery window| 2.0 seconds (recovery burst)      |
-| Festival Survival (<20% battery)  | 60.0 seconds (preserves phone)    |
-+-----------------------------------+-----------------------------------+
++------------------------------------+------------------+-----------------------------------------------+
+| Environmental Condition            | Target Interval  | Technical Purpose                             |
++------------------------------------+------------------+-----------------------------------------------+
+| Moving / Walking (`isStationary == false`) | 4.0 seconds      | Smooth map tracking for walking friends.      |
+| Stationary (`isStationary == true`)        | 20.0 seconds     | Conserves 80% battery while standing still.   |
+| Distant Peer (>30m or <-75 dBm)    | 2.0 seconds      | Accelerates pings to stabilize weak radio link|
+| Stale Peer (within recovery window)| 2.0 seconds      | Proactive burst to recover missing friend.    |
+| Festival Survival (<20% battery)   | 60.0 seconds     | Throttles duty cycle to keep phone alive.     |
++------------------------------------+------------------+-----------------------------------------------+
 ```
 
 ```swift
-    public var targetPublishingInterval: TimeInterval {
+    public var currentCadenceInterval: TimeInterval {
         if isSurvivalModeActive {
             return cadenceConfig.survivalInterval // 60s
-        }
-        if hasStalePeers || hasDistantPeers {
+        } else if hasStalePeers || (hasStalePeersProvider?() ?? false) {
+            return cadenceConfig.staleRecoveryInterval // 2s
+        } else if hasDistantPeers || (hasDistantPeersProvider?() ?? false) {
             return cadenceConfig.distantPeerInterval // 2s
-        }
-        if isStationary {
+        } else if isStationary {
             return cadenceConfig.stationaryInterval // 20s
+        } else {
+            return cadenceConfig.movingInterval // 4s
         }
-        return cadenceConfig.movingInterval // 4s
     }
 ```
 
-### CoreMotion Detection
-* Uses `CMMotionActivityManager` on its own private background `OperationQueue`.
-* When `activity.stationary == true`, flags `isStationary = true`, immediately down-throttling radio transmissions without sacrificing location accuracy when walking resumes.
+### CoreMotion Pedestrian Classification
+* Uses `CMMotionActivityManager` on a dedicated background `OperationQueue`.
+* When the accelerometer detects zero step cadence and minimal displacement, `activity.stationary` flags `isStationary = true`.
+* The publishing loop immediately down-throttles from 4s to 20s, cutting radio transmissions by 80% without sacrificing location precision when walking resumes.
 
 ---
 
-# 2. Location Publisher: `LocationPublisher.swift`
-
-`LocationPublisher` bridges physical sensor measurements into sealed wire datagrams:
+## 1.3 The Single Cancellable Scheduler Loop
 
 ```swift
-    public func publishLocation(coordinate: CLLocationCoordinate2D, accuracy: Double) async {
-        guard let session = sessionProvider() else { return }
+    private func startPublishingScheduler() {
+        stopPublishingScheduler()
+        guard isTracking, isLiveSharingEnabled else { return }
         
-        let counter = monotonicCounter
-        monotonicCounter &+= 1
+        publishCurrentState()
         
-        let envelope = CleartextEnvelope(
-            version: PacketConstants.protocolVersion,
-            type: .locationPing,
-            hopLimit: PacketConstants.defaultHopLimit,
-            hopCount: 0,
-            sessionId: session.sessionId,
-            sequenceNumber: CleartextEnvelope.makeSequenceNumber(
-                memberSlot: session.memberSlot,
-                counter: counter
-            )
-        )
-        
-        let payload = LocationPingPayload(
-            coordinate: coordinate,
-            timestamp: Date(),
-            accuracy: UInt8(min(255, max(0, Int(accuracy.rounded())))),
-            senderInitials: session.localInitials,
-            batteryLevel: locationService.currentBatteryLevel.asBatteryPercentage,
-            heading: UInt8(min(255, max(0, Int(((locationService.currentHeading ?? 0.0) * 255.0 / 360.0).rounded())))),
-            colorCode: session.localColorCode
-        )
+        publishingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.isTracking, self.isLiveSharingEnabled else { break }
+                
+                let interval = self.currentCadenceInterval
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                
+                guard !Task.isCancelled, self.isTracking, self.isLiveSharingEnabled else { break }
+                self.publishCurrentState()
+            }
+        }
+    }
+    
+    private func stopPublishingScheduler() {
+        publishingTask?.cancel()
+        publishingTask = nil
+        burstTask?.cancel()
+        burstTask = nil
+    }
 ```
 
-### Wire Packing Details
-* `monotonicCounter &+= 1`: Safe wrapping increment of the local monotonic sequence counter.
-* `batteryLevel`: Quantized float-to-byte percentage.
-* `heading`: Maps $0^\circ \dots 360^\circ$ into $0 \dots 255$ (`UInt8`).
-* Coalesces battery, heading, and GPS into a single unfragmented 30-byte datagram.
+### Memory & Task Safety
+* **Cancellation Guarantee**: `stopPublishingScheduler()` cancels any active `Task` before spawning a new one. This mathematically prevents timer duplication, race conditions, or multiple concurrent broadcast loops from running simultaneously.
+* **Weak Capture**: `[weak self]` ensures the background task cannot prevent `LocationService` from deallocating upon session termination.
 
 ---
 
-# 3. Dynamic Island Companion: `LiveActivityManager.swift`
+## 1.4 Immediate Location Access for Emergency SOS
 
-ActivityKit provides Lock Screen and Dynamic Island telemetry so users do not need to keep the app open in their hands.
+```swift
+    public func getLatestLocationForSOS() -> LocationPin? {
+        return currentLocation
+    }
+```
+
+### Safety Invariants
+1. **Unconditional Availability**: Operates even if `isLiveSharingEnabled == false`. When a user presses SOS, their location is immediately accessible regardless of privacy toggles.
+2. **Zero Fabrication**: If GPS is temporarily unavailable (e.g., inside a deep underground tunnel), the service does **NOT** invent fake coordinates or fabricate fresh timestamps; it returns the exact last measured fix with its original timestamp so emergency responders see the true age of the fix.
+
+---
+
+# 2. ActivityKit Companion: `LiveActivityManager.swift`
+
+ActivityKit provides dynamic Lock Screen and Dynamic Island telemetry so users do not need to keep the app active in their hands:
 
 ```swift
 @MainActor
@@ -144,29 +155,58 @@ public final class LiveActivityManager: LiveActivityManaging {
     private var activeActivity: Activity<SessionActivityAttributes>?
 ```
 
-### Dynamic Island State Content
+---
+
+## 2.1 Dynamic Island Telemetry Synchronization
+
 ```swift
-    let state = SessionActivityAttributes.ContentState(
-        peerCount: peerCount,
-        meetingPointName: meetingPoint?.name,
-        meetingPointDistance: dist,
-        meetingPointTime: meetingPoint?.targetTime.formattedMeetupTime,
-        isSOSActive: isSOSActive,
-        sosSenderInitials: sosSenderInitials,
-        relayStatusText: relayStatusText,
-        relayModeText: relayModeText,
-        timedRelayRemainingSeconds: timedRelayRemainingSeconds,
-        isRelayActive: isRelayActive
-    )
+    public func updateSessionActivity(
+        peerCount: Int,
+        meetingPoint: MeetingPoint?,
+        currentLocation: CLLocationCoordinate2D?,
+        isSOSActive: Bool,
+        sosSenderInitials: String?,
+        relayStatusText: String?,
+        relayModeText: String?,
+        timedRelayRemainingSeconds: Int?,
+        isRelayActive: Bool
+    ) async {
+        guard let activity = activeActivity else { return }
+        
+        let dist: String?
+        if let mpCoord = meetingPoint?.coordinate, let userCoord = currentLocation {
+            let uLoc = CLLocation(latitude: userCoord.latitude, longitude: userCoord.longitude)
+            let mLoc = CLLocation(latitude: mpCoord.latitude, longitude: mpCoord.longitude)
+            dist = uLoc.distance(from: mLoc).formattedDistance(spaced: true, includeSuffix: false)
+        } else {
+            dist = nil
+        }
+        
+        let state = SessionActivityAttributes.ContentState(
+            peerCount: peerCount,
+            meetingPointName: meetingPoint?.name,
+            meetingPointDistance: dist,
+            meetingPointTime: meetingPoint?.targetTime.formattedMeetupTime,
+            isSOSActive: isSOSActive,
+            sosSenderInitials: sosSenderInitials,
+            relayStatusText: relayStatusText,
+            relayModeText: relayModeText,
+            timedRelayRemainingSeconds: timedRelayRemainingSeconds,
+            isRelayActive: isRelayActive
+        )
+        
+        await activity.update(ActivityContent(state: state, staleDate: nil))
+    }
 ```
 
-* Displays active peer count in the Dynamic Island pill.
-* Displays distance to current meeting point (e.g., *"Main Stage: 120m away"*).
-* If an SOS is broadcast, turns into a flashing emergency siren widget showing the victim's initials and distance.
+### Presentation States
+* **Compact Pill (Dynamic Island)**: Shows connected peer count (e.g., `3 􀉭`) and meeting point distance (`120m 􀋒`).
+* **Expanded Island**: Expands into an interactive festival HUD showing active landmark arrival times and communal relay status.
+* **Emergency Distress Mode**: If an SOS is broadcast, the Dynamic Island pulses with bright red emergency indicators, displaying the victim's initials and distance.
 
 ---
 
-# 4. In-App HUD Banners: `NotificationService.swift`
+# 3. Notification Service: `NotificationService.swift`
 
 ```swift
 @Observable
@@ -174,6 +214,7 @@ public final class LiveActivityManager: LiveActivityManaging {
 public final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     public static let shared = NotificationService()
     public var activeToast: InAppToast? = nil
+    private var dismissTask: Task<Void, Never>?
     
     public func presentToast(_ toast: InAppToast, durationSeconds: Double = 4.0) {
         dismissTask?.cancel()
@@ -184,11 +225,10 @@ public final class NotificationService: NSObject, UNUserNotificationCenterDelega
             activeToast = nil
         }
     }
-}
 ```
 
-* Displays non-blocking, tactile top toasts for festival events (e.g., *"DNA: Meet at Ferris Wheel in 15m"*).
-* Automatically dismisses after 4 seconds using a cancellable `Task.sleep` without blocking the main UI thread.
+* Displays non-intrusive floating toasts that auto-dismiss after 4 seconds using structured task sleeps.
+* Coordinates with iOS `UserNotifications` when the app is backgrounded to alert the user of new chat messages and landmark updates.
 
 ---
 
