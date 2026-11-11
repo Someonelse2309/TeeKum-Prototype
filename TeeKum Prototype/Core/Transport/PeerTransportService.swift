@@ -71,12 +71,20 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     /// Map of connected or connecting peers keyed by peer ID.
     private var connections: [String: PeerConnection] = [:]
     
+    private var latestBrowseResults: Set<NWBrowser.Result> = []
+
     /// Endpoints currently visible in NWBrowser results keyed by peer ID.
     private var discoveredEndpoints: [String: (endpoint: NWEndpoint, displayName: String?, isGroup: Bool)] = [:]
     
     /// Dual-lane prioritized outbox with stranger relay ring buffer.
     private let outbox = PriorityOutboxQueue()
     private var isFlushingOutbox: Bool = false
+    private var carryStore = CarryMessageStore()
+    private var carryTask: Task<Void, Never>?
+    private var carryPowerPermitted = true
+    private var bleLink: BLEPeerLink?
+    private var blePeers: [String] = []
+    private var radioGeneration = UUID()
     
     /// Neighbor management registry.
     public let neighborTable: NeighborTable
@@ -237,6 +245,20 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         self.serviceType = serviceType
         self.isUDP = serviceType.contains("udp")
         self.localPeerId = session.localInitials
+        let generation = radioGeneration
+        let link = await BLEPeerLink(
+            receive: { [weak self] data, peer in Task { await self?.receiveBLE(data, from: peer, generation: generation) } },
+            peersChanged: { [weak self] peers in Task { await self?.updateBLEPeers(peers, generation: generation) } },
+            report: { [weak self] message in Task { await self?.logEvent(message, level: .info) } }
+        )
+        bleLink = link
+        await link.start()
+        carryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { break }
+                await self?.replayCarriedMessage()
+            }
+        }
         
         logEvent("Starting radio transport (Initials: \(localPeerId), Service: \(serviceType), Mode: \(isUDP ? "UDP" : "TCP")).", level: .info)
         updateState(.starting)
@@ -259,6 +281,14 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     public func stop() async {
         logEvent("Stopping radio transport and releasing sockets.", level: .info)
         
+        radioGeneration = UUID()
+        let oldBLE = bleLink
+        bleLink = nil
+        blePeers.removeAll()
+        await oldBLE?.stop()
+        carryTask?.cancel()
+        carryTask = nil
+        carryStore.removeAll()
         browser?.cancel()
         browser = nil
         
@@ -270,6 +300,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         }
         connections.removeAll()
         discoveredEndpoints.removeAll()
+        latestBrowseResults.removeAll()
         outbox.clear()
         
         for neighbor in await neighborTable.activeNeighbors() {
@@ -291,6 +322,13 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         guard data.count == PacketConstants.wirePacketSize else {
             throw TransportError.invalidPacketSize
         }
+        if blePeers.contains(peerId) {
+            rememberForCarry(data)
+            try outbox.enqueue(data: data, destinationPeerId: peerId, isRelay: false)
+            triggerOutboxFlush()
+            let packet = try RawWirePacket.fromWireData(data)
+            return SendOutcome(destinationPeerId: peerId, packetType: packet.envelope.type, isSuccess: true)
+        }
         guard let peer = connections[peerId], peer.isReady else {
             let err = TransportError.peerNotFound(peerId)
             let byte0 = data[data.startIndex]
@@ -300,6 +338,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
             throw err
         }
         
+        rememberForCarry(data)
         let item = try outbox.enqueue(data: data, destinationPeerId: peerId, isRelay: false)
         triggerOutboxFlush()
         
@@ -340,7 +379,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
             throw PacketCodecError.hopCountExceededLimit(count: hopCount, limit: hopLimit)
         }
         
-        guard let peer = connections[nextHopPeerId], peer.isReady else {
+        guard blePeers.contains(nextHopPeerId) || connections[nextHopPeerId]?.isReady == true else {
             let err = TransportError.peerNotFound(nextHopPeerId)
             let pType = PacketType(rawValue: byte0 & 0x0F) ?? .locationPing
             let failedOutcome = SendOutcome(destinationPeerId: nextHopPeerId, packetType: pType, isSuccess: false, error: err)
@@ -356,9 +395,10 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
                 throw TransportError.rateLimitExceeded("Urgent SOS forwarding budget exceeded")
             }
         } else {
-            let allowed = await rateLimiter.consumeOrdinaryToken()
+            let allowed = packetType == .chatMessage || packetType == .ack
+                ? await rateLimiter.consumeOrdinaryToken() : await rateLimiter.consumeTelemetryToken()
             guard allowed else {
-                throw TransportError.rateLimitExceeded("Ordinary relay budget exceeded (2 pkts/sec)")
+                throw TransportError.rateLimitExceeded("Ordinary relay budget exhausted")
             }
         }
         
@@ -366,6 +406,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         var mutatedData = data
         mutatedData[mutatedData.startIndex + 2] = hopCount + 1
         
+        rememberForCarry(mutatedData)
         let item = try outbox.enqueue(data: mutatedData, destinationPeerId: nextHopPeerId, isRelay: true)
         triggerOutboxFlush()
         
@@ -373,9 +414,20 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         return outcome
     }
     
-    /// Current view of directly reachable neighbors from NeighborTable.
+    /// Current view of directly reachable Wi-Fi and Bluetooth links.
     public func activeNeighbors() async -> [NeighborInfo] {
-        await neighborTable.activeNeighbors()
+        // Forward using live links, not the asynchronously updated telemetry registry.
+        // BLE and newly ready Wi-Fi links must be available to the router immediately.
+        let wifi = connections.values.filter { $0.isReady }.map {
+            NeighborInfo(id: $0.peerId, displayName: $0.displayName, state: .connected,
+                rssi: nil, lastSeen: $0.lastSeen, roundTripTimeMs: nil,
+                isGroupMember: $0.isGroupMember, capabilities: $0.capabilities)
+        }
+        return wifi + blePeers.map {
+            NeighborInfo(id: $0, displayName: "Bluetooth peer", state: .connected,
+                rssi: nil, lastSeen: Date(), roundTripTimeMs: nil,
+                isGroupMember: false, capabilities: .standardMesh)
+        }
     }
     
     /// Current queue depth across urgent, normal, and relay queues.
@@ -389,11 +441,18 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         isRelayEnabled = enabled
         if !enabled {
             outbox.clearRelayQueue()
+            carryStore.removeForeign()
             logEvent("Mesh relay participation disabled. Purged relay outbox.", level: .info)
         } else {
             logEvent("Mesh relay participation enabled.", level: .info)
         }
         
+        // Results may have arrived while relay was disabled. NWBrowser need not emit
+        // another change when only our local preference changes.
+        if enabled, activeSession != nil {
+            handleBrowseResults(latestBrowseResults, changes: [])
+        }
+
         // Update Bonjour TXT record dynamically with relay flag
         if let session = activeSession, let currentListener = listener {
             var txtDict: [String: Data] = [:]
@@ -426,6 +485,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
             throw TransportError.invalidPacketSize
         }
         
+        rememberForCarry(data)
         try outbox.enqueue(data: data, destinationPeerId: nil, isRelay: false)
         triggerOutboxFlush()
     }
@@ -442,7 +502,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     
     /// Returns the number of direct peer connections currently established and operational.
     public func activeDirectPeerCount() async -> Int {
-        connections.values.filter { $0.isReady }.count
+        connections.values.filter { $0.isReady }.count + blePeers.count
     }
     
     /// Captures a live diagnostic snapshot of radio telemetry.
@@ -464,7 +524,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
             sessionName: activeSession?.sessionName ?? "None",
             sessionId: activeSession?.sessionId ?? 0,
             state: currentState,
-            activeDirectPeers: activePeers,
+            activeDirectPeers: activePeers + blePeers.map { PeerInfo(id: $0, displayName: "Bluetooth peer", isGroupMember: false) },
             packetsSent: packetsSentCount,
             packetsReceived: packetsReceivedCount,
             obsoletePingsCoalesced: outbox.obsoletePingsCoalesced,
@@ -526,7 +586,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     
     private func startBrowser() throws {
         let params = createParameters()
-        let descriptor = NWBrowser.Descriptor.bonjour(type: serviceType, domain: nil)
+        let descriptor = NWBrowser.Descriptor.bonjourWithTXTRecord(type: serviceType, domain: nil)
         let newBrowser = NWBrowser(for: descriptor, using: params)
         
         newBrowser.stateUpdateHandler = { [weak self] state in
@@ -619,6 +679,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     
     private func handleBrowseResults(_ results: Set<NWBrowser.Result>, changes: Set<NWBrowser.Result.Change>) {
         guard let session = activeSession else { return }
+        latestBrowseResults = results
         
         var currentDiscovered: [String: (endpoint: NWEndpoint, displayName: String?, isGroup: Bool)] = [:]
         
@@ -838,6 +899,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     private func handleDisconnection(peer: PeerConnection, error: Error?) {
         let peerId = peer.peerId
         peer.isReady = false
+        carryStore.disconnected(peerId)
         peer.connection.cancel()
         connections.removeValue(forKey: peerId)
         
@@ -979,6 +1041,67 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         receiveNextBytes(from: peer)
     }
     
+    private func updateBLEPeers(_ peers: [String], generation: UUID) async {
+        guard generation == radioGeneration, activeSession != nil else { return }
+        for peer in blePeers where !peers.contains(peer) {
+            carryStore.disconnected(peer)
+            await neighborTable.removeNeighbor(peerId: peer)
+        }
+        blePeers = peers
+        for peer in peers {
+            await neighborTable.registerOrUpdateNeighbor(id: peer, displayName: "Bluetooth peer", state: .connected,
+                rssi: nil, isGroupMember: false, capabilities: .standardMesh)
+        }
+        refreshConnectionState()
+        emitPeerUpdates()
+    }
+
+    private func receiveBLE(_ data: Data, from peer: String, generation: UUID) {
+        guard generation == radioGeneration, activeSession != nil,
+              let packet = try? RawWirePacket.fromWireData(data) else { return }
+        packetsReceivedCount += 1
+        inboundContinuation?.yield(InboundPacket(rawPacket: packet, sourcePeerId: peer))
+        inboundFrameContinuation?.yield(InboundFrame(rawData: data, rawPacket: packet, sourcePeerId: peer))
+    }
+
+    /// Input is already authenticated by PacketRouter for group traffic, or policy-approved for strangers.
+    public func retainReceivedForCarry(_ packet: RawWirePacket, excludingPeerId: String? = nil) {
+        guard activeSession != nil,
+              packet.envelope.hopCount < packet.envelope.hopLimit else { return }
+        var forwarded = packet
+        forwarded.envelope.hopCount += 1
+        if let data = try? forwarded.toWireData() { rememberForCarry(data, excludingPeerId: excludingPeerId) }
+    }
+
+    private func rememberForCarry(_ data: Data, excludingPeerId: String? = nil) {
+        guard let session = activeSession, let packet = try? RawWirePacket.fromWireData(data) else { return }
+        let foreign = packet.envelope.sessionId != session.sessionId
+        guard !foreign || isRelayEnabled else { return }
+        carryStore.remember(data, isForeign: foreign, excludingPeerId: excludingPeerId)
+    }
+
+    public func updateCarryPowerMetrics(_ batteryLevel: Float, isLowPowerMode: Bool) {
+        carryPowerPermitted = batteryLevel >= 0.20 && !isLowPowerMode
+    }
+
+    private func replayCarriedMessage() async {
+        guard carryPowerPermitted, activeSession != nil, currentState != .stopped else { return }
+        let peers = (connections.values.filter { $0.isReady }.map(\.peerId) + blePeers).sorted()
+        let generation = radioGeneration
+        guard carryStore.nextTransmission(to: peers) != nil,
+              await rateLimiter.consumeOrdinaryToken(), activeSession != nil,
+              generation == radioGeneration, carryPowerPermitted else { return }
+        guard let next = carryStore.nextTransmission(to: peers),
+              !next.isForeign || isRelayEnabled else { return }
+        do {
+            // Already incremented when custody was taken: retries never spend another hop.
+            try outbox.enqueue(data: next.data, destinationPeerId: next.peer, isRelay: next.isForeign)
+            triggerOutboxFlush()
+        } catch {
+            logEvent("Carry enqueue deferred: \(error)", level: .warning)
+        }
+    }
+
     // MARK: - Transmission & Priority Outbox Flush
     
     private func triggerOutboxFlush() {
@@ -990,13 +1113,19 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         }
     }
     
-    private func drainOutbox() {
-        while let item = outbox.dequeue() {
+    private func drainOutbox() async {
+        let generation = radioGeneration
+        while generation == radioGeneration, let item = outbox.dequeue() {
+            guard !item.isRelay || isRelayEnabled else { continue }
             let readyPeers = connections.values.filter { $0.isReady }
             
             if let targetId = item.destinationPeerId {
                 // Send to specific target peer
-                if let peer = connections[targetId], peer.isReady {
+                if blePeers.contains(targetId) {
+                    await bleLink?.send(item.packetData, to: targetId)
+                    guard generation == radioGeneration else { break }
+                    carryStore.markAttempt(item.packetData, to: targetId)
+                } else if let peer = connections[targetId], peer.isReady {
                     sendData(item.packetData, on: peer, outboxItem: item)
                 } else {
                     logEvent("Target peer \(targetId) unavailable for packet \(item.packetType).", level: .warning)
@@ -1018,7 +1147,10 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
                 }
             } else {
                 // Broadcast to all active direct peers
-                if readyPeers.isEmpty {
+                await bleLink?.send(item.packetData, to: nil)
+                guard generation == radioGeneration else { break }
+                for peer in blePeers { carryStore.markAttempt(item.packetData, to: peer) }
+                if readyPeers.isEmpty && blePeers.isEmpty {
                     logEvent("No direct peers available to broadcast \(item.packetType).", level: .warning)
                 } else {
                     for peer in readyPeers {
@@ -1032,6 +1164,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     }
     
     private func sendData(_ data: Data, on peer: PeerConnection, outboxItem: OutboxItem) {
+        carryStore.markAttempt(data, to: peer.peerId)
         peer.connection.send(content: data, completion: .contentProcessed { [weak self, weak peer] error in
             guard let self = self else { return }
             Task {
@@ -1080,6 +1213,8 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
         lastErrorMessage = error.localizedDescription
         logEvent("Transmission error for \(outboxItem.packetType): \(error.localizedDescription)", level: .warning)
         
+        // Do not resurrect a foreign retry after the user/power policy stopped relaying.
+        guard !outboxItem.isRelay || isRelayEnabled else { return }
         // If retries remain (urgent SOS/ACK or distant relay), requeue with configurable backoff
         if outbox.requeueForRetry(outboxItem) {
             let attempt = outboxItem.attemptCount + 1
@@ -1103,7 +1238,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
     }
     
     private func refreshConnectionState() {
-        let count = connections.values.filter { $0.isReady }.count
+        let count = connections.values.filter { $0.isReady }.count + blePeers.count
         if count > 0 {
             updateState(.connected(peerCount: count))
         } else if currentState != .stopped && activeSession != nil {
@@ -1122,7 +1257,7 @@ public actor PeerTransportService: PeerTransport, MeshTransport {
                 lastSeen: peer.lastSeen
             )
         }
-        peerUpdatesContinuation?.yield(peerList)
+        peerUpdatesContinuation?.yield(peerList + blePeers.map { PeerInfo(id: $0, displayName: "Bluetooth peer", isGroupMember: false) })
     }
     
     private func logEvent(_ message: String, level: DiagnosticEvent.EventLevel) {

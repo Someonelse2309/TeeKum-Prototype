@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import CryptoKit
+import CoreLocation
 
 /// Comprehensive automated test suite verifying Agent 5 — Communal Relay Controls and Battery Policy:
 /// 1. Relay disabled at startup: stranger packets dropped with .dropPolicyDisabled.
@@ -43,10 +45,13 @@ public enum RelayPolicyTests {
         passed = await testResourceCountersContainNoLocationHistory() && passed
         passed = await testRelaySettingsPersistence() && passed
         passed = await testBidirectionalCrossGroupStrangerRelay() && passed
+        passed = await testProductionCrossGroupRouter() && passed
+        passed = await testPersistedConsentSynchronization() && passed
+        passed = await testTransportIgnoresUnavailableTelemetryNeighbors() && passed
         
         if passed {
             print("==================================================")
-            print(">>> ALL 12 RELAY & BATTERY POLICY TESTS PASSED <<<")
+            print(">>> ALL 15 RELAY & BATTERY POLICY TESTS PASSED <<<")
             print("==================================================\n")
         } else {
             print("❌ SOME RELAY & BATTERY POLICY TESTS FAILED!")
@@ -876,7 +881,7 @@ public enum RelayPolicyTests {
         await managerA.recordForwardEvent(type: envB.type)
         
         let teleA = await managerA.snapshot()
-        guard teleA.totalPacketsForwarded == 1, outboxA.relayCount == 1 else {
+        guard teleA.totalPacketsForwarded == 1, outboxA.urgentCount == 1 else {
             print("  FAIL: Node A failed to forward Node B's stranger packet: forwarded=\(teleA.totalPacketsForwarded), relayCount=\(outboxA.relayCount)")
             return false
         }
@@ -884,4 +889,133 @@ public enum RelayPolicyTests {
         print("  PASS: Bidirectional cross-group stranger relaying verified. Both Node A and Node B symmetrically forward packets for each other.")
         return true
     }
+    @MainActor
+    private static func testProductionCrossGroupRouter() async -> Bool {
+        print("[Test 13] Production PacketRouter: A -> foreign B -> C and reverse ACK...")
+        let a = GroupSession(sessionId: 0x1111, symmetricKeyData: Data(repeating: 0x11, count: 32), localInitials: "AAA")
+        let b = GroupSession(sessionId: 0x2222, symmetricKeyData: Data(repeating: 0x22, count: 32), localInitials: "BBB")
+        let c = GroupSession(sessionId: a.sessionId, symmetricKeyData: a.symmetricKeyData, localInitials: "CCC")
+        let ta = SimulatedMeshTransport(peerId: "AAA")
+        let tb = SimulatedMeshTransport(peerId: "BBB")
+        let tc = SimulatedMeshTransport(peerId: "CCC")
+        let suite = "test.router.foreign.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else { return false }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let policy = RelayPolicyManager(userDefaults: defaults, transport: tb, defaultMode: .communalRelayActive)
+        let crypto = CryptoService()
+        let routing = RoutingTable()
+        let neighbors = tb.neighborTable
+        let discovery = RouteDiscoveryService(routingTable: routing, neighborTable: neighbors, transport: tb, cryptoService: crypto)
+        let engine = ChatMessageEngine(transport: tb, cryptoService: crypto)
+        let sessionVM = GroupSessionViewModel(activeSession: b)
+        let sosVM = SOSViewModel()
+        let meetingVM = MeetingPointViewModel()
+        let chatVM = ChatViewModel()
+        let router = PacketRouter(cryptoService: crypto, peerTransport: tb, relayPolicyManager: policy,
+            routeDiscoveryService: discovery, chatMessageEngine: engine, seenPacketCache: SeenPacketCache(),
+            sessionViewModel: sessionVM, sosViewModel: sosVM, meetingPointViewModel: meetingVM, chatViewModel: chatVM)
+        var passed = true
+        do {
+            try await ta.start(serviceType: "_teekum._tcp", session: a)
+            try await tb.start(serviceType: "_teekum._tcp", session: b)
+            try await tc.start(serviceType: "_teekum._tcp", session: c)
+            await ta.link(to: tb, isGroupMember: false)
+            await tb.link(to: tc, isGroupMember: false)
+            var cPackets = await tc.inboundPackets.makeAsyncIterator()
+            var aPackets = await ta.inboundPackets.makeAsyncIterator()
+            for (index, type) in [PacketType.chatMessage, .sos, .ack].enumerated() {
+                // ACK travels back from C through B to A.
+                let source = type == .ack ? "CCC" : "AAA"
+                let envelope = CleartextEnvelope(type: type, hopLimit: 8, sessionId: a.sessionId, sequenceNumber: UInt32(index + 1))
+                let payload: Data
+                switch type {
+                case .chatMessage:
+                    payload = try ChatMessagePayload(senderInitials: "AAA", text: "Meet at gate").serialize()
+                case .sos:
+                    payload = SOSPayload(coordinate: CLLocationCoordinate2D(latitude: 0, longitude: 0),
+                        accuracy: 5, sosEventId: 7, senderInitials: "AAA", batteryLevel: 90).serialize()
+                default:
+                    payload = ACKPayload(ackedSeqNumber: 1, ackedSenderInitials: "AAA", ackStatus: .deliveredToFriend,
+                        receivedRssi: -60, originalEventId: 7, responderInitials: "CCC").serialize()
+                }
+                let sealed = try await crypto.seal(payload: payload, envelope: envelope, using: SymmetricKey(data: a.symmetricKeyData))
+                let raw = RawWirePacket(envelope: envelope, ciphertext: sealed.ciphertext, authTag: sealed.authTag)
+                // B cannot decrypt the sender's payload with its own group's key.
+                do {
+                    _ = try await crypto.open(ciphertext: raw.ciphertext, envelope: raw.envelope, authTag: raw.authTag, using: SymmetricKey(data: b.symmetricKeyData))
+                    passed = false
+                } catch {}
+                await router.routeInboundPacket(InboundPacket(rawPacket: raw, sourcePeerId: source), for: b)
+                let sent = await tb.packetsForwardedCount
+                guard sent == index + 1 else { throw TransportError.sendFailed("Foreign router did not forward") }
+                let received: InboundPacket?
+                if type == .ack { received = await aPackets.next() }
+                else { received = await cPackets.next() }
+                guard let received else { throw TransportError.sendFailed("No destination packet") }
+                let opened = try await crypto.open(ciphertext: received.rawPacket.ciphertext, envelope: received.rawPacket.envelope,
+                    authTag: received.rawPacket.authTag, using: SymmetricKey(data: a.symmetricKeyData))
+                passed = passed && opened == payload && received.rawPacket.envelope.hopCount == 1
+                passed = passed && received.rawPacket.ciphertext == raw.ciphertext && received.rawPacket.authTag == raw.authTag
+                // Duplicate on another radio must not circulate again.
+                await router.routeInboundPacket(InboundPacket(rawPacket: raw, sourcePeerId: source), for: b)
+                let afterDuplicate = await tb.packetsForwardedCount
+                passed = passed && afterDuplicate == sent
+            }
+            passed = passed && sessionVM.members.isEmpty && chatVM.messages.isEmpty
+            let before = await tb.packetsForwardedCount
+            await policy.stopRelaying()
+            let blocked = RawWirePacket(envelope: CleartextEnvelope(type: .sos, sessionId: a.sessionId, sequenceNumber: 99),
+                ciphertext: Data(repeating: 0, count: 30), authTag: Data(repeating: 0, count: 16))
+            await router.routeInboundPacket(InboundPacket(rawPacket: blocked, sourcePeerId: "AAA"), for: b)
+            let after = await tb.packetsForwardedCount
+            passed = passed && before == after
+        } catch {
+            print("  FAIL: Production cross-group router: \(error)")
+            passed = false
+        }
+        await ta.stop(); await tb.stop(); await tc.stop()
+        print(passed ? "  PASS: Opaque chat/SOS, reverse ACK, deduplication and opt-out verified." : "  FAIL: Foreign router regression.")
+        return passed
+    }
+
+    private static func testPersistedConsentSynchronization() async -> Bool {
+        print("[Test 14] Synchronize pairing consent, disabled mode, and timed expiry...")
+        let suite = "test.consent.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else { return false }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let clock = TestMeshClock(initialDate: Date(timeIntervalSince1970: 1_800_000_000))
+        let transport = SimulatedMeshTransport(peerId: "BBB", clock: clock)
+        let policy = RelayPolicyManager(clock: clock, userDefaults: defaults, storageKeyPrefix: "consent", transport: transport)
+        defaults.set(RelayParticipationMode.communalRelayActive.rawValue, forKey: "consent.participationMode")
+        await policy.synchronizePersistedParticipation()
+        var passed = await transport.isRelayPermitted()
+        defaults.set(RelayParticipationMode.timed30Minutes.rawValue, forKey: "consent.participationMode")
+        let expiry = clock.now().addingTimeInterval(10)
+        defaults.set(expiry.timeIntervalSince1970, forKey: "consent.timedExpiryDate")
+        await policy.synchronizePersistedParticipation()
+        let state = await policy.currentState()
+        passed = passed && state.timedExpiryDate == expiry
+        clock.advance(by: 11)
+        await policy.synchronizePersistedParticipation()
+        let expired = await transport.isRelayPermitted()
+        passed = passed && !expired
+        defaults.set(RelayParticipationMode.disabled.rawValue, forKey: "consent.participationMode")
+        await policy.synchronizePersistedParticipation()
+        let disabled = await transport.isRelayPermitted()
+        passed = passed && !disabled
+        print(passed ? "  PASS: Persisted consent and expiry synchronized." : "  FAIL: Consent synchronization.")
+        return passed
+    }
+
+    private static func testTransportIgnoresUnavailableTelemetryNeighbors() async -> Bool {
+        print("[Test 15] Transport routing uses live links rather than stale telemetry...")
+        let table = NeighborTable()
+        await table.registerOrUpdateNeighbor(id: "CCC", displayName: nil, state: .connected, isGroupMember: false)
+        let transport = PeerTransportService(neighborTable: table)
+        let available = await transport.activeNeighbors()
+        let passed = available.isEmpty
+        print(passed ? "  PASS: Unavailable telemetry neighbor excluded." : "  FAIL: Selected a neighbor without a live radio link.")
+        return passed
+    }
+
 }

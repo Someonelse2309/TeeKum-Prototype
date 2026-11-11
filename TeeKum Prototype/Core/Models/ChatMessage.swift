@@ -73,9 +73,9 @@ nonisolated public struct ChatMessage: Identifiable, Equatable, Sendable {
             }
         case .deliveryTimedOut:
             if confirmedRecipientCount > 0 {
-                return "Delivered \(confirmedRecipientCount)/\(totalRecipientCount) (Timed Out)"
+                return "Delivered \(confirmedRecipientCount)/\(totalRecipientCount) (Unconfirmed)"
             } else {
-                return "Delivery Timed Out"
+                return "Delivery Unconfirmed"
             }
         case .failed(let reason):
             return "Failed: \(reason)"

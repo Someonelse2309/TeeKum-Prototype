@@ -5,6 +5,72 @@
 
 ---
 
+
+
+### [2026-11-10 17:38] — Recover cross-group chat and ACKs under edge-link packet loss
+- **Contributor / Agent:** Codex
+- **Status:** Completed code and automated verification; updated physical RF validation pending
+- **Target Phase / Milestone:** Field-reported A–B–C reliability, with B in another group
+
+#### 1. Objective & Scope
+Investigate why cross-group chat fails while location/SOS still arrive. Preserve the user's existing `ordinaryRelayRateLimit = 8.0` workspace edit and provide an Indonesian explanation and field protocol.
+
+#### 2. Changes Made & Files Touched
+- Limiter defaults now read the central configuration; telemetry leaves one ordinary burst token for reliable chat/ACK traffic inside the same total budget. Production and simulated transports select the same budget operation.
+- Carry retries use configurable 2-second spacing for the first three per-link submissions, then 30 seconds; ACKs precede chat, source links are excluded, and actual submissions are counted once. Original TTL/ciphertext/hop bounds remain intact.
+- Foreign ACK/SOS/chat keep their packet priority in the outbox. Relay flags survive queueing/retries; opt-out purges foreign traffic across all lanes and prevents failed callbacks from resurrecting foreign retries.
+- Authenticated duplicate chats generate a fresh delivery ACK without redisplay or chat reflood. Router self-echo guards prevent carry exclusions from affecting locally originated frames.
+- Added/extended carry, outbox, chat-loss, configuration, and rate-reservation regressions.
+- Added `CHAT_RELAY_CROSS_GROUP_FIX_2026-11-10.md` with root causes, file mapping, effective settings, test evidence, limitations, and field steps.
+
+#### 3. Key Decisions & Rationale
+Old transport refill was hardcoded despite the central knob. Carry retry at 30 seconds exceeded the 15-second ACK timeout; lost initial ACKs could not recover through duplicate chat receipt. Foreign traffic lost packet priority and competed with telemetry. Fix retry/ACK/priority behavior instead of claiming that rate changes increase RF range. No packet or cryptographic format changes.
+
+#### 4. Verification & Testing Performed
+- Before fix, the new early-retry regression failed against the old 30-second behavior `[VERIFIED]`.
+- A temporary copy of the engine with ACK recovery removed failed the lost-ACK regression `[VERIFIED]`; repository source was not reverted for that check.
+- CLI chat and carry/BLE suites passed `[VERIFIED]`.
+- Deterministic B→C data loss plus B→A ACK loss recovered in 8 seconds at 0.8, 2, and 8 packets/sec with one displayed message `[VERIFIED]`.
+- App/widget simulator build succeeded; all 17 app suites emitted PASS summaries with no failure markers `[VERIFIED]`. Legacy runner exit code alone is not a success criterion.
+- `git diff --check` passed `[VERIFIED]`. Existing toolchain concurrency warnings remain outside this change.
+
+#### 5. Open Items & Next Steps
+Repeat the documented tests on three physical iPhones. The user's 28.8 m/58 m measurements remain field observations; no new RF range, battery-drain, or locked-screen delivery measurements have been made `[UNKNOWN]`.
+
+---
+
+### [2026-11-10 16:14] — Repair cross-group communal mesh discovery and forwarding
+- **Contributor / Agent:** Codex
+- **Status:** Completed software changes and automated verification; physical radio validation pending
+- **Target Phase / Milestone:** Mesh transport — A/C in one group, intermediary B in another
+
+#### 1. Objective & Scope
+Restore discovery and opaque forwarding through a participating phone in another group, preserving group encryption and existing relay consent/power gates. Consulted the local Teekum Beta and Teekum Apps project sources for context.
+
+#### 2. Changes Made & Files Touched
+- `Core/Transport/PeerTransportService.swift`: request Bonjour TXT metadata used for session/relay classification; retain browser results and re-evaluate them on relay enable; expose live Wi-Fi/BLE links to forwarding rather than relying on asynchronous neighbor telemetry.
+- `Core/Mesh/RelayPolicyManager.swift` and `App/TeeKumApp.swift`: synchronize all persisted participation modes before session discovery, preserving timed expiry and applying current power metrics.
+- `Core/Messaging/PacketRouter.swift` and `Core/Transport/PeerTransport.swift`: inject transport protocols to exercise the production router, use the transport's live neighbors, retain carry support, and count forwarding only after a successful submission.
+- `Tests/Core/RelayPolicyTests.swift`: add production-router cross-group chat/SOS/reverse-ACK verification, ciphertext/tag preservation, foreign-key decryption rejection, deduplication/opt-out, persisted consent/expiry, and exclusion of neighbors without live links.
+- `Phase 2/PHYSICAL_DEVICE_MESH_TRANSPORT_TEST.md`: add a concrete cross-group and relay re-enable hardware checklist.
+
+#### 3. Key Decisions & Rationale
+The browser previously used `.bonjour` while its filtering logic depended on TXT metadata. Local relay changes also did not reconsider previously filtered browser results. Foreign forwarding used the asynchronously maintained neighbor registry while same-group forwarding broadcast directly on live links. Use TXT-aware discovery and live links consistently. Intermediate phones continue forwarding ciphertext without importing another group's key; packet size, encryption, hop limits, budgets, and power thresholds are unchanged.
+
+#### 4. Verification & Testing Performed
+- Baseline simulator app/widget build and all 17 suites passed before edits `[VERIFIED]`.
+- Updated app/widget simulator build succeeded with Xcode on iPhone 17 Pro simulator `[VERIFIED]`.
+- All 17 in-app suites completed with no failure markers, including all 15 relay-policy tests and the new production-router regressions `[VERIFIED]`. The legacy runner discards suite return values, so output was checked rather than relying solely on exit status.
+- `bash scripts/test-chat.sh`: passed `[VERIFIED]`.
+- `bash scripts/test-carry.sh`: carry-store and BLE-framing suites passed `[VERIFIED]`.
+- `git diff --check`: passed `[VERIFIED]`.
+- Existing Swift concurrency warnings remain; this task does not migrate the project to Swift 6 language mode.
+
+#### 5. Open Items & Next Steps
+Run the added checklist on three physical iPhones. Automated production-router tests use simulated radio links; Wi-Fi/Bluetooth propagation, OS permission behavior, and locked/background operation are not established by those tests `[UNKNOWN]`.
+
+---
+
 ### [2026-11-04 23:29] — Complete Decommissioning & Clean Removal of Nearby Interaction (UWB Precision Finding)
 - **Contributor / Agent:** Antigravity (Advanced Agentic Coding Assistant)
 - **Status:** Completed & Verified (Clean Build, 100% Tests Passing Across All Suites on iPhone 18 Pro Simulator, Zero UWB Dependencies, Resilient Tactical Radar Active)

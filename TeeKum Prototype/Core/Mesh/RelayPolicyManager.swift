@@ -124,6 +124,22 @@ public actor RelayPolicyManager: RelayPolicyManaging, RelayDiagnosticsProviding 
         )
     }
     
+    /// Pairing persists consent separately; refresh it before starting session discovery.
+    /// Preserve the original timed expiry instead of granting another 30 minutes.
+    public func synchronizePersistedParticipation() async {
+        if let raw = userDefaults.string(forKey: modeStorageKey),
+           let savedMode = RelayParticipationMode(rawValue: raw) {
+            mode = savedMode
+            let expiry = userDefaults.double(forKey: expiryStorageKey)
+            timedExpiryDate = savedMode == .timed30Minutes && expiry > 0
+                ? Date(timeIntervalSince1970: expiry) : nil
+        }
+        let permitted = currentState().isPermitted(at: clock.now())
+        if !permitted { outbox?.clearRelayQueue() }
+        await transport?.setRelayParticipation(enabled: permitted)
+        emitStateUpdate()
+    }
+
     /// Updates the user's chosen participation mode and persists to disk.
     public func setParticipationMode(_ newMode: RelayParticipationMode) async {
         let now = clock.now()

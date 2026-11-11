@@ -199,7 +199,7 @@ public struct ChatMessageBubbleView: View {
         case .deliveryTimedOut:
             HStack(spacing: 3) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                Text("Timed Out")
+                Text("Unconfirmed")
             }
             .font(.caption2.bold())
             .foregroundStyle(Color(red: 1.0, green: 0.84, blue: 0.04))

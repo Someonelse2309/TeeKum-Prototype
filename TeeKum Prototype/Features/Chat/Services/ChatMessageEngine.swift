@@ -345,7 +345,7 @@ public actor ChatMessageEngine {
         }
         
         // Hop count enforcement (Requirement 2: Max 8 hops)
-        guard envelope.hopCount < envelope.hopLimit else {
+        guard envelope.hopCount <= envelope.hopLimit else {
             return .droppedHopLimitExceeded
         }
         
@@ -353,6 +353,7 @@ public actor ChatMessageEngine {
         
         // 2. Stranger Packet Relaying (Requirement 3: Zero-Knowledge Blind Relaying)
         if let session = activeSession, envelope.sessionId != session.sessionId {
+            guard envelope.hopCount < envelope.hopLimit else { return .droppedHopLimitExceeded }
             // Stranger packet! Verify relay policy and battery cutoff (<20%)
             guard currentBatteryLevel >= 0.20 && !isLowPowerMode && !isSurvivalMode else {
                 return .droppedPolicyDisabled
@@ -396,7 +397,7 @@ public actor ChatMessageEngine {
                 let responder = ackPayload?.responderInitials ?? fromPeerId
                 return .ackProcessed(sequenceNumber: envelope.sequenceNumber, responderInitials: responder, isDelivered: true)
             }
-            if envelope.hopCount + 1 < envelope.hopLimit {
+            if envelope.hopCount < envelope.hopLimit {
                 var mutatedData = wireData
                 mutatedData[mutatedData.startIndex + 2] = envelope.hopCount + 1
                 try await forwardOpaquePacket(mutatedData, exceptPeerId: fromPeerId)
@@ -406,17 +407,6 @@ public actor ChatMessageEngine {
         
         guard envelope.type == .chatMessage else {
             return .droppedMalformed
-        }
-        
-        // Duplicate suppression (Requirement 4)
-        let packetKey = PacketKey(wirePacket: rawPacket)
-        let isDuplicate = await seenPacketCache.isDuplicateAndRecord(packetKey, now: clock.now())
-        if isDuplicate || seenChatSequences.contains(envelope.sequenceNumber) {
-            return .droppedDuplicate(sequenceNumber: envelope.sequenceNumber)
-        }
-        seenChatSequences.insert(envelope.sequenceNumber)
-        if seenChatSequences.count > 1000 {
-            seenChatSequences.removeAll()
         }
         
         // 4. Cryptographic Authentication & Decryption (Requirement 1)
@@ -442,6 +432,25 @@ public actor ChatMessageEngine {
             return .droppedSelfEcho
         }
         
+        guard abs(clock.now().timeIntervalSince(payload.timestamp)) <= CarryMessageStore.retention else {
+            return .droppedMalformed
+        }
+
+        // Duplicate suppression (Requirement 4)
+        let packetKey = PacketKey(wirePacket: rawPacket)
+        let isDuplicate = await seenPacketCache.isDuplicateAndRecord(packetKey, now: clock.now())
+        if isDuplicate || seenChatSequences.contains(envelope.sequenceNumber) {
+            // The first ACK may have been lost. Confirm authenticated receipt again,
+            // without adding another message or forwarding the chat again.
+            try await sendDeliveryACK(for: rawPacket, senderInitials: payload.senderInitials,
+                receivedRssi: receivedRssi ?? -70)
+            return .droppedDuplicate(sequenceNumber: envelope.sequenceNumber)
+        }
+        seenChatSequences.insert(envelope.sequenceNumber)
+        if seenChatSequences.count > 1000 {
+            seenChatSequences.removeAll()
+        }
+
         // 5. In-Memory Message Display (Requirement 9: In-Memory Only, Zero Persistence)
         let message = ChatMessage(
             sequenceNumber: envelope.sequenceNumber,
@@ -463,7 +472,7 @@ public actor ChatMessageEngine {
         )
         
         // 7. Multi-Hop Forwarding if hops remain (Requirement 2)
-        if envelope.hopCount + 1 < envelope.hopLimit {
+        if envelope.hopCount < envelope.hopLimit {
             var mutatedData = wireData
             mutatedData[mutatedData.startIndex + 2] = envelope.hopCount + 1
             try await forwardOpaquePacket(mutatedData, exceptPeerId: fromPeerId)

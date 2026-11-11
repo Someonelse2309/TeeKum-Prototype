@@ -32,6 +32,7 @@ public struct PeerTransportTests {
         passed = passed && testDiagnosticsSnapshot()
         passed = passed && testZeroHandshakeImmediatePacketFraming()
         passed = passed && testPriorityOutboxStrangerRelayElevatedPriority()
+        passed = passed && testForeignReliablePriorityAndOptOut()
         
         if passed {
             print("--- [PeerTransportTests] ALL TRANSPORT TESTS PASSED SUCCESSFULLY! ---")
@@ -612,4 +613,29 @@ public struct PeerTransportTests {
             return false
         }
     }
+    private static func testForeignReliablePriorityAndOptOut() -> Bool {
+        print("[Regression] Foreign ACK/SOS/chat keep priority and are purged across lanes on opt-out...")
+        let queue = PriorityOutboxQueue()
+        do {
+            try queue.enqueue(data: createValidWirePacket(type: .locationPing), isRelay: true)
+            try queue.enqueue(data: createValidWirePacket(type: .chatMessage, seq: 2), isRelay: true)
+            try queue.enqueue(data: createValidWirePacket(type: .ack, seq: 3), isRelay: true)
+            guard let ack = queue.dequeue(), ack.packetType == .ack, ack.isUrgent, ack.isRelay else { return false }
+            guard queue.requeueForRetry(ack) else { return false }
+            guard let retry = queue.dequeue(), retry.packetType == .ack, retry.isRelay, retry.attemptCount == 1 else { return false }
+            guard let chat = queue.dequeue(), chat.packetType == .chatMessage, chat.isRelay else { return false }
+            try queue.enqueue(data: createValidWirePacket(type: .sos, seq: 4), isRelay: true)
+            try queue.enqueue(data: createValidWirePacket(type: .ack, seq: 5), isRelay: true)
+            try queue.enqueue(data: createValidWirePacket(type: .chatMessage, seq: 6), isRelay: true)
+            try queue.enqueue(data: createValidWirePacket(type: .chatMessage, seq: 7))
+            try queue.enqueue(data: createValidWirePacket(type: .sos, seq: 8))
+            queue.clearRelayQueue()
+            guard let localSOS = queue.dequeue(), !localSOS.isRelay, localSOS.packetType == .sos,
+                  let localChat = queue.dequeue(), !localChat.isRelay, localChat.packetType == .chatMessage,
+                  queue.dequeue() == nil else { return false }
+        } catch { print("  FAIL: \(error)"); return false }
+        print("  PASS: Foreign reliable priority, retry flags, and opt-out across lanes verified.")
+        return true
+    }
+
 }

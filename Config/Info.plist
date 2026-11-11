@@ -21,6 +21,10 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
 	</array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>TeeKum uses Bluetooth to exchange encrypted messages and relay messages between nearby phones without internet.</string>
 </dict>
 </plist>

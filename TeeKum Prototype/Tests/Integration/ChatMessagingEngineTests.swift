@@ -154,7 +154,8 @@ public enum ChatMessagingEngineTests {
         print("================================================================")
         fflush(stdout)
         
-        var passed = true
+        var passed = CarryMessageStoreTests.runAllTests()
+        passed = await testCarryAcrossDisconnectedEncounters() && passed
         
         passed = await testMessageValidationAndByteBoundaryEnforcement() && passed
         fflush(stdout)
@@ -167,6 +168,8 @@ public enum ChatMessagingEngineTests {
         passed = await testRelaysDoNotDecryptOrDisplayMessages() && passed
         fflush(stdout)
         passed = await testDuplicateMessageSuppression() && passed
+        passed = await testCrossGroupEdgeLinkRecovery() && passed
+        passed = await testConfiguredRelayBudgetAndTelemetryReservation() && passed
         fflush(stdout)
         passed = await testFIFOOutboxLanePrecedenceAndBounds() && passed
         fflush(stdout)
@@ -191,7 +194,7 @@ public enum ChatMessagingEngineTests {
         
         if passed {
             print("================================================================")
-            print(">>> ALL 16 CHAT MESSAGING & MESH INTEGRATION TESTS PASSED <<<")
+            print(">>> ALL CHAT MESSAGING & MESH INTEGRATION TESTS PASSED <<<")
             print("================================================================\n")
         } else {
             print("❌ SOME CHAT MESSAGING & MESH INTEGRATION TESTS FAILED!\n")
@@ -201,6 +204,52 @@ public enum ChatMessagingEngineTests {
         return passed
     }
     
+    /// Exercises real encryption/ingestion and late ACK handling across disconnected encounters.
+    public static func testCarryAcrossDisconnectedEncounters() async -> Bool {
+        let clock = TestMeshClock()
+        let key = Data(repeating: 0x45, count: 32)
+        let a = GroupSession(sessionId: 123, sessionName: "Carry", symmetricKeyData: key, localInitials: "ALI")
+        let b = GroupSession(sessionId: 123, sessionName: "Carry", symmetricKeyData: key, localInitials: "BOB")
+        let c = GroupSession(sessionId: 123, sessionName: "Carry", symmetricKeyData: key, localInitials: "CAR")
+        let ta = TestChatMockTransport(), tb = TestChatMockTransport(), tc = TestChatMockTransport()
+        let ea = ChatMessageEngine(transport: ta, cryptoService: CryptoService(), clock: clock, sessionProvider: { a })
+        let eb = ChatMessageEngine(transport: tb, cryptoService: CryptoService(), clock: clock, sessionProvider: { b })
+        let ec = ChatMessageEngine(transport: tc, cryptoService: CryptoService(), clock: clock, sessionProvider: { c })
+        do {
+            let sent = try await ea.sendMessage(text: "Meet at gate", targetRecipients: ["CAR"])
+            guard let wire = await ta.lastBroadcastData(ofType: .chatMessage) else { return false }
+            _ = try await eb.handleInboundWirePacket(wire, fromPeerId: "ALI")
+            guard let forwarded = await tb.lastBroadcastData(ofType: .chatMessage) else { return false }
+            var custody = CarryMessageStore()
+            custody.remember(forwarded, isForeign: false, now: clock.now())
+            clock.advance(by: 180)
+            await ea.evaluateTimeoutsAndRetries()
+            guard let later = custody.nextTransmission(to: ["CAR"], now: clock.now()) else { return false }
+            // The last permitted hop must still deliver locally. Tampering must not poison dedup.
+            var finalHop = later.data
+            finalHop[2] = finalHop[1]
+            var tampered = finalHop
+            tampered[12] ^= 1
+            _ = try await ec.handleInboundWirePacket(tampered, fromPeerId: "BOB")
+            let received = try await ec.handleInboundWirePacket(finalHop, fromPeerId: "BOB")
+            guard received.deliveredMessage?.text == "Meet at gate" else { return false }
+            _ = try await ec.handleInboundWirePacket(finalHop, fromPeerId: "BOB")
+            guard await ec.activeMessages().count == 1,
+                  let ack = await tc.lastBroadcastData(ofType: .ack) else { return false }
+            var reverseCustody = CarryMessageStore()
+            reverseCustody.remember(ack, isForeign: false, now: clock.now())
+            clock.advance(by: 120)
+            guard let returnTrip = reverseCustody.nextTransmission(to: ["ALI"], now: clock.now()) else { return false }
+            let processed = await ea.processDeliveryACK(rawPacket: try RawWirePacket.fromWireData(returnTrip.data), fromPeerId: "BOB")
+            guard processed, await ea.message(withSequenceNumber: sent.sequenceNumber)?.confirmedResponders.contains("CAR") == true else { return false }
+            print("Carry integration passed: A → B, delayed B → C, final hop, tamper rejection, duplicate suppression, late ACK")
+            return true
+        } catch {
+            print("Carry integration failed: \(error)")
+            return false
+        }
+    }
+
     // MARK: - Test 1: Message Validation & UTF-8 Byte Boundaries
     
     public static func testMessageValidationAndByteBoundaryEnforcement() async -> Bool {
@@ -621,6 +670,9 @@ public enum ChatMessagingEngineTests {
                 return false
             }
             
+            // Drop Bob's first ACK. Sender retries must obtain a fresh ACK without redisplay.
+            let firstACKs = await tB.broadcastedFrames.filter { (try? RawWirePacket.fromWireData($0))?.envelope.type == .ack }
+
             // Second arrival of same wire packet (duplicate arrival over alternative mesh path)
             let secondOutcome = try await engineB.handleInboundWirePacket(wireData, fromPeerId: "RelayPath2")
             guard case .droppedDuplicate(let seq) = secondOutcome, seq == msg.sequenceNumber else {
@@ -628,6 +680,17 @@ public enum ChatMessagingEngineTests {
                 return false
             }
             
+            let retryACKs = await tB.broadcastedFrames.filter { (try? RawWirePacket.fromWireData($0))?.envelope.type == .ack }
+            guard retryACKs.count == firstACKs.count + 1, let retryACK = retryACKs.last else {
+                print("  FAIL: Lost delivery ACK cannot recover: duplicate chat did not produce a fresh ACK.")
+                return false
+            }
+            _ = try await engineA.handleInboundWirePacket(retryACK, fromPeerId: "ForeignRelay")
+            guard let delivered = await engineA.message(withSequenceNumber: msg.sequenceNumber), delivered.deliveryState.isDelivered else {
+                print("  FAIL: Sender did not confirm delivery after ACK recovery.")
+                return false
+            }
+
             // Bob's in-memory messages must contain exactly 1 entry
             let bobMsgs = await engineB.activeMessages()
             guard bobMsgs.count == 1 else {
@@ -1183,6 +1246,7 @@ public enum ChatMessagingEngineTests {
             return false
         }
         
+        #if canImport(UIKit)
         // 3. Verify Emergency SOS is NOT disabled by this cutoff
         let sosViewModel = SOSViewModel(
             sessionProvider: { session },
@@ -1199,6 +1263,9 @@ public enum ChatMessagingEngineTests {
         }
         
         print("  PASS: Battery cutoff (<20%) disables chat without disabling Emergency SOS.")
+        #else
+        print("  PASS: Chat battery cutoff. SOS ViewModel assertion requires iOS and was skipped.")
+        #endif
         return true
     }
     
@@ -1316,4 +1383,89 @@ public enum ChatMessagingEngineTests {
         print("  PASS: Direct 1-on-1 chat packets not dropped on memberSlot collision, self-echo properly filtered.")
         return true
     }
+    /// Uses the same ciphertext store, budget and outbox as the radio transport.
+    /// Both a B->C data submission and a B->A ACK submission are deliberately lost.
+    public static func testCrossGroupEdgeLinkRecovery() async -> Bool {
+        print("[Regression] Cross-group edge link: lost data and lost reverse ACK at 0.8/2/8 packets/sec...")
+        for rate in [0.8, 2.0, 8.0] {
+            let clock = TestMeshClock(initialDate: Date(timeIntervalSince1970: 1_800_000_000))
+            let key = Data(repeating: 0x55, count: 32)
+            let a = GroupSession(sessionId: 0x1111, symmetricKeyData: key, localInitials: "AAA")
+            let c = GroupSession(sessionId: a.sessionId, symmetricKeyData: key, localInitials: "CCC")
+            let ta = TestChatMockTransport()
+            let tc = TestChatMockTransport()
+            let engineA = ChatMessageEngine(transport: ta, cryptoService: CryptoService(), clock: clock, sessionProvider: { a })
+            let engineC = ChatMessageEngine(transport: tc, cryptoService: CryptoService(), clock: clock, sessionProvider: { c })
+            let budget = ForwardingRateLimiter(clock: clock, ordinaryCapacity: 1, ordinaryRefillRate: rate)
+            var custody = CarryMessageStore()
+            let outbox = PriorityOutboxQueue()
+            do {
+                let message = try await engineA.sendMessage(text: "Meet at gate", targetRecipients: ["CCC"])
+                guard let original = await ta.lastBroadcastData() else { return false }
+                var relayed = original
+                relayed[2] += 1
+                custody.remember(relayed, isForeign: true, excludingPeerId: "A", now: clock.now())
+                // Exhaust ordinary airtime before the reliable packet arrives.
+                _ = await budget.consumeOrdinaryToken()
+                guard !(await budget.consumeOrdinaryToken()) else { return false }
+                for attempt in 0..<2 {
+                    clock.advance(by: 2)
+                    guard let next = custody.nextTransmission(to: ["A", "C"], now: clock.now()), next.peer == "C",
+                          await budget.consumeOrdinaryToken() else { return false }
+                    try outbox.enqueue(data: next.data, destinationPeerId: next.peer, isRelay: next.isForeign)
+                    guard let item = outbox.dequeue(), item.packetType == .chatMessage else { return false }
+                    custody.markAttempt(item.packetData, to: "C", now: clock.now())
+                    guard item.packetData[2] == 1, item.packetData.suffix(46) == original.suffix(46) else { return false }
+                    if attempt == 1 { _ = try await engineC.handleInboundWirePacket(item.packetData, fromPeerId: "B") }
+                    // First attempt is accepted by the link but never reaches C.
+                }
+                let responses = await tc.broadcastedFrames
+                guard var ack = responses.first(where: { (try? RawWirePacket.fromWireData($0))?.envelope.type == .ack }) else { return false }
+                ack[2] += 1
+                custody.remember(ack, isForeign: true, excludingPeerId: "C", now: clock.now())
+                for attempt in 0..<2 {
+                    clock.advance(by: 2)
+                    guard let next = custody.nextTransmission(to: ["A", "C"], now: clock.now()), next.peer == "A",
+                          await budget.consumeOrdinaryToken() else { return false }
+                    try outbox.enqueue(data: next.data, destinationPeerId: next.peer, isRelay: next.isForeign)
+                    guard let item = outbox.dequeue(), item.packetType == .ack, item.isUrgent, item.isRelay else { return false }
+                    custody.markAttempt(item.packetData, to: "A", now: clock.now())
+                    if attempt == 1 { _ = try await engineA.handleInboundWirePacket(item.packetData, fromPeerId: "B") }
+                    // First ACK attempt never reaches A; the relay must resend it.
+                }
+                let received = await engineC.activeMessages()
+                guard let result = await engineA.message(withSequenceNumber: message.sequenceNumber),
+                      result.deliveryState.isDelivered, received.count == 1,
+                      clock.now().timeIntervalSince(message.timestamp) < 15 else { return false }
+            } catch {
+                print("  FAIL: Loss recovery at rate \(rate): \(error)")
+                return false
+            }
+        }
+        print("  PASS: Data and reverse ACK recover within 8 seconds, one displayed message, unchanged ciphertext/hop budget.")
+        return true
+    }
+
+    public static func testConfiguredRelayBudgetAndTelemetryReservation() async -> Bool {
+        print("[Regression] Relay limiter reads configuration; telemetry cannot spend the chat/ACK reserve...")
+        let clock = TestMeshClock()
+        let configured = ForwardingRateLimiter(clock: clock)
+        for _ in 0..<Int(TeeKumConfiguration.Timing.ordinaryRelayBurstCapacity) {
+            _ = await configured.consumeOrdinaryToken()
+        }
+        clock.advance(by: 1)
+        let available = await configured.availableTokens()
+        let expected = min(TeeKumConfiguration.Timing.ordinaryRelayBurstCapacity, TeeKumConfiguration.Timing.ordinaryRelayRateLimit)
+        guard abs(available - expected) < 0.0001 else {
+            print("  FAIL: Configured rate \(expected) differs from actual tokens \(available).")
+            return false
+        }
+        let budget = ForwardingRateLimiter(clock: clock, ordinaryCapacity: 4, ordinaryRefillRate: 0.8)
+        for _ in 0..<3 { guard await budget.consumeTelemetryToken() else { return false } }
+        guard !(await budget.consumeTelemetryToken()), await budget.consumeOrdinaryToken(),
+              !(await budget.consumeOrdinaryToken()), await budget.consumeSOSToken() else { return false }
+        print("  PASS: Configured refill is effective; reliable traffic uses a reserve within the same bounded budget; SOS remains independent.")
+        return true
+    }
+
 }

@@ -100,8 +100,8 @@ nonisolated public enum TeeKumConfiguration {
         /// Maximum route discovery retries (default: 2).
         public static var rreqMaxRetries: Int = 2
         
-        /// Maximum ordinary packet relay forwarding rate (packets/second, default: 2.0).
-        public static var ordinaryRelayRateLimit: Double = 2.0
+        /// Ordinary relay budget in packets/second, read when a ForwardingRateLimiter is created.
+        public static var ordinaryRelayRateLimit: Double = 8.0
         
         /// Burst token bucket capacity for ordinary packet relaying (default: 4.0).
         public static var ordinaryRelayBurstCapacity: Double = 4.0
@@ -127,6 +127,11 @@ nonisolated public enum TeeKumConfiguration {
     
     // MARK: - 3. Chat Messaging Parameters
     public enum Chat {
+        /// Fast link retries fit inside the chat delivery ACK window; later custody is slower.
+        public static var carryFastRetryInterval: TimeInterval = 2.0
+        public static var carryFastAttemptLimit: Int = 3
+        public static var carrySlowRetryInterval: TimeInterval = 30.0
+
         /// Maximum chat messages held strictly in ephemeral RAM (purged on exit) (default: 50).
         public static var maxHistory: Int = 50
         

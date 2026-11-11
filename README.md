@@ -1,4 +1,4 @@
-# TeeKum — Offline-First Concert & Festival Mesh Navigationcikiwir
+# TeeKum — Offline-First Concert & Festival Mesh Navigation
 
 [![Platform](https://img.shields.io/badge/Platform-iOS%2017.0%2B-blue.svg)](https://developer.apple.com/ios/)
 [![Swift](https://img.shields.io/badge/Swift-5.9%20%2F%20Swift%206%20Ready-orange.svg)](https://swift.org)

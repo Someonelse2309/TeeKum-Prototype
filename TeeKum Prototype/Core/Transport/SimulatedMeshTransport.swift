@@ -417,7 +417,8 @@ public actor SimulatedMeshTransport: MeshTransport, PeerTransport {
                 throw TransportError.rateLimitExceeded("Urgent SOS forwarding budget exceeded")
             }
         } else {
-            let allowed = await rateLimiter.consumeOrdinaryToken()
+            let allowed = packetType == .chatMessage || packetType == .ack
+                ? await rateLimiter.consumeOrdinaryToken() : await rateLimiter.consumeTelemetryToken()
             guard allowed else {
                 packetsDroppedRateLimitCount += 1
                 throw TransportError.rateLimitExceeded("Ordinary relay budget exceeded (2 pkts/sec)")

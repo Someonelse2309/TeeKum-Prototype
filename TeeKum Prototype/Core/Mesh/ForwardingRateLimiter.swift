@@ -7,9 +7,10 @@
 
 import Foundation
 
-/// Token bucket forwarding rate limiter enforcing Decision 7 limits:
-/// - Ordinary relay traffic: 2 packets / sec (capacity 4 tokens, refill 2.0/s)
-/// - Urgent SOS priority traffic: max 4 packets / sec (capacity 8 tokens, refill 4.0/s)
+/// Token bucket forwarding budgets, initialized from TeeKumConfiguration:
+/// - Ordinary traffic shares a configured refill rate and burst capacity.
+/// - Telemetry leaves one ordinary burst token for reliable chat/ACK traffic.
+/// - SOS retains its independent urgent budget (8-token burst capacity).
 ///
 /// Supports an injected `MeshClock` for deterministic automated unit testing.
 public actor ForwardingRateLimiter: ForwardingBudgetManaging {
@@ -29,10 +30,10 @@ public actor ForwardingRateLimiter: ForwardingBudgetManaging {
     
     public init(
         clock: MeshClock = SystemMeshClock(),
-        ordinaryCapacity: Double = 4.0,
-        ordinaryRefillRate: Double = 2.0,
+        ordinaryCapacity: Double = TeeKumConfiguration.Timing.ordinaryRelayBurstCapacity,
+        ordinaryRefillRate: Double = TeeKumConfiguration.Timing.ordinaryRelayRateLimit,
         sosCapacity: Double = 8.0,
-        sosRefillRate: Double = 4.0
+        sosRefillRate: Double = TeeKumConfiguration.Timing.urgentSOSRateLimit
     ) {
         self.clock = clock
         self.ordinaryCapacity = ordinaryCapacity
@@ -81,6 +82,16 @@ public actor ForwardingRateLimiter: ForwardingBudgetManaging {
         }
     }
     
+    /// Telemetry shares the ordinary budget but leaves one burst token for chat/ACK.
+    /// This is a reservation inside the configured budget, not an additional allowance.
+    public func consumeTelemetryToken() async -> Bool {
+        refillOrdinary(now: clock.now())
+        let reserve = min(1.0, max(0.0, ordinaryCapacity - 1.0))
+        guard ordinaryTokens >= 1.0 + reserve else { return false }
+        ordinaryTokens -= 1.0
+        return true
+    }
+
     /// Attempts to consume 1 token for forwarding urgent SOS priority traffic.
     /// Returns true if permitted, false if SOS limit exceeded.
     public func consumeSOSToken() async -> Bool {

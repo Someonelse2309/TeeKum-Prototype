@@ -229,9 +229,16 @@ public protocol PeerTransport: Actor {
     /// Transmits a 56-byte datagram to a specific connected peer.
     func sendPacket(_ data: Data, to peerId: String) async throws
     
+    /// Retains authenticated group or policy-approved opaque frames for later delivery.
+    func retainReceivedForCarry(_ packet: RawWirePacket, excludingPeerId: String?) async
+
     /// Returns the number of direct peer connections currently established.
     func activeDirectPeerCount() async -> Int
     
     /// Captures a live diagnostic snapshot of transport state and peer telemetry.
     func getDiagnostics() async -> TransportDiagnostics
+}
+
+public extension PeerTransport {
+    func retainReceivedForCarry(_ packet: RawWirePacket, excludingPeerId: String?) async {}
 }

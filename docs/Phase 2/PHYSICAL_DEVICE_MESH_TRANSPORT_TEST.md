@@ -26,7 +26,7 @@ This document provides step-by-step instructions for physical-device validation 
 | :--- | :--- | :--- | :--- | :--- |
 | **PHY-TR-01** | Direct Neighbor Discovery | iPhone A and B scan on same festival session | Both phones appear in Diagnostics HUD with `state: .connected`, valid RSSI (-40 to -85 dBm), and `isGroup: true`. | Ready |
 | **PHY-TR-02** | Stranger Peering (Communal Mesh) | iPhone A (Session `0x1111`), iPhone B (Session `0x2222`) | Phones discover each other over `_teekum._tcp`; appear in Neighbor Table with `isGroup: false`. Radio link established. | Ready |
-| **PHY-TR-03** | Blind Opaque Forwarding | 3-Phone Linear Topology: A -> B (Stranger) -> C (A's Group) | Phone B blindly relays A's 54-byte datagram to C; C verifies Poly1305 MAC tag and displays A's pin. `hopCount` incremented to 1. | Ready |
+| **PHY-TR-03** | Blind Opaque Forwarding | 3-Phone Linear Topology: A -> B (Stranger) -> C (A's Group) | Phone B blindly relays A's 56-byte datagram to C; C verifies Poly1305 MAC tag and displays A's pin. `hopCount` incremented to 1. | Ready |
 | **PHY-TR-04** | Relay Opt-Out Cancellation | User toggles "Relaying for Festival" OFF on Phone B | Phone B immediately ceases forwarding stranger packets; clears relay outbox; Phone A send reports next-hop failure. | Ready |
 | **PHY-TR-05** | Link Disconnection & Recovery | Physical separation or Faraday pouch on Phone B | NWConnection failure detected; Phone B marked `.stale` and removed; upon return, reconnects via exponential backoff. | Ready |
 | **PHY-TR-06** | Rate Limiting Budget (2 pkts/sec) | Rapid bursts of ordinary location pings through Phone B | Phone B throttles ordinary traffic at 2 pkts/sec; urgent SOS packets bypass ordinary throttle at 4 pkts/sec. | Ready |
@@ -126,3 +126,17 @@ This document provides step-by-step instructions for physical-device validation 
 
 - **Unit & In-Memory Multi-Peer Simulation Status:** 13/13 passing (100% automated simulator pass rate).
 - **Physical Device Validation Status:** Pending 3-device venue field test execution following the protocol above.
+
+
+## Cross-group relay regression — 10 November 2026
+
+**Status: physical validation pending.** Production-router simulation covers encrypted chat/SOS forwarding, reverse ACKs, duplicate suppression, and relay opt-out `[VERIFIED]`. Simulator tests do not establish radio range or background delivery on physical iPhones.
+
+1. Install the updated build on all three phones. Create group G1 on A and join C using A's invite. Create a separate group G2 on B, with different group keys and distinct device initials.
+2. Enable communal relay on all devices, keep battery at least 20%, disable Low Power Mode, and grant Bluetooth and Local Network permissions. Keep the app foregrounded for this baseline.
+3. Place devices so A can reach B and B can reach C, while A and C cannot reach one another over **either Wi-Fi or Bluetooth**. Confirm that removing B breaks A–C delivery.
+4. Send a new chat from A. C should receive it and A should receive C's delivery ACK through B. B must not display the chat or add A/C to its group roster.
+5. Trigger a manual SOS on A. C should show the authenticated alert and return its ACK. B should forward the encrypted packet without displaying an alert or sounding a siren.
+6. With the devices stationary, disable relay on B, then enable it again. Send a new chat and SOS. Discovery should resume without changing groups or relaunching the app. This specifically checks reconsideration of peers discovered while relay was disabled.
+7. Repeat after relaunching B, and with B's 30-minute relay mode still valid. Check that relaunching preserves the original expiry time. After expiry, opt-out, battery cutoff, or Low Power Mode, foreign forwarding must stop.
+8. Repeat with Bluetooth unavailable to isolate Wi-Fi discovery, then test with Bluetooth available. Record the actual radio links and delivery results separately; do not infer the radio used from a successful message alone.

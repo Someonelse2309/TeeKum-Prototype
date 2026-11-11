@@ -100,7 +100,7 @@ public struct CleartextEnvelope: Equatable, Sendable {
         }
         
         let hopLimit = data[data.startIndex + 1]
-        guard hopLimit >= 1 else {
+        guard hopLimit >= 1 && hopLimit <= PacketConstants.maxHopLimit else {
             throw PacketCodecError.invalidHopLimit(hopLimit)
         }
         

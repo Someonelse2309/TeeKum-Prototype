@@ -523,9 +523,12 @@ public enum ForwardingDecision: Sendable, Equatable {
 }
 
 public protocol ForwardingBudgetManaging: Actor {
-    /// Attempts to consume tokens for forwarding ordinary traffic (2 pkts/sec).
+    /// Attempts to consume one token from the configured ordinary forwarding budget.
     func consumeOrdinaryToken() async -> Bool
     
+    /// Consumes from the same ordinary budget while reserving capacity for chat/ACK.
+    func consumeTelemetryToken() async -> Bool
+
     /// Attempts to consume tokens for urgent SOS forwarding (max 4 pkts/sec).
     func consumeSOSToken() async -> Bool
     
@@ -761,4 +764,8 @@ public protocol RelayDiagnosticsProviding: Actor {
     
     /// Records a packet drop event with specific reason.
     func recordDropEvent(reason: DropReason) async
+}
+
+public extension ForwardingBudgetManaging {
+    func consumeTelemetryToken() async -> Bool { await consumeOrdinaryToken() }
 }

@@ -131,6 +131,10 @@ struct TeeKumApp: App {
                         locationService.currentBatteryLevel,
                         isLowPowerMode: isLowPower
                     )
+                    await peerTransport.updateCarryPowerMetrics(
+                        locationService.currentBatteryLevel,
+                        isLowPowerMode: isLowPower
+                    )
                     if locationService.isSurvivalModeActive {
                         await LiveActivityManager.shared.endSessionActivity()
                     }
@@ -151,6 +155,10 @@ struct TeeKumApp: App {
                         level,
                         isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
                     )
+                    await peerTransport.updateCarryPowerMetrics(
+                        level,
+                        isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+                    )
                     await updateLiveActivityTelemetry()
                 }
             }
@@ -165,6 +173,10 @@ struct TeeKumApp: App {
                         isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
                     )
                     await chatMessageEngine.setBatteryLevel(
+                        locationService.currentBatteryLevel,
+                        isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+                    )
+                    await peerTransport.updateCarryPowerMetrics(
                         locationService.currentBatteryLevel,
                         isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
                     )
@@ -358,13 +370,18 @@ struct TeeKumApp: App {
         
         // 4. Start Radio Transport
         do {
-            // Synchronize in-memory relay policy manager if user opted into Communal Mesh Compact
-            let savedModeRaw = UserDefaults.standard.string(forKey: "com.teekum.relay.participationMode")
-            if let savedMode = RelayParticipationMode(rawValue: savedModeRaw ?? ""), savedMode == .communalRelayActive {
-                await relayPolicyManager.setParticipationMode(.communalRelayActive)
-            }
-            
+            // Apply consent and power gates before Bonjour advertises or filters peers.
+            await relayPolicyManager.synchronizePersistedParticipation()
+            await relayPolicyManager.updatePowerMetrics(
+                batteryLevel: locationService.currentBatteryLevel,
+                isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+            )
+
             try await peerTransport.start(serviceType: "_teekum._tcp", session: session)
+            await peerTransport.updateCarryPowerMetrics(
+                locationService.currentBatteryLevel,
+                isLowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled
+            )
             let policyState = await relayPolicyManager.currentState()
             await peerTransport.setRelayParticipation(enabled: policyState.isRelayPermitted)
         } catch {

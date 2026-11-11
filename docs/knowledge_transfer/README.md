@@ -1,5 +1,7 @@
 # TeeKum Knowledge Transfer Documentation Package
 
+Panduan awal untuk diskusi tim sebelum migrasi: [Peta Fitur dan File](FEATURE_FILE_MAP.md). Peta ini menelusuri source baseline 5 November 2026, termasuk alur create/join, dependency tiap fitur, dan perbedaan dengan beberapa klaim dokumentasi lama.
+
 > **Primary Knowledge Base, Operational Architecture & Technical Handoff Directory**  
 > **Project:** TeeKum — Offline-First Concert & Festival Mesh Navigation System for iOS  
 > **Target Platform:** iOS 17.0+ | Native Swift 5.9+ / Swift 6 Concurrency Readiness  

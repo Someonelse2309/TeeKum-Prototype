@@ -153,7 +153,9 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
             throw TransportError.sendFailed("Unrecognized packet type in Byte 0: \(typeRaw)")
         }
         
-        if isRelay {
+        // Reliable foreign traffic keeps its packet priority. Group membership must
+        // not demote an ACK/SOS behind routine foreign location traffic.
+        if isRelay && packetType != .sos && packetType != .ack && packetType != .chatMessage {
             // Communal Stranger Relay Lane (Ring buffer FIFO: 32 max)
             if strangerRelayLane.count >= maxRelayCapacity {
                 // Drop oldest unforwarded packet (drop-head)
@@ -187,9 +189,9 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
                 packetType: packetType,
                 destinationPeerId: destinationPeerId,
                 attemptCount: 0,
-                maxRetries: 2,
+                maxRetries: isRelay ? MeshTimingConfiguration.default.distantLinkMaxRetries : 2,
                 isUrgent: true,
-                isRelay: false
+                isRelay: isRelay
             )
             urgentLane.append(item)
             return item
@@ -205,9 +207,9 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
                 packetType: packetType,
                 destinationPeerId: destinationPeerId,
                 attemptCount: 0,
-                maxRetries: MeshTimingConfiguration.default.chatMaxRetries,
+                maxRetries: isRelay ? MeshTimingConfiguration.default.distantLinkMaxRetries : MeshTimingConfiguration.default.chatMaxRetries,
                 isUrgent: false,
-                isRelay: false
+                isRelay: isRelay
             )
             localChatLane.append(item)
             return item
@@ -287,6 +289,8 @@ nonisolated public final class PriorityOutboxQueue: @unchecked Sendable {
     /// Clears only pending stranger relay packets (e.g. when relay participation is disabled).
     public func clearRelayQueue() {
         strangerRelayLane.removeAll()
+        urgentLane.removeAll { $0.isRelay }
+        localChatLane.removeAll { $0.isRelay }
     }
     
     /// Clears all pending packets across all lanes.

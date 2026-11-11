@@ -23,7 +23,7 @@ public final class PacketRouter {
     // MARK: - Dependencies
     
     private let cryptoService: CryptoServiceProvider
-    private let peerTransport: PeerTransportService
+    private let peerTransport: any PeerTransport & MeshTransport
     private let relayPolicyManager: RelayPolicyManager
     private let routeDiscoveryService: RouteDiscoveryService
     private let chatMessageEngine: ChatMessageEngine
@@ -39,7 +39,7 @@ public final class PacketRouter {
     
     public init(
         cryptoService: CryptoServiceProvider,
-        peerTransport: PeerTransportService,
+        peerTransport: any PeerTransport & MeshTransport,
         relayPolicyManager: RelayPolicyManager,
         routeDiscoveryService: RouteDiscoveryService,
         chatMessageEngine: ChatMessageEngine,
@@ -76,8 +76,15 @@ public final class PacketRouter {
         
         // 2. Immediate ACK Processing (SOS delivery tracking & Chat per-recipient receipts)
         if envelope.type == .ack {
+            guard let payload = try? await cryptoService.open(
+                ciphertext: raw.ciphertext, envelope: envelope, authTag: raw.authTag,
+                using: SymmetricKey(data: session.symmetricKeyData)
+            ), let ack = try? ACKPayload.deserialize(from: payload),
+                abs(Date().timeIntervalSince(ack.ackTimestamp)) <= CarryMessageStore.retention,
+                ack.responderInitials != session.localInitials else { return }
             await sosViewModel?.processInboundPacket(inbound)
             _ = await chatMessageEngine.processDeliveryACK(rawPacket: raw, fromPeerId: inbound.sourcePeerId)
+            await peerTransport.retainReceivedForCarry(raw, excludingPeerId: inbound.sourcePeerId)
             await relayMeshPacketIfNeeded(inbound, for: session)
             return
         }
@@ -135,6 +142,10 @@ public final class PacketRouter {
             }
             
         case .chatMessage:
+            guard let chat = try? ChatMessagePayload.deserialize(from: decrypted),
+                  abs(Date().timeIntervalSince(chat.timestamp)) <= CarryMessageStore.retention,
+                  chat.senderInitials != session.localInitials else { return }
+            await peerTransport.retainReceivedForCarry(raw, excludingPeerId: inbound.sourcePeerId)
             await handleDecryptedChatMessage(inbound: inbound)
             await relayMeshPacketIfNeeded(inbound, for: session)
             
@@ -296,6 +307,8 @@ public final class PacketRouter {
             return
         }
         
+        await peerTransport.retainReceivedForCarry(inbound.rawPacket, excludingPeerId: inbound.sourcePeerId)
+
         // 3. Deduplicate via 5-minute LRU cache
         let packetKey = PacketKey(wirePacket: inbound.rawPacket)
         let isDuplicate = await seenPacketCache.isDuplicateAndRecord(packetKey)
@@ -307,16 +320,20 @@ public final class PacketRouter {
         // 4. Rate-limited blind forwarding to neighboring direct links
         do {
             let wireData = try inbound.rawPacket.toWireData()
-            let directPeers = await peerTransport.neighborTable.activeNeighbors()
+            let directPeers = await peerTransport.activeNeighbors()
             let eligible = directPeers.filter { $0.id != inbound.sourcePeerId }
+            var forwarded = false
             for peer in eligible {
                 do {
                     _ = try await peerTransport.forwardFrame(wireData, to: peer.id)
+                    forwarded = true
                 } catch {
                     print("[PacketRouter] Forward to stranger relay peer \(peer.id) failed: \(error)")
                 }
             }
-            await relayPolicyManager.recordForwardEvent(type: envelope.type)
+            if forwarded {
+                await relayPolicyManager.recordForwardEvent(type: envelope.type)
+            }
         } catch {
             print("[PacketRouter] Stranger relay dropped: \(error)")
         }
